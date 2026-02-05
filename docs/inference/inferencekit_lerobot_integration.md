@@ -1,0 +1,593 @@
+# inferencekit: LeRobot Integration Design
+
+**Status**: Proposal
+**Author**: [Your Name]
+**Date**: 2026-01-13
+**Relates to**: [LeRobot Policy Export Design](./policy_export_design.md)
+
+---
+
+## Executive Summary
+
+This document describes how **inferencekit** integrates with LeRobot's PolicyPackage format. The integration is implemented as a plugin, allowing inferencekit to load and run LeRobot-exported policies while providing additional features (callbacks, multi-backend orchestration, instrumentation).
+
+**Key principle**: LeRobot defines the package format; inferencekit consumes it. No circular dependencies.
+
+---
+
+## 1. Architecture Overview
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│                         inferencekit                           │
+│                                                                │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐  │
+│  │   Adapters   │  │   Runners    │  │     Callbacks        │  │
+│  │  (backends)  │  │ (algorithms) │  │  (instrumentation)   │  │
+│  └──────────────┘  └──────────────┘  └──────────────────────┘  │
+│                                                                │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │                    Plugin System                         │  │
+│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────┐   │  │
+│  │  │   LeRobot   │  │  HF Models  │  │  Custom Format  │   │  │
+│  │  │   Plugin    │  │   Plugin    │  │     Plugin      │   │  │
+│  │  └─────────────┘  └─────────────┘  └─────────────────┘   │  │
+│  └──────────────────────────────────────────────────────────┘  │
+└────────────────────────────────────────────────────────────────┘
+                              │
+                              │ loads
+                              ▼
+                    ┌──────────────────┐
+                    │  PolicyPackage   │
+                    │  (LeRobot format)│
+                    │                  │
+                    │  manifest.json   │
+                    │  artifacts/      │
+                    └──────────────────┘
+```
+
+---
+
+## 2. Shared Contract
+
+inferencekit and LeRobot agree on the **PolicyPackage** format defined in the [LeRobot Policy Export Design](./policy_export_design.md).
+
+### Package Detection
+
+A directory is a LeRobot PolicyPackage if:
+
+1. It contains `manifest.json`
+2. The manifest has `"format": "policy_package"`
+
+```python
+def is_lerobot_package(path: Path) -> bool:
+    manifest_path = path / "manifest.json"
+    if not manifest_path.exists():
+        return False
+    manifest = json.loads(manifest_path.read_text())
+    return manifest.get("format") == "policy_package"
+```
+
+### Manifest Fields Used
+
+| Field            | inferencekit Usage                                                                     |
+| ---------------- | -------------------------------------------------------------------------------------- |
+| `format`         | Package type detection                                                                 |
+| `version`        | Schema compatibility check                                                             |
+| `policy.kind`    | Runner selection (`single_shot` → `SinglePassRunner`, `iterative` → `IterativeRunner`) |
+| `artifacts`      | Backend artifact paths                                                                 |
+| `io`             | Input/output validation                                                                |
+| `action`         | Action semantics (chunk_size, n_action_steps)                                          |
+| `iterative`      | Loop parameters (num_steps, scheduler)                                                 |
+| `normalization`  | Normalizer configuration                                                               |
+| `x-inferencekit` | Extension fields (callbacks, adapter options)                                          |
+
+---
+
+## 3. Plugin Implementation
+
+### Registration
+
+```python
+# inferencekit/plugins/lerobot.py
+
+from inferencekit.plugins import register_format
+
+@register_format("policy_package")
+class LeRobotPlugin:
+    """Plugin for loading LeRobot PolicyPackages."""
+
+    @staticmethod
+    def detect(path: Path) -> bool:
+        """Check if path is a LeRobot PolicyPackage."""
+        manifest_path = path / "manifest.json"
+        if not manifest_path.exists():
+            return False
+        try:
+            manifest = json.loads(manifest_path.read_text())
+            return manifest.get("format") == "policy_package"
+        except (json.JSONDecodeError, KeyError):
+            return False
+
+    @staticmethod
+    def load(
+        path: Path,
+        backend: str | None = None,
+        device: str = "cpu",
+        **kwargs
+    ) -> "InferenceModel":
+        """Load a PolicyPackage into an InferenceModel."""
+        manifest = json.loads((path / "manifest.json").read_text())
+
+        # Validate schema version
+        version = manifest.get("version", "1.0")
+        if not version.startswith("1."):
+            raise ValueError(f"Unsupported manifest version: {version}")
+
+        # Select backend
+        backend = backend or _select_default_backend(manifest)
+        artifact_path = path / manifest["artifacts"][backend]
+
+        # Create adapter
+        adapter = get_adapter(backend)(artifact_path, device=device)
+
+        # Select runner based on policy kind
+        kind = manifest["policy"]["kind"]
+        runner = _create_runner(kind, manifest, **kwargs)
+
+        # Create normalizer
+        normalizer = _create_normalizer(path, manifest)
+
+        # Load callbacks from extensions
+        callbacks = _load_callbacks(manifest)
+
+        return InferenceModel(
+            adapter=adapter,
+            runner=runner,
+            normalizer=normalizer,
+            callbacks=callbacks,
+            metadata=manifest,
+        )
+
+
+def _create_runner(kind: str, manifest: dict, **kwargs) -> InferenceRunner:
+    """Map LeRobot policy kind to inferencekit runner."""
+    if kind == "single_shot":
+        return SinglePassRunner()
+
+    elif kind == "iterative":
+        iter_config = manifest.get("iterative", {})
+        return IterativeRunner(
+            num_steps=kwargs.get("num_steps", iter_config.get("num_steps", 10)),
+            scheduler=kwargs.get("scheduler", iter_config.get("scheduler", "euler")),
+            timestep_spacing=iter_config.get("timestep_spacing", "linear"),
+        )
+
+    else:
+        raise ValueError(f"Unknown policy kind: {kind}")
+
+
+def _load_callbacks(manifest: dict) -> list[Callback]:
+    """Load callbacks from x-inferencekit extension."""
+    callbacks = []
+    ext = manifest.get("x-inferencekit", {})
+
+    for cb_config in ext.get("callbacks", []):
+        if isinstance(cb_config, str):
+            # Short form: "timing" -> TimingCallback()
+            callbacks.append(get_callback(cb_config)())
+        elif isinstance(cb_config, dict):
+            # Full form: {"class_path": "...", "init_args": {...}}
+            callbacks.append(instantiate(cb_config))
+
+    return callbacks
+```
+
+### Installation
+
+```bash
+# Install inferencekit with LeRobot support
+pip install inferencekit[lerobot]
+
+# Or install the plugin separately
+pip install inferencekit-lerobot
+```
+
+---
+
+## 4. Usage Examples
+
+### Basic Usage
+
+```python
+from inferencekit import InferenceModel
+
+# Load LeRobot package (auto-detected via plugin)
+model = InferenceModel.load("./pi0_exported")
+
+# Run inference
+observation = {
+    "observation.images.top": image_array,
+    "observation.state": state_array,
+}
+action_chunk = model.predict(observation)
+```
+
+### With Callbacks
+
+```python
+from inferencekit import InferenceModel
+from inferencekit.callbacks import TimingCallback, LoggingCallback
+
+model = InferenceModel.load(
+    "./pi0_exported",
+    callbacks=[
+        TimingCallback(),
+        LoggingCallback(log_inputs=False, log_outputs=True),
+    ],
+)
+
+# Callbacks fire automatically on predict()
+action = model.predict(observation)
+# -> logs timing and output summary
+```
+
+### Override Runner Parameters
+
+```python
+# Override num_steps at load time (no re-export needed)
+model = InferenceModel.load(
+    "./pi0_exported",
+    num_steps=20,  # Override manifest default of 10
+    scheduler="ddim",
+)
+```
+
+### Real-Time Control with Action Queue
+
+```python
+from inferencekit import InferenceModel
+from inferencekit.wrappers import ActionQueueWrapper
+
+model = InferenceModel.load("./pi0_exported")
+wrapper = ActionQueueWrapper(model)
+
+# Episode loop
+wrapper.reset()
+while not done:
+    action = wrapper.select_action(observation)  # Returns single action
+    observation, reward, done, info = env.step(action)
+```
+
+### Explicit Backend Selection
+
+```python
+# Use specific backend
+model = InferenceModel.load(
+    "./pi0_exported",
+    backend="onnx",
+    device="cuda:0",
+)
+
+# Or with adapter options
+model = InferenceModel.load(
+    "./pi0_exported",
+    backend="onnx",
+    adapter_options={
+        "providers": ["TensorrtExecutionProvider", "CUDAExecutionProvider"],
+    },
+)
+```
+
+---
+
+## 5. Extension Fields
+
+inferencekit-specific configuration can be embedded in the manifest under `x-inferencekit`:
+
+```json
+{
+  "format": "policy_package",
+  "version": "1.0",
+
+  "policy": { ... },
+  "artifacts": { ... },
+
+  "x-inferencekit": {
+    "callbacks": [
+      "timing",
+      {"class_path": "myproject.callbacks.SafetyCallback", "init_args": {"max_velocity": 1.0}}
+    ],
+    "adapter": {
+      "providers": ["CUDAExecutionProvider", "CPUExecutionProvider"],
+      "graph_optimization_level": "all"
+    },
+    "preprocessors": [
+      {"class_path": "inferencekit.preprocessors.ImageNormalize", "init_args": {"mean": [0.485, 0.456, 0.406]}}
+    ]
+  }
+}
+```
+
+### Extension Schema
+
+| Field            | Type                          | Description             |
+| ---------------- | ----------------------------- | ----------------------- |
+| `callbacks`      | `list[str \| CallbackConfig]` | Callbacks to attach     |
+| `adapter`        | `dict`                        | Adapter/backend options |
+| `preprocessors`  | `list[PreprocessorConfig]`    | Input preprocessors     |
+| `postprocessors` | `list[PostprocessorConfig]`   | Output postprocessors   |
+
+**Note**: LeRobot ignores `x-inferencekit` fields entirely. They are only read by inferencekit.
+
+---
+
+## 6. Runner Mapping
+
+### LeRobot `policy.kind` → inferencekit Runner
+
+| LeRobot Kind  | inferencekit Runner | Notes                            |
+| ------------- | ------------------- | -------------------------------- |
+| `single_shot` | `SinglePassRunner`  | Direct forward pass              |
+| `iterative`   | `IterativeRunner`   | Configurable loop with scheduler |
+
+### IterativeRunner Configuration
+
+```python
+class IterativeRunner(InferenceRunner):
+    """Runner for iterative/flow-matching policies."""
+
+    def __init__(
+        self,
+        num_steps: int = 10,
+        scheduler: str = "euler",
+        timestep_spacing: str = "linear",
+        timestep_range: tuple[float, float] = (1.0, 0.0),
+    ):
+        self.num_steps = num_steps
+        self.scheduler = scheduler
+        self.timestep_spacing = timestep_spacing
+        self.timestep_range = timestep_range
+
+    def run(self, adapter: RuntimeAdapter, inputs: dict) -> dict:
+        # Initialize from noise
+        action_shape = self._infer_action_shape(inputs)
+        x_t = np.random.randn(*action_shape).astype(np.float32)
+
+        # Generate timesteps
+        timesteps = self._generate_timesteps()
+        dt = -1.0 / self.num_steps
+
+        # Iterative denoising
+        for t in timesteps:
+            step_inputs = {
+                **inputs,
+                "x_t": x_t,
+                "timestep": np.array([t], dtype=np.float32),
+            }
+            v_t = adapter.predict(step_inputs)["v_t"]
+            x_t = self._step(x_t, v_t, dt)
+
+        return {"action": x_t}
+
+    def _step(self, x: np.ndarray, v: np.ndarray, dt: float) -> np.ndarray:
+        if self.scheduler == "euler":
+            return x + dt * v
+        elif self.scheduler == "ddim":
+            # DDIM update rule
+            ...
+        else:
+            raise ValueError(f"Unknown scheduler: {self.scheduler}")
+```
+
+---
+
+## 7. Callbacks for Robotics
+
+inferencekit provides callbacks useful for robotics applications:
+
+### ActionSafetyCallback
+
+```python
+# inferencekit/callbacks/safety.py
+
+class ActionSafetyCallback(Callback):
+    """Clamp actions to safe ranges."""
+
+    def __init__(
+        self,
+        action_min: np.ndarray | float = -1.0,
+        action_max: np.ndarray | float = 1.0,
+        velocity_limit: float | None = None,
+    ):
+        self.action_min = action_min
+        self.action_max = action_max
+        self.velocity_limit = velocity_limit
+        self._last_action = None
+
+    def on_predict_end(self, outputs: dict) -> dict:
+        action = outputs["action"]
+
+        # Clamp to range
+        action = np.clip(action, self.action_min, self.action_max)
+
+        # Velocity limiting
+        if self.velocity_limit and self._last_action is not None:
+            delta = action - self._last_action
+            delta = np.clip(delta, -self.velocity_limit, self.velocity_limit)
+            action = self._last_action + delta
+
+        self._last_action = action.copy()
+        outputs["action"] = action
+        return outputs
+
+    def on_reset(self):
+        self._last_action = None
+```
+
+### EpisodeLoggingCallback
+
+```python
+# inferencekit/callbacks/logging.py
+
+class EpisodeLoggingCallback(Callback):
+    """Log episode data for replay/debugging."""
+
+    def __init__(self, log_dir: Path, log_observations: bool = True):
+        self.log_dir = Path(log_dir)
+        self.log_observations = log_observations
+        self._episode_data = []
+        self._episode_count = 0
+
+    def on_predict_end(self, outputs: dict, inputs: dict | None = None) -> dict:
+        step_data = {"action": outputs["action"].tolist()}
+        if self.log_observations and inputs:
+            step_data["observation"] = {k: v.tolist() for k, v in inputs.items()}
+        self._episode_data.append(step_data)
+        return outputs
+
+    def on_reset(self):
+        if self._episode_data:
+            self._save_episode()
+        self._episode_data = []
+        self._episode_count += 1
+
+    def _save_episode(self):
+        path = self.log_dir / f"episode_{self._episode_count:04d}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(self._episode_data))
+```
+
+---
+
+## 8. Metadata File Format
+
+inferencekit supports both YAML and JSON metadata:
+
+### Loading Priority
+
+```python
+def load_metadata(path: Path) -> dict:
+    """Load metadata from package directory."""
+    # Priority order
+    for name in ["metadata.yaml", "metadata.yml", "manifest.json"]:
+        file_path = path / name
+        if file_path.exists():
+            return _parse_file(file_path)
+    raise FileNotFoundError(f"No metadata found in {path}")
+```
+
+### Format Comparison
+
+| Aspect               | `manifest.json` (LeRobot) | `metadata.yaml` (inferencekit) |
+| -------------------- | ------------------------- | ------------------------------ |
+| Primary use          | LeRobot packages          | inferencekit-native packages   |
+| Human editing        | Harder (no comments)      | Easier (comments, cleaner)     |
+| Parsing speed        | Faster                    | Slightly slower                |
+| `class_path` support | No (pure data)            | Yes (power users)              |
+
+### Unified Loading
+
+inferencekit handles both transparently:
+
+```python
+# Works with LeRobot packages (manifest.json)
+model = InferenceModel.load("./lerobot_package")
+
+# Works with inferencekit packages (metadata.yaml)
+model = InferenceModel.load("./inferencekit_package")
+
+# Format detected automatically
+```
+
+---
+
+## 9. Testing Compatibility
+
+### Conformance Test Suite
+
+```python
+# tests/plugins/test_lerobot_plugin.py
+
+class TestLeRobotPluginConformance:
+    """Verify inferencekit correctly loads LeRobot packages."""
+
+    def test_detect_lerobot_package(self, lerobot_package_path):
+        """Plugin detects LeRobot packages."""
+        assert LeRobotPlugin.detect(lerobot_package_path)
+
+    def test_load_single_shot(self, act_package_path):
+        """Load single_shot policy."""
+        model = InferenceModel.load(act_package_path)
+        assert isinstance(model.runner, SinglePassRunner)
+
+    def test_load_iterative(self, pi0_package_path):
+        """Load iterative policy."""
+        model = InferenceModel.load(pi0_package_path)
+        assert isinstance(model.runner, IterativeRunner)
+        assert model.runner.num_steps == 10  # from manifest
+
+    def test_override_num_steps(self, pi0_package_path):
+        """Override iterative params at load time."""
+        model = InferenceModel.load(pi0_package_path, num_steps=20)
+        assert model.runner.num_steps == 20
+
+    def test_parity_with_lerobot_runtime(self, pi0_package_path):
+        """Output matches LeRobot's own runtime."""
+        # Load with inferencekit
+        ik_model = InferenceModel.load(pi0_package_path)
+
+        # Load with LeRobot
+        from lerobot.export import load as lerobot_load
+        lr_runtime = lerobot_load(pi0_package_path)
+
+        # Compare outputs
+        obs = generate_test_observation()
+        np.random.seed(42)
+        ik_output = ik_model.predict(obs)
+        np.random.seed(42)
+        lr_output = lr_runtime.predict_action_chunk(obs)
+
+        np.testing.assert_allclose(ik_output["action"], lr_output, rtol=1e-5)
+```
+
+---
+
+## 10. Summary
+
+### What inferencekit Adds Over LeRobot Runtime
+
+| Feature                             | LeRobot Runtime | inferencekit |
+| ----------------------------------- | --------------- | ------------ |
+| Load PolicyPackage                  | ✓               | ✓            |
+| Single-shot inference               | ✓               | ✓            |
+| Iterative inference                 | ✓               | ✓            |
+| Action queue wrapper                | ✓               | ✓            |
+| Callbacks (timing, logging, safety) | ✗               | ✓            |
+| Multi-backend with fallback         | ✗               | ✓            |
+| Preprocessor/postprocessor chains   | ✗               | ✓            |
+| Plugin system for other formats     | ✗               | ✓            |
+| YAML metadata support               | ✗               | ✓            |
+
+### Dependency Direction
+
+```
+LeRobot ──────────────────────────────────────────────────┐
+    │                                                      │
+    │ defines                                              │
+    ▼                                                      │
+PolicyPackage format (manifest.json)                       │
+    │                                                      │
+    │ consumed by                                          │
+    ▼                                                      │
+inferencekit (via plugin) ◄────────────────────────────────┘
+                              no dependency on LeRobot code
+```
+
+**LeRobot does not depend on inferencekit.**
+**inferencekit can load LeRobot packages without importing LeRobot.**
+
+---
+
+_Document version: 1.0_
+_Last updated: 2026-01-13_
