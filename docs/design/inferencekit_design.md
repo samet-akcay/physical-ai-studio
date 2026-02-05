@@ -511,11 +511,12 @@ from inferencekit.callbacks import (
 
 ## Related Documents
 
-- **[Overview](./overview.md)** - High-level architecture of inference framework
-- **[phyai Design](./phyai_design.md)** - Physical AI Framework built on inferencekit
-- **[Universal Inference Package Design](../inference_package_design.md)** - Original detailed design
+- **[Overview](./overview.md)** - Big-picture architecture (inferencekit → getiaction → physical‑ai‑framework)
+- **[Teleoperation API](./teleoperation_api.md)** - Teleoperation design built on getiaction
+- **[Data Collection API](./data_collection_api.md)** - Dataset collection design
+- **[Deployment Shell](./deployment_shell.md)** - physical‑ai‑framework deployment patterns
 
 ---
 
-_Document Version: 1.0_
-_Last Updated: 2026-01-28_
+_Document Version: 1.1_
+_Last Updated: 2026-02-05_

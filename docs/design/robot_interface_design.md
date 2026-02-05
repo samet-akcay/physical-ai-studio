@@ -587,3 +587,15 @@ The core interface uses `np.ndarray` because:
 4. **Conversion is cheap**: `torch.from_numpy()` / `.numpy()` are zero-copy
 
 Users can convert to torch at the policy boundary if needed.
+
+---
+
+## References
+
+- [Overview](./overview.md) - Big-picture architecture (inferencekit → getiaction → physical‑ai‑framework)
+- [Camera Interface Design](./camera_interface_design.md) - Detailed camera interface specification
+- [Teleoperation API](./teleoperation_api.md) - Teleoperation design
+
+---
+
+_Last Updated: 2026-02-05_

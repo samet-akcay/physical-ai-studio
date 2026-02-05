@@ -589,5 +589,12 @@ inferencekit (via plugin) ◄─────────────────
 
 ---
 
-_Document version: 1.0_
-_Last updated: 2026-01-13_
+## Related Documents
+
+- **[Overview](./overview.md)** - Big-picture architecture (inferencekit → getiaction → physical‑ai‑framework)
+- **[inferencekit Design](./inferencekit_design.md)** - Generic inference package design
+
+---
+
+_Document version: 1.1_
+_Last updated: 2026-02-05_
