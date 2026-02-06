@@ -248,9 +248,9 @@ pip install physical-ai-framework[all]
 
 ## Related Documentation
 
-- **[Overview](./overview.md)** - Big-picture architecture
-- **[inferencekit Design](./inferencekit_design.md)** - Core inference package
-- **[Robot Interface Design](./robot_interface_design.md)** - Robot interface specification
+- **[Strategy](../strategy.md)** - Big-picture architecture
+- **[inferencekit Design](./inferencekit.md)** - Core inference package
+- **[Robot Interface Design](../library/robot-interface.md)** - Robot interface specification
 
 ---
 

@@ -200,9 +200,9 @@ with session:
 
 ## Related Documentation
 
-- **[Overview](./overview.md)** - Big-picture architecture
-- **[Robot Interface Design](./robot_interface_design.md)** - Robot interface specification
-- **[Data Collection API](./data_collection_api.md)** - Dataset collection design
+- **[Strategy](../strategy.md)** - Big-picture architecture
+- **[Robot Interface Design](./robot-interface.md)** - Robot interface specification
+- **[Data Collection API](./data-collection.md)** - Dataset collection design
 
 ---
 

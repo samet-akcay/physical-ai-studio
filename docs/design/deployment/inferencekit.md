@@ -511,10 +511,10 @@ from inferencekit.callbacks import (
 
 ## Related Documents
 
-- **[Overview](./overview.md)** - Big-picture architecture (inferencekit → getiaction → physical‑ai‑framework)
-- **[Teleoperation API](./teleoperation_api.md)** - Teleoperation design built on getiaction
-- **[Data Collection API](./data_collection_api.md)** - Dataset collection design
-- **[Deployment Shell](./deployment_shell.md)** - physical‑ai‑framework deployment patterns
+- **[Strategy](../strategy.md)** - Big-picture architecture (inferencekit → getiaction → physical‑ai‑framework)
+- **[Teleoperation API](../library/teleoperation.md)** - Teleoperation design built on getiaction
+- **[Data Collection API](../library/data-collection.md)** - Dataset collection design
+- **[Deployment Shell](./deployment-shell.md)** - physical‑ai‑framework deployment patterns
 
 ---
 

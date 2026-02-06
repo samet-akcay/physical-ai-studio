@@ -989,8 +989,8 @@ Specialized processors (360°, depth colorization) would be separate utilities, 
 
 ## References
 
-- [Overview](./overview.md) - Big-picture architecture
-- [Robot Interface Design](./robot_interface_design.md) - Robot interface specification
+- [Strategy](../strategy.md) - Big-picture architecture
+- [Robot Interface Design](./robot-interface.md) - Robot interface specification
 - [FrameSource Repository](https://github.com/ArendJanKramer/FrameSource)
 - [LeRobot Cameras](https://github.com/huggingface/lerobot/tree/main/src/lerobot/cameras)
 

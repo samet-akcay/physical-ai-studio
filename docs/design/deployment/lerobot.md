@@ -591,8 +591,8 @@ inferencekit (via plugin) ◄─────────────────
 
 ## Related Documents
 
-- **[Overview](./overview.md)** - Big-picture architecture (inferencekit → getiaction → physical‑ai‑framework)
-- **[inferencekit Design](./inferencekit_design.md)** - Generic inference package design
+- **[Strategy](../strategy.md)** - Big-picture architecture (inferencekit → getiaction → physical‑ai‑framework)
+- **[inferencekit Design](./inferencekit.md)** - Generic inference package design
 
 ---
 

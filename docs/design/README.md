@@ -1,50 +1,44 @@
-# Inference Framework Documentation
+# Design Documentation
 
-This directory contains the design documentation for the Physical AI Inference Framework (**physical‑ai‑framework**), which consists of three complementary layers:
-
-1. **inferencekit** - Domain-agnostic inference framework
-2. **getiaction** - End-to-end robotics stack (library + application)
-3. **physical‑ai‑framework** - Lightweight deployment shell
-
-> **Codename**: **physical‑ai‑framework** is the codename for the deployment/inference repo.
+Architecture and design documents for Geti Action — an end-to-end platform for robot AI development.
 
 ---
 
-## Quick Navigation
+## Start Here
 
-### Start Here
+**[Strategy](./strategy.md)** — The two core architectural decisions:
 
-- **[Overview](./overview.md)** - Big-picture architecture and the three-layer model
+1. Library-first: the library owns all components, the application is just UI/orchestration
+2. Three-layer deployment stack: inferencekit → getiaction → physical‑ai‑framework
 
-### Architecture & Strategy
+---
 
-- **[Library-First Pipeline](./library_first_pipeline.md)** - Library-first design for robot, teleop, and data collection APIs
-- **[Modular Robot API & Deployment](./modular_robot_api_deployment.md)** - Modular Robot API with optional extras for edge deployment
+## Library Components
 
-### Core Design Documents
+Components owned by the **library** (`pip install getiaction`) — the building blocks for end-to-end robot AI.
 
-- **[inferencekit Design](./inferencekit_design.md)** - Generic inference package design
+| Component        | Document                                            | Description                                                              |
+| ---------------- | --------------------------------------------------- | ------------------------------------------------------------------------ |
+| Robot Interface  | [Robot Interface](./library/robot-interface.md)     | Robot ABC, leader/follower wrappers, SDK integration (LeRobot, UR, ABB)  |
+| Camera Interface | [Camera Interface](./library/camera-interface.md)   | Camera ABC, invisible sharing, callbacks, capability mixins (PTZ, depth) |
+| Teleoperation    | [Teleoperation API](./library/teleoperation.md)     | Leader/follower semantics, session lifecycle, safety primitives          |
+| Data Collection  | [Data Collection API](./library/data-collection.md) | DatasetWriter, episode management, HF Hub upload                         |
 
-  - InferenceModel, RuntimeAdapter, InferenceRunner
-  - Backend support (OpenVINO, ONNX, TensorRT, Torch)
-  - Callback system
-  - Metadata format
+## Deployment Stack
 
-### Component APIs
+The inference and deployment architecture: **inferencekit** (generic) → **getiaction** (robotics) → **physical‑ai‑framework** (shell).
 
-- **[Teleoperation API](./teleoperation_api.md)** - Leader/follower semantics, lifecycle, safety
-- **[Data Collection API](./data_collection_api.md)** - Dataset writer, metadata, HF Hub upload
-- **[Deployment Shell](./deployment_shell.md)** - CLI, configuration, and deployment patterns
+| Component           | Document                                             | Description                                                          |
+| ------------------- | ---------------------------------------------------- | -------------------------------------------------------------------- |
+| Inference Engine    | [inferencekit](./deployment/inferencekit.md)         | Domain-agnostic inference: InferenceModel, RuntimeAdapter, callbacks |
+| Deployment Shell    | [Deployment Shell](./deployment/deployment-shell.md) | physical‑ai‑framework CLI, configuration, packaging                  |
+| LeRobot Integration | [LeRobot Integration](./deployment/lerobot.md)       | PolicyPackage plugin, runner mapping, extension fields               |
 
-### Detailed Component Designs
+## Internal Notes
 
-- **[Camera Interface Design](./camera_interface_design.md)** - Detailed camera interface specification
-- **[Robot Interface Design](./robot_interface_design.md)** - Detailed robot interface specification
-- **[LeRobot Integration](./inferencekit_lerobot_integration.md)** - LeRobot PolicyPackage integration
-
-### Internal Notes
-
-- **[LeRobot Export Suggestions](./lerobot_export_suggestions.md)** - Improvement suggestions for LeRobot export API (internal)
+| Document                                                               | Description                                    |
+| ---------------------------------------------------------------------- | ---------------------------------------------- |
+| [LeRobot Export Suggestions](./internal/lerobot-export-suggestions.md) | Improvement suggestions for LeRobot export API |
 
 ---
 
@@ -52,18 +46,22 @@ This directory contains the design documentation for the Physical AI Inference F
 
 ```
 docs/design/
-├── README.md                           # This file
-├── overview.md                         # Big-picture architecture
-├── library_first_pipeline.md           # Library-first pipeline design
-├── modular_robot_api_deployment.md     # Modular Robot API & deployment
-├── inferencekit_design.md              # Generic inference package (Part I)
-├── teleoperation_api.md                # Teleoperation API design
-├── data_collection_api.md              # Data collection API design
-├── deployment_shell.md                 # Deployment shell design
-├── camera_interface_design.md          # Detailed camera interface
-├── robot_interface_design.md           # Detailed robot interface
-├── inferencekit_lerobot_integration.md # LeRobot integration
-└── lerobot_export_suggestions.md       # Internal: LeRobot API improvement notes
+├── README.md                              # This file
+├── strategy.md                            # Architecture vision & key decisions
+│
+├── library/                               # Library-owned components
+│   ├── robot-interface.md                 # Robot ABC & SDK wrappers
+│   ├── camera-interface.md                # Camera ABC & sharing
+│   ├── teleoperation.md                   # Teleoperation API
+│   └── data-collection.md                 # Data collection API
+│
+├── deployment/                            # Deployment stack
+│   ├── inferencekit.md                    # Generic inference package
+│   ├── deployment-shell.md                # physical-ai-framework (CLI)
+│   └── lerobot.md                         # LeRobot PolicyPackage integration
+│
+└── internal/
+    └── lerobot-export-suggestions.md      # Internal: LeRobot API notes
 ```
 
 ---
@@ -72,62 +70,24 @@ docs/design/
 
 ### For New Readers
 
-1. Start with **[Overview](./overview.md)** to understand the big-picture architecture
-2. Read **[inferencekit Design](./inferencekit_design.md)** to understand the generic inference package
-3. Explore the component APIs for specific use cases
+1. Start with **[Strategy](./strategy.md)** — understand the two core decisions
+2. Read **[inferencekit](./deployment/inferencekit.md)** for the inference foundation
+3. Explore library component docs for specific areas
 
-### For Implementation
+### For Library Development
 
-1. Read the core design documents (inferencekit)
-2. Refer to detailed component designs as needed:
-   - [Camera Interface Design](./camera_interface_design.md) for camera implementation
-   - [Robot Interface Design](./robot_interface_design.md) for robot implementation
-   - [LeRobot Integration](./inferencekit_lerobot_integration.md) for LeRobot support
+1. **[Strategy § Part 1](./strategy.md#part-1-library-first-architecture)** — ownership boundaries
+2. Component design for the area you're working on:
+   - [Robot Interface](./library/robot-interface.md)
+   - [Camera Interface](./library/camera-interface.md)
+   - [Teleoperation](./library/teleoperation.md)
+   - [Data Collection](./library/data-collection.md)
 
 ### For Deployment
 
-- **[Deployment Shell](./deployment_shell.md)** - CLI and configuration patterns for physical‑ai‑framework
-
-### For Integration
-
-- **getiaction users**: See component APIs (Teleoperation, Data Collection)
-- **LeRobot users**: See [LeRobot Integration](./inferencekit_lerobot_integration.md)
-
----
-
-## Architecture Overview
-
-The Physical AI Framework follows a three-layer architecture:
-
-```
-                inferencekit
-                      ▲
-                      │
-                  getiaction
-                      ▲
-                      │
-           physical‑ai‑framework (shell)
-```
-
-**Layer responsibilities:**
-
-- **inferencekit**: Core inference, backend abstraction, runners, callbacks
-- **getiaction**: Robot/camera/teleop APIs, policies, preprocessing, LeRobot compatibility
-- **physical‑ai‑framework**: CLI, packaging, deployment docs
-
----
-
-## Package Naming
-
-### Current Status (2026-02-05)
-
-| Package           | Name                    | Status                               |
-| ----------------- | ----------------------- | ------------------------------------ |
-| Generic Inference | `inferencekit`          | Proposed replacement for `model_api` |
-| Robotics Stack    | `getiaction`            | Current library + application        |
-| Deployment Shell  | `physical‑ai‑framework` | Codename for deployment repo         |
-
-_Names are subject to marketing/branding review._
+1. **[Strategy § Part 2](./strategy.md#part-2-deployment-stack)** — three-layer architecture
+2. **[inferencekit](./deployment/inferencekit.md)** — generic inference layer
+3. **[Deployment Shell](./deployment/deployment-shell.md)** — CLI and configuration
 
 ---
 
@@ -135,22 +95,23 @@ _Names are subject to marketing/branding review._
 
 When updating these documents:
 
-1. **Keep documents focused**: Each document should cover a single aspect
-2. **Maintain cross-references**: Link between related documents
-3. **Update version and date**: At the bottom of each document
-4. **Update this README**: If you add new documents or change structure
+1. **Keep documents focused** — each document covers a single component
+2. **Maintain cross-references** — link between related documents using relative paths
+3. **Update date** — at the bottom of each document
+4. **Update this README** — if you add new documents or change structure
+5. **Library vs deployment** — put library-owned components in `library/`, deployment stack docs in `deployment/`
 
 ---
 
 ## Version History
 
-| Version | Date       | Changes                                          |
-| ------- | ---------- | ------------------------------------------------ |
-| 2.0     | 2026-02-05 | Restructured with physical‑ai‑framework codename |
-| 1.2     | 2026-01-28 | Added modular installation plan                  |
-| 1.1     | 2026-01-28 | Added TwoPhaseRunner, LeRobot export suggestions |
-| 1.0     | 2026-01-28 | Initial split from combined document             |
+| Version | Date       | Changes                                                                 |
+| ------- | ---------- | ----------------------------------------------------------------------- |
+| 4.0     | 2026-02-06 | Reorganized into library/ + deployment/ to reflect ownership boundaries |
+| 3.0     | 2026-02-06 | Reorganized into strategy + components/integrations/internal            |
+| 2.0     | 2026-02-05 | Restructured with physical‑ai‑framework codename                        |
+| 1.0     | 2026-01-28 | Initial split from combined document                                    |
 
 ---
 
-_Last Updated: 2026-02-05_
+_Last Updated: 2026-02-06_

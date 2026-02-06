@@ -357,7 +357,7 @@ robot = SO101(
 
 Internally, Camera objects are normalized to config dicts before passing to the underlying SDK. This maintains framework agnosticism at the base level while providing convenience for getiaction users.
 
-See [Camera Interface Design](https://github.com/open-edge-platform/geti-action/tree/docs/design-docs/library/docs/design/camera/camera_interface_design.md) for the full Camera specification.
+See [Camera Interface Design](./camera-interface.md) for the full Camera specification.
 
 ### Supported Robots
 
@@ -592,9 +592,9 @@ Users can convert to torch at the policy boundary if needed.
 
 ## References
 
-- [Overview](./overview.md) - Big-picture architecture (inferencekit → getiaction → physical‑ai‑framework)
-- [Camera Interface Design](./camera_interface_design.md) - Detailed camera interface specification
-- [Teleoperation API](./teleoperation_api.md) - Teleoperation design
+- [Strategy](../strategy.md) - Big-picture architecture (inferencekit → getiaction → physical‑ai‑framework)
+- [Camera Interface Design](./camera-interface.md) - Detailed camera interface specification
+- [Teleoperation API](./teleoperation.md) - Teleoperation design
 
 ---
 
