@@ -176,6 +176,16 @@ After data collection and training, you have an exported model. How do you run i
 | **getiaction**            | Robot/camera/teleop APIs, policies, preprocessing, action chunking, LeRobot compat, domain-specific runners | Deployment CLI, packaging, branding       |
 | **physical‑ai‑framework** | CLI entrypoints (`phyai run`, `phyai serve`), packaging, deployment docs, production config                 | Core implementations (thin wrappers only) |
 
+### physical‑ai‑framework as a Façade + Adapter Layer
+
+To keep the product self-contained without duplicating logic, physical‑ai‑framework should act as a **façade** — a thin, simplified front‑door API that re-exports core capabilities without re-implementing them:
+
+- **Re-export stable APIs** from getiaction/inferencekit (e.g., `InferenceModel`, `Robot`, `Camera`)
+- **Provide a small, stable surface** optimized for deployment workflows
+- **Host adapters** for other frameworks (e.g., LeRobot, future integrations)
+
+This keeps the shell thin while allowing multiple backends behind a single product entrypoint.
+
 ### Why Three Layers?
 
 1. **inferencekit** is reusable beyond robotics (computer vision, NLP, anomaly detection). Keeping it domain-agnostic maximizes reuse.
@@ -192,6 +202,19 @@ physical‑ai‑framework → getiaction[inference] → inferencekit
 
 physical‑ai‑framework depends on getiaction. getiaction depends on inferencekit. Never the reverse.
 
+### Why Interfaces Stay in getiaction (Not physical‑ai‑framework)
+
+Another option is to move **robot/camera/inference interfaces** into the deployment shell. This is risky and counterproductive unless we intentionally re-platform the entire stack.
+
+**Risks if we move interfaces into physical‑ai‑framework:**
+
+- **Circular dependencies**: getiaction needs robot/camera/inference APIs for training and evaluation. If those live in physical‑ai‑framework (which depends on getiaction), we create a cycle.
+- **DX regression**: researchers and scripts would need to install the deployment product just to access core APIs.
+- **Broken product story**: physical‑ai‑framework stops being a thin shell and becomes the primary library.
+- **Release friction**: core interfaces become tied to deployment release cadence.
+
+**Preferred approach:** keep interfaces in getiaction, and expose a stable, versioned API surface that physical‑ai‑framework wraps.
+
 ### When to Split physical‑ai‑framework
 
 Split into its own core package **only if**:
@@ -206,35 +229,30 @@ Until then, a thin shell provides the product boundary without engineering risk.
 
 ## User-Facing Experience
 
-### Data Collection (Library)
+### Inference (Library API)
 
 ```python
+from getiaction.inference import InferenceModel
 from getiaction.robots import SO101
-from getiaction.teleop import TeleopSession
-from getiaction.data import DatasetWriter
+from getiaction.cameras import Webcam
 
 robot = SO101.from_config("robot.yaml")
-with TeleopSession(robot=robot) as teleop:
-    with DatasetWriter(path="./dataset", robot=robot, format="lerobot") as writer:
-        for step in teleop:
-            writer.add_frame(step.observation, action=step.action)
-        writer.save_episode(task="demo")
-        writer.finalize()
-```
+camera = Webcam.from_config("camera.yaml")
+policy = InferenceModel.load("./exports/act_policy")
 
-### CLI — Data Collection
-
-```bash
-getiaction teleop --config teleop.yaml
-getiaction record --config record.yaml
-getiaction upload --repo-id org/my-dataset --path ./dataset
+with robot, camera:
+    while True:
+        obs = robot.get_observation(format="lerobot")
+        obs["images"] = {"wrist": camera.read()}
+        action = policy.select_action(obs)
+        robot.send_action(action)
 ```
 
 ### CLI — Deployment (physical‑ai‑framework)
 
 ```bash
-phyai run --config deploy.yaml
-phyai serve --model ./exports/policy --robot robot.yaml
+phyai run --model ./exports/act_policy --robot robot.yaml --episodes 10
+phyai serve --model ./exports/act_policy --robot robot.yaml
 ```
 
 ---
