@@ -9,9 +9,9 @@
 
 ## Executive Summary
 
-This document describes how **physical‑ai‑framework** integrates with LeRobot's PolicyPackage format. The integration is implemented as a plugin, allowing physical‑ai‑framework to load and run LeRobot-exported policies while providing additional features (callbacks, multi-backend orchestration, instrumentation).
+This document describes how **physical‑ai‑framework** integrates with LeRobot's PolicyPackage format. The integration is implemented as a **built‑in format loader** — the framework reads `manifest.json` (pure JSON, no lerobot import) and maps `policy.kind` to built‑in runners. No LeRobot dependency is needed at deployment time.
 
-**Key principle**: LeRobot defines the package format; physical‑ai‑framework consumes it. No circular dependencies.
+**Key principle**: LeRobot defines the package format; physical‑ai‑framework consumes it via a built‑in format loader. No circular dependencies. No external plugin needed.
 
 ---
 
@@ -22,20 +22,20 @@ This document describes how **physical‑ai‑framework** integrates with LeRobo
 │                    physical‑ai‑framework                        │
 │                                                                │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐  │
-│  │   Adapters   │  │   Runners    │  │     Callbacks        │  │
-│  │  (backends)  │  │ (algorithms) │  │  (instrumentation)   │  │
+│  │   Adapters   │  │  Built‑in    │  │     Callbacks        │  │
+│  │  (backends)  │  │   Runners    │  │  (instrumentation)   │  │
 │  └──────────────┘  └──────────────┘  └──────────────────────┘  │
 │                                                                │
 │  ┌──────────────────────────────────────────────────────────┐  │
-│  │                    Plugin System                         │  │
+│  │               Built‑in Format Loaders                    │  │
 │  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────┐   │  │
-│  │  │   LeRobot   │  │  HF Models  │  │  Custom Format  │   │  │
-│  │  │   Plugin    │  │   Plugin    │  │     Plugin      │   │  │
+│  │  │ manifest.json│  │metadata.yaml│  │  Custom Format  │   │  │
+│  │  │  (LeRobot)  │  │ (getiaction)│  │  (external)     │   │  │
 │  │  └─────────────┘  └─────────────┘  └─────────────────┘   │  │
 │  └──────────────────────────────────────────────────────────┘  │
 └────────────────────────────────────────────────────────────────┘
                               │
-                              │ loads
+                              │ reads (pure file I/O)
                               ▼
                     ┌──────────────────┐
                     │  PolicyPackage   │
@@ -84,18 +84,18 @@ def is_lerobot_package(path: Path) -> bool:
 
 ---
 
-## 3. Plugin Implementation
+## 3. Format Loader Implementation
 
 ### Registration
 
 ```python
-# physical_ai/plugins/lerobot.py
+# physical_ai/format_loaders/lerobot.py
 
-from physical_ai.plugins import register_format
+from physical_ai.format_loaders import register_format
 
 @register_format("policy_package")
-class LeRobotPlugin:
-    """Plugin for loading LeRobot PolicyPackages."""
+class LeRobotFormatLoader:
+    """Built‑in format loader for LeRobot PolicyPackages."""
 
     @staticmethod
     def detect(path: Path) -> bool:
@@ -185,13 +185,14 @@ def _load_callbacks(manifest: dict) -> list[Callback]:
 
 ### Installation
 
-```bash
-# Install physical‑ai‑framework with LeRobot support
-pip install physical-ai-framework[lerobot]
+The LeRobot format loader is **built‑in** — it ships with physical‑ai‑framework. No extra install needed.
 
-# Or install the plugin separately
-pip install physical-ai-lerobot
+```bash
+# This is all you need to run LeRobot-exported models
+pip install physical-ai-framework
 ```
+
+The format loader reads `manifest.json` (pure JSON parsing) and maps `policy.kind` to built‑in runners. No `lerobot` import. No `physical-ai-framework[lerobot]` extra.
 
 ---
 
@@ -505,14 +506,14 @@ model = InferenceModel("./physical_ai_package")
 ### Conformance Test Suite
 
 ```python
-# tests/plugins/test_lerobot_plugin.py
+# tests/format_loaders/test_lerobot_loader.py
 
-class TestLeRobotPluginConformance:
+class TestLeRobotFormatLoaderConformance:
 """Verify physical‑ai‑framework correctly loads LeRobot packages."""
 
     def test_detect_lerobot_package(self, lerobot_package_path):
-        """Plugin detects LeRobot packages."""
-        assert LeRobotPlugin.detect(lerobot_package_path)
+        """Format loader detects LeRobot packages."""
+        assert LeRobotFormatLoader.detect(lerobot_package_path)
 
     def test_load_single_shot(self, act_package_path):
         """Load single_shot policy."""
@@ -555,17 +556,17 @@ class TestLeRobotPluginConformance:
 
 ### What physical‑ai‑framework Adds Over LeRobot Runtime
 
-| Feature                             | LeRobot Runtime | physical‑ai‑framework |
-| ----------------------------------- | --------------- | --------------------- |
-| Load PolicyPackage                  | ✓               | ✓                     |
-| Single-shot inference               | ✓               | ✓                     |
-| Iterative inference                 | ✓               | ✓                     |
-| Action queue wrapper                | ✓               | ✓                     |
-| Callbacks (timing, logging, safety) | ✗               | ✓                     |
-| Multi-backend with fallback         | ✗               | ✓                     |
-| Preprocessor/postprocessor chains   | ✗               | ✓                     |
-| Plugin system for other formats     | ✗               | ✓                     |
-| YAML metadata support               | ✗               | ✓                     |
+| Feature                             | LeRobot Runtime | physical‑ai‑framework       |
+| ----------------------------------- | --------------- | --------------------------- |
+| Load PolicyPackage                  | ✓               | ✓                           |
+| Single-shot inference               | ✓               | ✓                           |
+| Iterative inference                 | ✓               | ✓                           |
+| Action queue wrapper                | ✓               | ✓                           |
+| Callbacks (timing, logging, safety) | ✗               | ✓                           |
+| Multi-backend with fallback         | ✗               | ✓                           |
+| Preprocessor/postprocessor chains   | ✗               | ✓                           |
+| Plugin system for other formats     | ✗               | ✓ (built‑in format loaders) |
+| YAML metadata support               | ✗               | ✓                           |
 
 ### Dependency Direction
 
@@ -578,8 +579,8 @@ PolicyPackage format (manifest.json)                       │
     │                                                      │
     │ consumed by                                          │
     ▼                                                      │
-physical‑ai‑framework (via plugin) ◄──────────────────────┘
-                              no dependency on LeRobot code
+physical‑ai‑framework (built‑in format loader) ◄──────────────────────┘
+                               no dependency on LeRobot code
 ```
 
 **LeRobot does not depend on physical‑ai‑framework.**
@@ -594,5 +595,5 @@ physical‑ai‑framework (via plugin) ◄────────────�
 
 ---
 
-_Document version: 1.1_
-_Last updated: 2026-02-05_
+_Document version: 2.0_
+_Last updated: 2026-02-11_

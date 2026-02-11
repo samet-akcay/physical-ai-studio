@@ -1048,7 +1048,7 @@ Instead of replacing model_api, inferencekit provides the **foundation** that mo
 
 - **[Strategy](../strategy.md)** — Big-picture architecture and layering decisions
 - **[Deployment Shell](./deployment-shell.md)** — physical-ai-framework CLI and packaging
-- **[LeRobot Integration](./lerobot.md)** — LeRobot PolicyPackage plugin for inferencekit
+- **[LeRobot Integration](./lerobot.md)** — LeRobot format loader for physical‑ai‑framework (built‑in, reads manifest.json)
 
 ---
 

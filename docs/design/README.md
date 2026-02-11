@@ -9,7 +9,7 @@ Architecture and design documents for Geti Action — an end-to-end platform for
 **[Strategy](./strategy.md)** — The two core architectural decisions:
 
 1. Library-first: the library owns all components, the application is just UI/orchestration
-2. Layered deployment stack: inferencekit (base) → physical‑ai‑framework (universal physical‑AI engine) → plugins (getiaction, LeRobot, custom). Vision remains model_api → inferencekit.
+2. Layered deployment stack: inferencekit (base) → physical‑ai‑framework (universal physical‑AI engine with built‑in format loaders and runners) → external plugins (exotic patterns only). Vision remains model_api → inferencekit.
 
 ---
 
@@ -26,13 +26,13 @@ Components owned by the **library** (`pip install getiaction`) — the building 
 
 ## Deployment Stack
 
-The inference and deployment architecture: **inferencekit** (base engine) → **physical‑ai‑framework** (universal physical‑AI engine) → **plugins** (getiaction, LeRobot, custom). Vision remains a separate domain layer (**model_api**) on inferencekit.
+The inference and deployment architecture: **inferencekit** (base engine) → **physical‑ai‑framework** (universal physical‑AI engine with built‑in format loaders and runners) → **external plugins** (only for exotic execution patterns). Vision remains a separate domain layer (**model_api**) on inferencekit.
 
 | Component           | Document                                             | Description                                                             |
 | ------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------- |
 | Inference Engine    | [inferencekit](./deployment/inferencekit.md)         | Base execution engine: RuntimeAdapter, metadata IO, base InferenceModel |
-| Deployment Engine   | [Deployment Shell](./deployment/deployment-shell.md) | physical‑ai‑framework universal engine, CLI, plugin registry            |
-| LeRobot Integration | [LeRobot Integration](./deployment/lerobot.md)       | LeRobot plugin for physical‑ai‑framework                                |
+| Deployment Engine   | [Deployment Shell](./deployment/deployment-shell.md) | physical‑ai‑framework universal engine, CLI, format loaders             |
+| LeRobot Integration | [LeRobot Integration](./deployment/lerobot.md)       | Built‑in format loader for LeRobot manifest.json                        |
 
 ## Internal Notes
 
@@ -58,7 +58,7 @@ docs/design/
 ├── deployment/                            # Deployment stack
 │   ├── inferencekit.md                    # Base inference framework
 │   ├── deployment-shell.md                # physical-ai-framework (CLI)
-│   └── lerobot.md                         # LeRobot PolicyPackage integration
+│   └── lerobot.md                         # LeRobot format loader integration
 │
 └── internal/
     └── lerobot-export-suggestions.md      # Internal: LeRobot API notes
@@ -105,14 +105,15 @@ When updating these documents:
 
 ## Version History
 
-| Version | Date       | Changes                                                                 |
-| ------- | ---------- | ----------------------------------------------------------------------- |
-| 5.1     | 2026-02-09 | Updated deployment stack to physical‑ai‑framework as universal engine   |
-| 4.0     | 2026-02-06 | Reorganized into library/ + deployment/ to reflect ownership boundaries |
-| 3.0     | 2026-02-06 | Reorganized into strategy + components/integrations/internal            |
-| 2.0     | 2026-02-05 | Restructured with physical‑ai‑framework codename                        |
-| 1.0     | 2026-01-28 | Initial split from combined document                                    |
+| Version | Date       | Changes                                                                       |
+| ------- | ---------- | ----------------------------------------------------------------------------- |
+| 6.0     | 2026-02-11 | Updated to two-tier model: built‑in format loaders/runners + external plugins |
+| 5.1     | 2026-02-09 | Updated deployment stack to physical‑ai‑framework as universal engine         |
+| 4.0     | 2026-02-06 | Reorganized into library/ + deployment/ to reflect ownership boundaries       |
+| 3.0     | 2026-02-06 | Reorganized into strategy + components/integrations/internal                  |
+| 2.0     | 2026-02-05 | Restructured with physical‑ai‑framework codename                              |
+| 1.0     | 2026-01-28 | Initial split from combined document                                          |
 
 ---
 
-_Last Updated: 2026-02-09_
+_Last Updated: 2026-02-11_

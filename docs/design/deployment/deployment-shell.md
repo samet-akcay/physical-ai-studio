@@ -6,12 +6,14 @@ Universal physical‑AI inference engine that runs policies from multiple framew
 
 ## Overview
 
-**physical‑ai‑framework** is the universal physical‑AI inference engine. It provides a unified runtime and CLI for running policies from getiaction, LeRobot, or any custom framework that implements the physical‑AI plugin contract.
+**physical‑ai‑framework** is the universal physical‑AI inference engine. It provides a unified runtime and CLI for running policies from getiaction, LeRobot, or any custom framework — using built‑in format loaders and runners that require zero external dependencies.
 
 **Key Features:**
 
 - Unified API (`InferenceModel`)
-- Policy plugin registry (getiaction, LeRobot, custom)
+- Built‑in format loaders (metadata.yaml, manifest.json) — no training framework imports needed
+- Built‑in runners (SinglePassRunner, IterativeRunner, ActionChunkingRunner) — covers common execution patterns
+- External plugin support for exotic patterns only (user's own package)
 - Configuration-driven workflows
 - CLI for edge and server deployment
 
@@ -26,7 +28,7 @@ Universal physical‑AI inference engine that runs policies from multiple framew
 **Install:**
 
 ```bash
-pip install physical-ai-framework[getiaction]
+pip install physical-ai-framework
 ```
 
 **Python (policy‑specific API):**
@@ -53,7 +55,7 @@ phyai run --model hf://getiaction/act_policy --robot robot.yaml
 **Install:**
 
 ```bash
-pip install physical-ai-framework[lerobot]
+pip install physical-ai-framework
 ```
 
 **Python (policy‑specific API):**
@@ -75,9 +77,9 @@ phyai run --model hf://lerobot/pi0 --robot robot.yaml
 
 ### Persona C — Custom model from a standalone GitHub repo
 
-**Goal:** Add support for a new model (custom framework) without publishing anything.
+**Goal:** Add support for a new model (custom framework) with an exotic execution pattern not covered by built‑in runners.
 
-**Local plugin (editable install):**
+**External plugin (editable install):**
 
 ```bash
 pip install -e ./dreamzero/physical_ai_plugin
@@ -111,15 +113,17 @@ outputs = model(inputs)
                         │
           ┌─────────────┼─────────────┐
           │             │             │
-   getiaction‑plugin  lerobot‑plugin  custom‑plugin
-          │             │             │
-          └─────────────┴─────────────┘
+   format loaders   built‑in      external plugins
+   (metadata.yaml,  runners       (user's own package,
+    manifest.json)  (SinglePass,   exotic patterns only)
+                    Iterative,
+                    ActionChunking)
                         │
                         ▼
                 inferencekit (base)
 ```
 
-**Key principle:** physical‑ai‑framework owns physical‑AI orchestration, hardware lifecycle, and safety. Policy‑specific logic lives in plugins. Backend execution lives in inferencekit.
+**Key principle:** physical‑ai‑framework owns physical‑AI orchestration, hardware lifecycle, and safety. Built‑in format loaders and runners handle common models (getiaction, LeRobot). External plugins are only for exotic execution patterns — user's own package, user's own dependencies. Backend execution lives in inferencekit.
 
 ---
 
@@ -134,7 +138,7 @@ physical‑ai‑framework
   ├─ camera interfaces (physical_ai.camera)
   ├─ robot interfaces  (physical_ai.robot)
   ├─ inferencekit (base)
-  └─ plugin system + CLI
+   └─ format loaders + runners + CLI
           ▲
           │ depends on (hard dependency)
      getiaction (training)
@@ -142,7 +146,7 @@ physical‑ai‑framework
 
 **Why this works:**
 
-- **No circular dependency.** getiaction depends on physical‑ai‑framework. physical‑ai‑framework loads getiaction plugins at runtime via `class_path` / entry points — never imports getiaction at install time. One-directional dependency.
+- **No circular dependency.** getiaction depends on physical‑ai‑framework. physical‑ai‑framework loads models at runtime via format loaders and `class_path` — never imports getiaction at install time. One-directional dependency.
 - **Fewer repos (3 instead of 5+).** Only inferencekit, physical‑ai‑framework, and getiaction. Less coordination overhead, simpler CI, fewer version matrices.
 - **One package for all hardware interfaces.** Teams install physical‑ai‑framework and get cameras, robots, inference, CLI, safety — everything needed for deployment.
 - **Future split is cheap.** Camera/robot interfaces live in clean subpackages (`physical_ai.camera`, `physical_ai.robot`) with no cross-imports. If a vision-only consumer needs camera-api standalone, extract it then. Merging repos later is much harder than splitting.
@@ -154,7 +158,7 @@ getiaction → physical‑ai‑framework → inferencekit
                   │
                   ├── physical_ai.camera  (clean subpackage)
                   ├── physical_ai.robot   (clean subpackage)
-                  └── physical_ai.engine  (plugin system, CLI, safety)
+                   └── physical_ai.engine  (format loaders, runners, CLI, safety)
 ```
 
 **Condition:** Camera/robot subpackages must have **zero imports** from the rest of physical‑ai‑framework. This is enforced by import linting and makes future extraction trivial.
@@ -197,7 +201,7 @@ getiaction → physical‑ai‑framework → inferencekit
 
 getiaction depends on physical‑ai‑framework for camera/robot interfaces.
 physical‑ai‑framework depends on inferencekit for backend execution.
-physical‑ai‑framework loads getiaction plugins at runtime (no install-time dependency on getiaction).
+physical‑ai‑framework loads models at runtime via format loaders (no install-time dependency on getiaction).
 
 ### Runtime dataflow (what happens during inference)
 
@@ -210,15 +214,16 @@ camera → observation → getiaction preprocessor
 
 ## Deep‑Dive: How the Engine Works
 
-This section explains **how physical‑ai‑framework resolves plugins, builds `InferenceModel`, and executes inference**.
+This section explains **how physical‑ai‑framework resolves format loaders, builds `InferenceModel`, and executes inference**.
 
 **Inference ownership (explicit):**
 
 - **inferencekit** owns backend execution and the base `InferenceModel`
-- **getiaction** owns policy‑specific inference logic (runners, pre/post)
-- **physical‑ai‑framework** owns orchestration, hardware lifecycle, safety, and the unified API that loads plugins
+- **Built‑in runners/pre/post** own common execution patterns (SinglePass, Iterative, ActionChunking)
+- **External plugins** own exotic execution patterns (user's own package)
+- **physical‑ai‑framework** owns orchestration, hardware lifecycle, safety, and the unified API that loads models
 
-### 1) Plugin Loading & Metadata Resolution
+### 1) Format Loading & Metadata Resolution
 
 **Discovery order** (first match wins):
 
@@ -227,7 +232,7 @@ This section explains **how physical‑ai‑framework resolves plugins, builds `
 3. `metadata.json`
 4. `manifest.json` (LeRobot PolicyPackage)
 
-**Why this matters:** it lets both **physical‑ai** and **LeRobot** packages work without special‑casing.
+**Why this matters:** it lets both **physical‑ai** and **LeRobot** packages work without special‑casing. Both formats are parsed by built‑in format loaders — no external imports needed.
 
 ```
 model path/URI
@@ -236,15 +241,15 @@ model path/URI
 metadata/manifest detection
      │
      ▼
-plugin registry
+format loader (built‑in)
      │
      ▼
-getiaction / lerobot / custom plugin
+built‑in runner + pre/post (or external class_path if exotic)
 ```
 
 ### 2) Metadata → Class Instantiation (class_path)
 
-Plugins are wired by **class_path + init_args** in metadata:
+Runners and pre/post are wired by **class_path + init_args** in metadata:
 
 ```
 metadata.yaml
@@ -253,7 +258,7 @@ metadata.yaml
   └─ postprocessors[].class_path
 ```
 
-This allows **local plugins** (editable installs) without upstreaming.
+This allows **external plugins** (editable installs) without upstreaming. For most models, class_paths point to built‑in runners shipped with the framework.
 
 ### 3) InferenceModel Runtime Flow
 
@@ -262,11 +267,11 @@ This allows **local plugins** (editable installs) without upstreaming.
 ```
 inputs
   ▼
-preprocessors (plugin)
+preprocessors (built‑in or external)
   ▼
 runner.run(adapter, inputs)
   ▼
-postprocessors (plugin)
+postprocessors (built‑in or external)
   ▼
 outputs / action
 ```
@@ -300,14 +305,16 @@ hardware runtime
 
 Use the **Backend Selection Guide** to choose values per hardware.
 
-### 6) Extension Points (What Plugins Provide)
+### 6) Extension Points (Built‑in + External)
 
-Plugins can supply:
+The framework ships built‑in implementations for common patterns. External plugins extend this for exotic cases:
 
-- **Runners** (execution pattern)
-- **Preprocessors** (input shaping)
-- **Postprocessors** (output shaping)
+- **Runners** (execution pattern) — built‑in: SinglePassRunner, IterativeRunner, ActionChunkingRunner
+- **Preprocessors** (input shaping) — built‑in: ObservationNormalizer, TensorResize
+- **Postprocessors** (output shaping) — built‑in: ActionClamp
 - **Callbacks** (instrumentation, safety, logging)
+
+External plugins supply additional runners/pre/post via `class_path` in metadata.
 
 See **[inferencekit Design](./inferencekit.md)** and **[LeRobot Integration](./lerobot.md)** for detailed contracts.
 
@@ -315,7 +322,7 @@ See **[inferencekit Design](./inferencekit.md)** and **[LeRobot Integration](./l
 
 ## Engine Scope: What physical‑ai‑framework Must Own
 
-physical‑ai‑framework is the **universal physical‑AI inference engine** — not a thin shell that just loads plugins. To earn that title, it must own the domain-specific concerns that are common to **every** physical‑AI deployment, so teams only supply their model-specific logic.
+physical‑ai‑framework is the **universal physical‑AI inference engine** — not a thin shell that just loads models. To earn that title, it must own the domain-specific concerns that are common to **every** physical‑AI deployment, so teams only supply their model-specific logic.
 
 **The promise:** You write a Runner and a Preprocessor. We handle cameras, robots, safety, episodes, and deployment.
 
@@ -328,7 +335,7 @@ physical‑ai‑framework is the **universal physical‑AI inference engine** �
 | **Episode orchestration** | Run N episodes, reset between episodes, log results. The control loop is the same for every policy.                  | Episode termination conditions (policy-specific)                                            |
 | **Device management**     | Robot connection lifecycle, camera initialization, cleanup on error.                                                 | Robot/camera driver implementations (SDK-specific)                                          |
 | **Validation CLI**        | `phyai validate ./exports/my_model` — verify metadata, check class_paths resolve, dry-run pipeline without hardware. | Model-specific validation (e.g., expected input shapes)                                     |
-| **Plugin loading**        | Metadata resolution, class_path instantiation, entry point discovery.                                                | Plugin code itself (runners, pre/post processors)                                           |
+| **Format loading**        | Metadata resolution (metadata.yaml, manifest.json), class_path instantiation, entry point discovery.                 | External plugin code (exotic runners, pre/post processors)                                  |
 | **Unified API + CLI**     | `InferenceModel`, `phyai run`, `phyai serve`, config resolution.                                                     | N/A                                                                                         |
 
 ### What this means for teams
@@ -341,13 +348,13 @@ Without the engine, teams deploying a new model need to:
 4. Manage robot/camera connections and cleanup
 5. Build a CLI or script harness
 
-With the engine, teams supply a `metadata.yaml` pointing to their Runner and Preprocessor. The engine handles everything else.
+With the engine, teams supply a `metadata.yaml` pointing to built‑in runners and preprocessors. The engine handles everything else. Custom code is only needed for exotic execution patterns.
 
 ### Current vs Target State
 
 | Capability                    | Current state                     | Target state                                     |
 | ----------------------------- | --------------------------------- | ------------------------------------------------ |
-| Plugin loading + CLI + config | ✓ Designed                        | ✓ Ship as v1                                     |
+| Format loading + CLI + config | ✓ Designed                        | ✓ Ship as v1                                     |
 | Observation pipeline          | Missing                           | v1 — required for "immediate deployment" promise |
 | Safety runtime                | Partial (callback)                | v1 — promote to first-class engine layer         |
 | Episode orchestration         | Hinted in CLI (`--episodes`)      | v1 — `EpisodeRunner` abstraction                 |
@@ -388,9 +395,9 @@ getiaction.inference.InferenceModel  ← re-exports physical_ai.InferenceModel
 
 ## Extending InferenceModel (Custom Subclasses)
 
-The plugin system (Runner / Preprocessor / Postprocessor / Callback) covers most customization. **Subclassing `InferenceModel` is for cases the plugin system cannot express.**
+Built‑in runners, preprocessors, postprocessors, and callbacks cover most customization. **Subclassing `InferenceModel` is for cases the built‑in components cannot express.**
 
-### When plugins are enough (do NOT subclass)
+### When built‑in components are enough (do NOT subclass)
 
 | Need                                                  | Plugin             |
 | ----------------------------------------------------- | ------------------ |
@@ -402,12 +409,12 @@ The plugin system (Runner / Preprocessor / Postprocessor / Callback) covers most
 
 ### When to subclass
 
-| Need                                                                    | Why plugins aren't enough                           |
-| ----------------------------------------------------------------------- | --------------------------------------------------- |
-| Multi-model pipelines (model A feeds model B)                           | Orchestration _between_ plugin steps changes        |
-| Domain-specific convenience API (`warm_up()`, `reset()`, `calibrate()`) | New lifecycle methods the base class doesn't have   |
-| Custom model loading that metadata.yaml can't express                   | Loading logic runs before plugins are instantiated  |
-| Stateful inference across calls (episode buffer, history window)        | State lives outside the single-call plugin pipeline |
+| Need                                                                    | Why built‑in components aren't enough                 |
+| ----------------------------------------------------------------------- | ----------------------------------------------------- |
+| Multi-model pipelines (model A feeds model B)                           | Orchestration _between_ pipeline steps changes        |
+| Domain-specific convenience API (`warm_up()`, `reset()`, `calibrate()`) | New lifecycle methods the base class doesn't have     |
+| Custom model loading that metadata.yaml can't express                   | Loading logic runs before components are instantiated |
+| Stateful inference across calls (episode buffer, history window)        | State lives outside the single-call pipeline          |
 
 ### Where to subclass
 
@@ -462,9 +469,9 @@ class WarmableModel(BaseModel):
 
 ### Rules for subclasses
 
-1. **Call `super().__init__()`** — metadata loading, plugin instantiation, and adapter setup happen there.
-2. **Don't bypass the plugin pipeline** — override `__call__` only to add steps _around_ `super().__call__()`, not to replace it.
-3. **Keep plugins working** — a subclass should still load Runner/Pre/Post from metadata. If your subclass ignores metadata, you've left the ecosystem.
+1. **Call `super().__init__()`** — metadata loading, component instantiation, and adapter setup happen there.
+2. **Don't bypass the pipeline** — override `__call__` only to add steps _around_ `super().__call__()`, not to replace it.
+3. **Keep built‑in components working** — a subclass should still load Runner/Pre/Post from metadata. If your subclass ignores metadata, you've left the ecosystem.
 4. **Prefer composition over inheritance** — if you need two models, compose two `InferenceModel` instances (like the multi-model example above) rather than merging their logic into one class.
 
 ---
@@ -866,7 +873,7 @@ phyai serve --config server_deploy.yaml
 ## Installation
 
 ```bash
-# Core package (inference only)
+# Core package (inference only — includes format loaders + built-in runners)
 pip install physical-ai-framework
 
 # With specific backend
@@ -874,25 +881,26 @@ pip install physical-ai-framework[openvino]
 pip install physical-ai-framework[onnx-gpu]
 pip install physical-ai-framework[tensorrt]
 
-# With robot support
-pip install physical-ai-framework[lerobot]
+# All backends
 pip install physical-ai-framework[all]
 ```
+
+**No `physical-ai-framework[getiaction]` or `physical-ai-framework[lerobot]` needed.** Built‑in format loaders parse metadata.yaml and manifest.json natively. Built‑in runners (SinglePassRunner, IterativeRunner, ActionChunkingRunner) handle common execution patterns. No training framework required at deployment time.
 
 ---
 
 ## Installation Matrix (What You Get)
 
-| Install command                     | Includes                                      | Excludes                                   |
-| ----------------------------------- | --------------------------------------------- | ------------------------------------------ |
-| `physical-ai-framework`             | Core runtime + CLI + config + plugin registry | No plugins, no heavy backends              |
-| `physical-ai-framework[getiaction]` | getiaction plugin dependencies                | No OpenVINO/ONNX/TensorRT unless requested |
-| `physical-ai-framework[lerobot]`    | LeRobot plugin dependencies                   | No OpenVINO/ONNX/TensorRT unless requested |
-| `physical-ai-framework[openvino]`   | OpenVINO runtime integration                  | No plugins                                 |
-| `physical-ai-framework[onnx-gpu]`   | ONNX Runtime (GPU) integration                | No plugins                                 |
-| `physical-ai-framework[tensorrt]`   | TensorRT integration                          | No plugins                                 |
-| `physical-ai-framework[executorch]` | ExecuTorch runtime integration                | No plugins                                 |
-| `physical-ai-framework[all]`        | Core + plugins + backends                     | —                                          |
+| Install command                     | Includes                                               | Excludes          |
+| ----------------------------------- | ------------------------------------------------------ | ----------------- |
+| `physical-ai-framework`             | Core runtime + CLI + format loaders + built‑in runners | No heavy backends |
+| `physical-ai-framework[openvino]`   | Core + OpenVINO runtime                                | No other backends |
+| `physical-ai-framework[onnx-gpu]`   | Core + ONNX Runtime (GPU)                              | No other backends |
+| `physical-ai-framework[tensorrt]`   | Core + TensorRT                                        | No other backends |
+| `physical-ai-framework[executorch]` | Core + ExecuTorch runtime                              | No other backends |
+| `physical-ai-framework[all]`        | Core + all backends                                    | —                 |
+
+**Note:** No `[getiaction]` or `[lerobot]` extras exist. Built‑in format loaders and runners handle both frameworks natively. External plugins for exotic patterns are the user's own `pip install`.
 
 ---
 
@@ -905,7 +913,7 @@ pip install physical-ai-framework[all]
 - Safety runtime (action clamping, velocity limits, emergency stop)
 - Episode orchestration (run N episodes, reset, log)
 - Device management (robot/camera connection lifecycle)
-- Policy plugin registry and loading
+- Format loaders (metadata.yaml, manifest.json) and built‑in runners
 - CLI entrypoints (`phyai run`, `phyai serve`, `phyai export`, `phyai validate`)
 - Configuration loading and validation
 - Camera interfaces (`physical_ai.camera`) — clean subpackage, no cross-imports
@@ -916,7 +924,7 @@ pip install physical-ai-framework[all]
 - Backend execution (lives in inferencekit)
 - Vision model wrappers and preprocessing (lives in model_api)
 - Training code (lives in getiaction)
-- Policy-specific runners, pre/postprocessors (lives in plugins)
+- Exotic policy-specific runners, pre/postprocessors (lives in external plugins — user's own package)
 
 ---
 

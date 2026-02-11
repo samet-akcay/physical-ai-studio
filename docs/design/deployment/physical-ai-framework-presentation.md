@@ -30,7 +30,9 @@ Every team re‑implements the same deployment plumbing:
 
 A **shared deployment layer** — called **physical‑ai‑framework** — that owns the common plumbing.
 
-Teams write only the parts unique to their model:
+For most exported models, teams write **nothing** — built‑in runners and preprocessors handle it.
+
+For exotic execution patterns, teams write:
 
 - A **Runner** (how to execute the forward pass)
 - A **Preprocessor** / **Postprocessor** (how to shape inputs/outputs)
@@ -107,14 +109,14 @@ custom:     camera → obs → preprocess → infer → postprocess → robot
 
 Duplicated. Inconsistent. Each team re‑solves safety, device lifecycle, observation buffering.
 
-**Proposed — shared framework, team-owned plugins:**
+**Proposed — shared framework, built‑in runners:**
 
 ```
 framework:  camera → obs ──────────────────────────── → robot
-plugin:                  └→ preprocess → infer → post ┘
+built-in:                └→ preprocess → infer → post ┘
 ```
 
-Teams own only the unique part.
+Built‑in runners handle common patterns. Teams own nothing unless their model is exotic.
 
 ---
 
@@ -136,17 +138,17 @@ This is more than a plugin loader. It's the **shared runtime** that makes deploy
 
 ```
 getiaction → physical‑ai‑framework → inferencekit
-                    │
-                    ├── physical_ai.camera  (clean subpackage)
-                    ├── physical_ai.robot   (clean subpackage)
-                    └── physical_ai.engine  (plugins, CLI, safety)
+                     │
+                     ├── physical_ai.camera  (clean subpackage)
+                     ├── physical_ai.robot   (clean subpackage)
+                     └── physical_ai.engine  (format loaders, built‑in runners, CLI, safety)
 ```
 
-| Package                   | What it would contain                                     | Depends on              |
-| ------------------------- | --------------------------------------------------------- | ----------------------- |
-| **inferencekit**          | Extracted from getiaction: adapters, runners, metadata IO | Nothing domain‑specific |
-| **physical‑ai‑framework** | New: observation, safety, episodes, devices, CLI          | inferencekit            |
-| **getiaction**            | Remains: training, export, domain pre/post                | physical‑ai‑framework   |
+| Package                   | What it would contain                                                              | Depends on              |
+| ------------------------- | ---------------------------------------------------------------------------------- | ----------------------- |
+| **inferencekit**          | Extracted from getiaction: adapters, runners, metadata IO                          | Nothing domain‑specific |
+| **physical‑ai‑framework** | New: format loaders, built‑in runners, observation, safety, episodes, devices, CLI | inferencekit            |
+| **getiaction**            | Remains: training, export, domain pre/post (as external plugin if exotic)          | physical‑ai‑framework   |
 
 ---
 
@@ -202,7 +204,7 @@ getiaction ──hard depends──► physical‑ai‑framework ──hard depe
                                       │
                         loads at runtime (class_path)
                                       │
-                              getiaction plugins
+                         external plugins (if exotic)
 ```
 
 - **Hard dependency:** `import` at module level. Declared in `pyproject.toml`.
@@ -234,56 +236,76 @@ physical_ai/
 
 ---
 
-## How Plugins Would Work: Metadata
+## Two Tiers: Format Loaders vs External Plugins
 
-```yaml
-# exports/act_policy/metadata.yaml
-backend: openvino
-runner:
-  class_path: getiaction.runners.ActionChunkingRunner
-  init_args:
-    chunk_size: 100
+| Tier                 | What                                                               | Ships with framework?   | Extra dependencies? |
+| -------------------- | ------------------------------------------------------------------ | ----------------------- | ------------------- |
+| **Format loaders**   | Parse `metadata.yaml` or `manifest.json` → same internal structure | Yes, built‑in           | None                |
+| **Built‑in runners** | `SinglePassRunner`, `IterativeRunner`, `ActionChunkingRunner`      | Yes, built‑in           | None                |
+| **External plugins** | Custom Runner / Pre / Post for exotic models                       | No — user's own package | User's choice       |
 
-preprocessors:
-  - class_path: getiaction.pre.ObservationNormalizer
-    init_args:
-      mean: [0.485, 0.456, 0.406]
-
-postprocessors:
-  - class_path: getiaction.post.ActionClamp
-    init_args:
-      limits: [-1.0, 1.0]
-```
-
-**`class_path` = fully qualified Python class. Installed via pip. No entry points required.**
+**Most exported models need zero external packages.** The framework understands common metadata formats and ships runners for common execution patterns. External plugins are only for truly exotic cases.
 
 ---
 
-## How Plugins Would Work: Discovery Flow
+## Why No LeRobot Plugin Is Needed
+
+LeRobot exports a `manifest.json` with `policy.kind: "single_shot"` or `"iterative"`.
+
+The framework reads that manifest (pure JSON, no lerobot import) and maps it to **our built‑in runners**:
+
+| LeRobot `policy.kind` | Built‑in runner    | lerobot dependency? |
+| --------------------- | ------------------ | ------------------- |
+| `single_shot`         | `SinglePassRunner` | No                  |
+| `iterative`           | `IterativeRunner`  | No                  |
+
+Same for getiaction exports — `ActionChunkingRunner` is built‑in. No getiaction import at inference time.
+
+**The exported ONNX/OpenVINO model + built‑in runners = fully self‑contained. No training framework needed at deployment.**
+
+---
+
+## How It Works: Metadata
+
+```yaml
+# exports/act_policy/metadata.yaml (getiaction format)
+backend: openvino
+runner:
+  class_path: inferencekit.runners.ActionChunkingRunner
+  init_args:
+    chunk_size: 100
+preprocessors:
+  - class_path: physical_ai.pre.ObservationNormalizer
+    init_args:
+      mean: [0.485, 0.456, 0.406]
+```
+
+```json
+// exports/pi0/manifest.json (LeRobot format)
+{
+  "format": "policy_package",
+  "policy": { "kind": "iterative" },
+  "iterative": { "num_steps": 10, "scheduler": "euler" },
+  "artifacts": { "onnx": "model.onnx" }
+}
+```
+
+**Two formats, same loading path. Both use built‑in runners. Zero external deps.**
+
+---
+
+## How It Works: Discovery & Runtime
 
 ```
 model path / URI
        │
        ▼
-metadata detection (metadata.yaml → metadata.yml → metadata.json → manifest.json)
+format detection (metadata.yaml? manifest.json?)
        │
        ▼
-class_path resolution (importlib)
+built‑in runner + pre/post resolved (or external class_path if exotic)
        │
        ▼
-Runner + Preprocessors + Postprocessors instantiated
-       │
-       ▼
-InferenceModel ready
-```
-
-**First metadata file wins. class_path must be importable (pip installed).**
-
----
-
-## How Plugins Would Work: Runtime Pipeline
-
-```
 observation (from framework)
        │
        ▼
@@ -309,7 +331,7 @@ action (to framework → robot)
 
 ```
 exports/act_policy/
-├── metadata.yaml          # plugin wiring (class_path + init_args)
+├── metadata.yaml          # model wiring (runner, pre/post, backend)
 ├── model.onnx             # ONNX backend
 ├── model.xml              # OpenVINO IR
 ├── model.bin              # OpenVINO weights
@@ -360,14 +382,14 @@ outputs = model(inputs)
 
 ## Custom Model: Custom Logic (Target: 15 Minutes)
 
-**Non‑standard execution pattern — write a plugin:**
+**Non‑standard execution pattern — write an external plugin:**
 
 1. Create package with Runner / Preprocessor / Postprocessor
 2. `pip install -e ./my_plugin`
 3. Point `class_path` in `metadata.yaml` at your classes
 4. Run: `phyai run --model ./exports/my_model --robot robot.yaml`
 
-**Plugin ownership:** Your team writes it. The framework loads it. No PR to our repos needed.
+**Plugin ownership:** Your team writes it, installs it, maintains it. Your dependencies are your problem. The framework loads it. No PR to our repos needed.
 
 ---
 
@@ -404,7 +426,7 @@ phyai validate ./exports/my_model
 
 ## When Plugins Aren't Enough: Subclass InferenceModel
 
-Plugins would cover most cases. **Subclass when orchestration itself must change:**
+Built‑in runners and pre/post cover most cases. **Subclass when orchestration itself must change:**
 
 | Need                                                     | Why subclass                                 |
 | -------------------------------------------------------- | -------------------------------------------- |
@@ -448,12 +470,12 @@ class PerceptionPolicyModel(InferenceModel):
 
 ## Proposed Adoption Timeline
 
-| Milestone   | What happens                                                                           |
-| ----------- | -------------------------------------------------------------------------------------- |
-| **Phase 1** | Extract inferencekit from getiaction. Separate package, same functionality.            |
-| **Phase 2** | Build physical‑ai‑framework: observation pipeline, safety, episode orchestration, CLI. |
-| **Phase 3** | Migrate getiaction deployment to use the framework. getiaction becomes a plugin.       |
-| **Phase 4** | Onboard LeRobot and custom models as plugins.                                          |
+| Milestone   | What happens                                                                                                                                |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Phase 1** | Extract inferencekit from getiaction. Separate package, same functionality.                                                                 |
+| **Phase 2** | Build physical‑ai‑framework: format loaders, built‑in runners, observation pipeline, safety, episode orchestration, CLI.                    |
+| **Phase 3** | Migrate getiaction deployment to use the framework. GetiAction models load natively via built‑in format loader + ActionChunkingRunner.      |
+| **Phase 4** | LeRobot models load natively via built‑in format loader (manifest.json → SinglePassRunner / IterativeRunner). No LeRobot dependency needed. |
 
 ---
 
@@ -474,30 +496,55 @@ class PerceptionPolicyModel(InferenceModel):
 ## Proposed Installation
 
 ```bash
-# Framework only (for custom models)
+# Framework only — includes format loaders + built-in runners
+# This is all you need for most exported models (GetiAction, LeRobot, custom ONNX)
 pip install physical-ai-framework
 
-# With GetiAction plugin
-pip install physical-ai-framework[getiaction]
-
-# With LeRobot plugin
-pip install physical-ai-framework[lerobot]
+# With a specific backend
+pip install physical-ai-framework[openvino]
+pip install physical-ai-framework[onnx-gpu]
 ```
 
-`physical-ai-framework[getiaction]` would **not** be a circular dependency — it's a pip convenience extra that pulls in the getiaction plugin package.
+**No `physical-ai-framework[getiaction]` or `physical-ai-framework[lerobot]` needed.** Built‑in format loaders and runners handle both metadata.yaml and manifest.json natively. No training framework required at deployment time.
+
+External plugins are only for exotic execution patterns — and those are the user's own package (`pip install my-exotic-plugin`).
 
 ---
 
 ## Key Decisions (Requesting Alignment)
 
-| Decision               | Proposed choice                              | Why                                                     |
-| ---------------------- | -------------------------------------------- | ------------------------------------------------------- |
-| Extract inference core | inferencekit as separate package             | Enables vision + robotics + custom domains on same base |
-| Interface ownership    | physical‑ai‑framework owns camera/robot ABCs | One direction. No circular deps.                        |
-| Subpackages vs repos   | Subpackages with import linting              | Versioned together. 3 repos not 5.                      |
-| Plugin mechanism       | `class_path` in metadata                     | Works without entry points. Day‑1 ready.                |
-| Framework scope        | Observation + safety + episodes + devices    | Not just a plugin loader. Real value.                   |
-| Dependency direction   | getiaction → framework → inferencekit        | Always one‑way. Framework never imports getiaction.     |
+| Decision               | Proposed choice                                          | Why                                                     |
+| ---------------------- | -------------------------------------------------------- | ------------------------------------------------------- |
+| Extract inference core | inferencekit as separate package                         | Enables vision + robotics + custom domains on same base |
+| Interface ownership    | physical‑ai‑framework owns camera/robot ABCs             | One direction. No circular deps.                        |
+| Subpackages vs repos   | Subpackages with import linting                          | Versioned together. 3 repos not 5.                      |
+| Model loading          | Built‑in format loaders (metadata.yaml, manifest.json)   | Zero external deps for common formats. Day‑1 ready.     |
+| Execution patterns     | Built‑in runners (SinglePass, Iterative, ActionChunking) | Most models need zero custom code.                      |
+| External plugins       | Only for exotic patterns; user's own package             | User's deps are user's problem. Framework stays thin.   |
+| Framework scope        | Observation + safety + episodes + devices                | Not just a loader. Real value.                          |
+| Dependency direction   | getiaction → framework → inferencekit                    | Always one‑way. Framework never imports getiaction.     |
+
+---
+
+## Lightweight Guarantee
+
+**`pip install physical-ai-framework` must stay thin.** This is a deployment package — it runs on edge devices, Jetsons, and servers.
+
+| Component                                                            | Where it lives                 | Heavy deps?               |
+| -------------------------------------------------------------------- | ------------------------------ | ------------------------- |
+| Format loaders (metadata.yaml, manifest.json)                        | Framework (built‑in)           | No — pure file parsing    |
+| Built‑in runners (SinglePass, Iterative, ActionChunking)             | Framework (built‑in)           | No — numpy only           |
+| Built‑in pre/post (ObservationNormalizer, ActionClamp, TensorResize) | Framework (built‑in)           | No — numpy only           |
+| Backend adapters (OpenVINO, ONNX, TensorRT)                          | inferencekit (optional extras) | Only the selected backend |
+| External plugins (exotic patterns)                                   | User's own package             | User's problem            |
+
+**What does NOT ship with the framework:**
+
+- No PyTorch
+- No training frameworks (getiaction, lerobot, etc.)
+- No heavy ML libraries
+
+The framework core is **format loaders + runners + orchestration**. All computation happens in the backend adapter (inferencekit), which installs only the backend you choose.
 
 ---
 
@@ -505,10 +552,11 @@ pip install physical-ai-framework[lerobot]
 
 1. **The problem is real** — teams duplicate deployment plumbing today
 2. **We propose two new packages** — inferencekit (extracted from getiaction) and physical‑ai‑framework (new)
-3. **One API, many plugins** — GetiAction, LeRobot, and custom models would deploy the same way
+3. **One API, zero external deps** — GetiAction, LeRobot, and custom models deploy the same way, using built‑in format loaders and runners
 4. **Framework owns the hard parts** — observation, safety, episodes, devices, validation
-5. **No circular dependencies** — one‑directional: getiaction → framework → inferencekit
-6. **Incremental path** — extract first, build framework second, migrate third
+5. **Lightweight by design** — `pip install physical-ai-framework` installs only the framework + inferencekit. No torch, no training frameworks. Heavy deps only come from user-owned external plugins for exotic patterns.
+6. **No circular dependencies** — one‑directional: getiaction → framework → inferencekit
+7. **Incremental path** — extract first, build framework second, migrate third
 
 ---
 
