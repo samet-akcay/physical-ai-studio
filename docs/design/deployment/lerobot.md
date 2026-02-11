@@ -1,4 +1,4 @@
-# inferencekit: LeRobot Integration Design
+# physical‑ai‑framework: LeRobot Integration Design
 
 **Status**: Proposal
 **Author**: [Your Name]
@@ -9,9 +9,9 @@
 
 ## Executive Summary
 
-This document describes how **inferencekit** integrates with LeRobot's PolicyPackage format. The integration is implemented as a plugin, allowing inferencekit to load and run LeRobot-exported policies while providing additional features (callbacks, multi-backend orchestration, instrumentation).
+This document describes how **physical‑ai‑framework** integrates with LeRobot's PolicyPackage format. The integration is implemented as a plugin, allowing physical‑ai‑framework to load and run LeRobot-exported policies while providing additional features (callbacks, multi-backend orchestration, instrumentation).
 
-**Key principle**: LeRobot defines the package format; inferencekit consumes it. No circular dependencies.
+**Key principle**: LeRobot defines the package format; physical‑ai‑framework consumes it. No circular dependencies.
 
 ---
 
@@ -19,7 +19,7 @@ This document describes how **inferencekit** integrates with LeRobot's PolicyPac
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
-│                         inferencekit                           │
+│                    physical‑ai‑framework                        │
 │                                                                │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐  │
 │  │   Adapters   │  │   Runners    │  │     Callbacks        │  │
@@ -50,7 +50,7 @@ This document describes how **inferencekit** integrates with LeRobot's PolicyPac
 
 ## 2. Shared Contract
 
-inferencekit and LeRobot agree on the **PolicyPackage** format defined in the [LeRobot Policy Export Design](./policy_export_design.md).
+physical‑ai‑framework and LeRobot agree on the **PolicyPackage** format defined in the [LeRobot Policy Export Design](./policy_export_design.md).
 
 ### Package Detection
 
@@ -70,17 +70,17 @@ def is_lerobot_package(path: Path) -> bool:
 
 ### Manifest Fields Used
 
-| Field            | inferencekit Usage                                                                     |
-| ---------------- | -------------------------------------------------------------------------------------- |
-| `format`         | Package type detection                                                                 |
-| `version`        | Schema compatibility check                                                             |
-| `policy.kind`    | Runner selection (`single_shot` → `SinglePassRunner`, `iterative` → `IterativeRunner`) |
-| `artifacts`      | Backend artifact paths                                                                 |
-| `io`             | Input/output validation                                                                |
-| `action`         | Action semantics (chunk_size, n_action_steps)                                          |
-| `iterative`      | Loop parameters (num_steps, scheduler)                                                 |
-| `normalization`  | Normalizer configuration                                                               |
-| `x-inferencekit` | Extension fields (callbacks, adapter options)                                          |
+| Field           | physical‑ai‑framework Usage                                                            |
+| --------------- | -------------------------------------------------------------------------------------- |
+| `format`        | Package type detection                                                                 |
+| `version`       | Schema compatibility check                                                             |
+| `policy.kind`   | Runner selection (`single_shot` → `SinglePassRunner`, `iterative` → `IterativeRunner`) |
+| `artifacts`     | Backend artifact paths                                                                 |
+| `io`            | Input/output validation                                                                |
+| `action`        | Action semantics (chunk_size, n_action_steps)                                          |
+| `iterative`     | Loop parameters (num_steps, scheduler)                                                 |
+| `normalization` | Normalizer configuration                                                               |
+| `x-physical-ai` | Extension fields (callbacks, adapter options)                                          |
 
 ---
 
@@ -89,9 +89,9 @@ def is_lerobot_package(path: Path) -> bool:
 ### Registration
 
 ```python
-# inferencekit/plugins/lerobot.py
+# physical_ai/plugins/lerobot.py
 
-from inferencekit.plugins import register_format
+from physical_ai.plugins import register_format
 
 @register_format("policy_package")
 class LeRobotPlugin:
@@ -128,7 +128,7 @@ class LeRobotPlugin:
         backend = backend or _select_default_backend(manifest)
         artifact_path = path / manifest["artifacts"][backend]
 
-        # Create adapter
+        # Create adapter (via inferencekit)
         adapter = get_adapter(backend)(artifact_path, device=device)
 
         # Select runner based on policy kind
@@ -151,7 +151,7 @@ class LeRobotPlugin:
 
 
 def _create_runner(kind: str, manifest: dict, **kwargs) -> InferenceRunner:
-    """Map LeRobot policy kind to inferencekit runner."""
+    """Map LeRobot policy kind to physical‑ai runner."""
     if kind == "single_shot":
         return SinglePassRunner()
 
@@ -168,9 +168,9 @@ def _create_runner(kind: str, manifest: dict, **kwargs) -> InferenceRunner:
 
 
 def _load_callbacks(manifest: dict) -> list[Callback]:
-    """Load callbacks from x-inferencekit extension."""
+    """Load callbacks from x-physical-ai extension."""
     callbacks = []
-    ext = manifest.get("x-inferencekit", {})
+    ext = manifest.get("x-physical-ai", {})
 
     for cb_config in ext.get("callbacks", []):
         if isinstance(cb_config, str):
@@ -186,40 +186,41 @@ def _load_callbacks(manifest: dict) -> list[Callback]:
 ### Installation
 
 ```bash
-# Install inferencekit with LeRobot support
-pip install inferencekit[lerobot]
+# Install physical‑ai‑framework with LeRobot support
+pip install physical-ai-framework[lerobot]
 
 # Or install the plugin separately
-pip install inferencekit-lerobot
+pip install physical-ai-lerobot
 ```
 
 ---
 
 ## 4. Usage Examples
 
-### Basic Usage
+### Basic Usage (Unified API)
 
 ```python
-from inferencekit import InferenceModel
+from physical_ai import InferenceModel
 
 # Load LeRobot package (auto-detected via plugin)
-model = InferenceModel.load("./pi0_exported")
+model = InferenceModel("./pi0_exported")
 
-# Run inference
+# Run inference (raw outputs)
 observation = {
     "observation.images.top": image_array,
     "observation.state": state_array,
 }
-action_chunk = model.predict(observation)
+outputs = model(observation)
+action_chunk = outputs["action"]
 ```
 
 ### With Callbacks
 
 ```python
-from inferencekit import InferenceModel
-from inferencekit.callbacks import TimingCallback, LoggingCallback
+from physical_ai import InferenceModel
+from physical_ai.callbacks import TimingCallback, LoggingCallback
 
-model = InferenceModel.load(
+model = InferenceModel(
     "./pi0_exported",
     callbacks=[
         TimingCallback(),
@@ -227,8 +228,8 @@ model = InferenceModel.load(
     ],
 )
 
-# Callbacks fire automatically on predict()
-action = model.predict(observation)
+# Callbacks fire automatically on predict
+action = model(observation)
 # -> logs timing and output summary
 ```
 
@@ -236,26 +237,23 @@ action = model.predict(observation)
 
 ```python
 # Override num_steps at load time (no re-export needed)
-model = InferenceModel.load(
+model = InferenceModel(
     "./pi0_exported",
     num_steps=20,  # Override manifest default of 10
     scheduler="ddim",
 )
 ```
 
-### Real-Time Control with Action Queue
+### Real-Time Control (Policy API)
 
 ```python
-from inferencekit import InferenceModel
-from inferencekit.wrappers import ActionQueueWrapper
+from physical_ai import InferenceModel
 
-model = InferenceModel.load("./pi0_exported")
-wrapper = ActionQueueWrapper(model)
+policy = InferenceModel("./pi0_exported")
+policy.reset()
 
-# Episode loop
-wrapper.reset()
 while not done:
-    action = wrapper.select_action(observation)  # Returns single action
+    action = policy.select_action(observation)
     observation, reward, done, info = env.step(action)
 ```
 
@@ -263,14 +261,14 @@ while not done:
 
 ```python
 # Use specific backend
-model = InferenceModel.load(
+model = InferenceModel(
     "./pi0_exported",
     backend="onnx",
     device="cuda:0",
 )
 
 # Or with adapter options
-model = InferenceModel.load(
+model = InferenceModel(
     "./pi0_exported",
     backend="onnx",
     adapter_options={
@@ -283,7 +281,7 @@ model = InferenceModel.load(
 
 ## 5. Extension Fields
 
-inferencekit-specific configuration can be embedded in the manifest under `x-inferencekit`:
+physical‑ai‑framework-specific configuration can be embedded in the manifest under `x-physical-ai`:
 
 ```json
 {
@@ -293,7 +291,7 @@ inferencekit-specific configuration can be embedded in the manifest under `x-inf
   "policy": { ... },
   "artifacts": { ... },
 
-  "x-inferencekit": {
+"x-physical-ai": {
     "callbacks": [
       "timing",
       {"class_path": "myproject.callbacks.SafetyCallback", "init_args": {"max_velocity": 1.0}}
@@ -303,7 +301,7 @@ inferencekit-specific configuration can be embedded in the manifest under `x-inf
       "graph_optimization_level": "all"
     },
     "preprocessors": [
-      {"class_path": "inferencekit.preprocessors.ImageNormalize", "init_args": {"mean": [0.485, 0.456, 0.406]}}
+{"class_path": "physical_ai.preprocessors.ImageNormalize", "init_args": {"mean": [0.485, 0.456, 0.406]}}
     ]
   }
 }
@@ -318,18 +316,18 @@ inferencekit-specific configuration can be embedded in the manifest under `x-inf
 | `preprocessors`  | `list[PreprocessorConfig]`    | Input preprocessors     |
 | `postprocessors` | `list[PostprocessorConfig]`   | Output postprocessors   |
 
-**Note**: LeRobot ignores `x-inferencekit` fields entirely. They are only read by inferencekit.
+**Note**: LeRobot ignores `x-physical-ai` fields entirely. They are only read by physical‑ai‑framework.
 
 ---
 
 ## 6. Runner Mapping
 
-### LeRobot `policy.kind` → inferencekit Runner
+### LeRobot `policy.kind` → physical‑ai Runner
 
-| LeRobot Kind  | inferencekit Runner | Notes                            |
-| ------------- | ------------------- | -------------------------------- |
-| `single_shot` | `SinglePassRunner`  | Direct forward pass              |
-| `iterative`   | `IterativeRunner`   | Configurable loop with scheduler |
+| LeRobot Kind  | physical‑ai Runner | Notes                            |
+| ------------- | ------------------ | -------------------------------- |
+| `single_shot` | `SinglePassRunner` | Direct forward pass              |
+| `iterative`   | `IterativeRunner`  | Configurable loop with scheduler |
 
 ### IterativeRunner Configuration
 
@@ -384,12 +382,12 @@ class IterativeRunner(InferenceRunner):
 
 ## 7. Callbacks for Robotics
 
-inferencekit provides callbacks useful for robotics applications:
+physical‑ai‑framework provides callbacks useful for robotics applications:
 
 ### ActionSafetyCallback
 
 ```python
-# inferencekit/callbacks/safety.py
+# physical_ai/callbacks/safety.py
 
 class ActionSafetyCallback(Callback):
     """Clamp actions to safe ranges."""
@@ -428,7 +426,7 @@ class ActionSafetyCallback(Callback):
 ### EpisodeLoggingCallback
 
 ```python
-# inferencekit/callbacks/logging.py
+# physical_ai/callbacks/logging.py
 
 class EpisodeLoggingCallback(Callback):
     """Log episode data for replay/debugging."""
@@ -462,7 +460,7 @@ class EpisodeLoggingCallback(Callback):
 
 ## 8. Metadata File Format
 
-inferencekit supports both YAML and JSON metadata:
+physical‑ai‑framework supports both YAML and JSON metadata:
 
 ### Loading Priority
 
@@ -479,23 +477,23 @@ def load_metadata(path: Path) -> dict:
 
 ### Format Comparison
 
-| Aspect               | `manifest.json` (LeRobot) | `metadata.yaml` (inferencekit) |
-| -------------------- | ------------------------- | ------------------------------ |
-| Primary use          | LeRobot packages          | inferencekit-native packages   |
-| Human editing        | Harder (no comments)      | Easier (comments, cleaner)     |
-| Parsing speed        | Faster                    | Slightly slower                |
-| `class_path` support | No (pure data)            | Yes (power users)              |
+| Aspect               | `manifest.json` (LeRobot) | `metadata.yaml` (physical‑ai) |
+| -------------------- | ------------------------- | ----------------------------- |
+| Primary use          | LeRobot packages          | inferencekit-native packages  |
+| Human editing        | Harder (no comments)      | Easier (comments, cleaner)    |
+| Parsing speed        | Faster                    | Slightly slower               |
+| `class_path` support | No (pure data)            | Yes (power users)             |
 
 ### Unified Loading
 
-inferencekit handles both transparently:
+physical‑ai‑framework handles both transparently:
 
 ```python
 # Works with LeRobot packages (manifest.json)
-model = InferenceModel.load("./lerobot_package")
+model = InferenceModel("./lerobot_package")
 
-# Works with inferencekit packages (metadata.yaml)
-model = InferenceModel.load("./inferencekit_package")
+# Works with physical‑ai packages (metadata.yaml)
+model = InferenceModel("./physical_ai_package")
 
 # Format detected automatically
 ```
@@ -510,7 +508,7 @@ model = InferenceModel.load("./inferencekit_package")
 # tests/plugins/test_lerobot_plugin.py
 
 class TestLeRobotPluginConformance:
-    """Verify inferencekit correctly loads LeRobot packages."""
+"""Verify physical‑ai‑framework correctly loads LeRobot packages."""
 
     def test_detect_lerobot_package(self, lerobot_package_path):
         """Plugin detects LeRobot packages."""
@@ -518,24 +516,24 @@ class TestLeRobotPluginConformance:
 
     def test_load_single_shot(self, act_package_path):
         """Load single_shot policy."""
-        model = InferenceModel.load(act_package_path)
+        model = InferenceModel(act_package_path)
         assert isinstance(model.runner, SinglePassRunner)
 
     def test_load_iterative(self, pi0_package_path):
         """Load iterative policy."""
-        model = InferenceModel.load(pi0_package_path)
+        model = InferenceModel(pi0_package_path)
         assert isinstance(model.runner, IterativeRunner)
         assert model.runner.num_steps == 10  # from manifest
 
     def test_override_num_steps(self, pi0_package_path):
         """Override iterative params at load time."""
-        model = InferenceModel.load(pi0_package_path, num_steps=20)
+        model = InferenceModel(pi0_package_path, num_steps=20)
         assert model.runner.num_steps == 20
 
     def test_parity_with_lerobot_runtime(self, pi0_package_path):
         """Output matches LeRobot's own runtime."""
-        # Load with inferencekit
-        ik_model = InferenceModel.load(pi0_package_path)
+# Load with physical‑ai‑framework
+        ik_model = InferenceModel(pi0_package_path)
 
         # Load with LeRobot
         from lerobot.export import load as lerobot_load
@@ -544,7 +542,7 @@ class TestLeRobotPluginConformance:
         # Compare outputs
         obs = generate_test_observation()
         np.random.seed(42)
-        ik_output = ik_model.predict(obs)
+        ik_output = ik_model(obs)
         np.random.seed(42)
         lr_output = lr_runtime.predict_action_chunk(obs)
 
@@ -555,19 +553,19 @@ class TestLeRobotPluginConformance:
 
 ## 10. Summary
 
-### What inferencekit Adds Over LeRobot Runtime
+### What physical‑ai‑framework Adds Over LeRobot Runtime
 
-| Feature                             | LeRobot Runtime | inferencekit |
-| ----------------------------------- | --------------- | ------------ |
-| Load PolicyPackage                  | ✓               | ✓            |
-| Single-shot inference               | ✓               | ✓            |
-| Iterative inference                 | ✓               | ✓            |
-| Action queue wrapper                | ✓               | ✓            |
-| Callbacks (timing, logging, safety) | ✗               | ✓            |
-| Multi-backend with fallback         | ✗               | ✓            |
-| Preprocessor/postprocessor chains   | ✗               | ✓            |
-| Plugin system for other formats     | ✗               | ✓            |
-| YAML metadata support               | ✗               | ✓            |
+| Feature                             | LeRobot Runtime | physical‑ai‑framework |
+| ----------------------------------- | --------------- | --------------------- |
+| Load PolicyPackage                  | ✓               | ✓                     |
+| Single-shot inference               | ✓               | ✓                     |
+| Iterative inference                 | ✓               | ✓                     |
+| Action queue wrapper                | ✓               | ✓                     |
+| Callbacks (timing, logging, safety) | ✗               | ✓                     |
+| Multi-backend with fallback         | ✗               | ✓                     |
+| Preprocessor/postprocessor chains   | ✗               | ✓                     |
+| Plugin system for other formats     | ✗               | ✓                     |
+| YAML metadata support               | ✗               | ✓                     |
 
 ### Dependency Direction
 
@@ -580,19 +578,19 @@ PolicyPackage format (manifest.json)                       │
     │                                                      │
     │ consumed by                                          │
     ▼                                                      │
-inferencekit (via plugin) ◄────────────────────────────────┘
+physical‑ai‑framework (via plugin) ◄──────────────────────┘
                               no dependency on LeRobot code
 ```
 
-**LeRobot does not depend on inferencekit.**
-**inferencekit can load LeRobot packages without importing LeRobot.**
+**LeRobot does not depend on physical‑ai‑framework.**
+**physical‑ai‑framework can load LeRobot packages without importing LeRobot.**
 
 ---
 
 ## Related Documents
 
-- **[Strategy](../strategy.md)** - Big-picture architecture (inferencekit → getiaction → physical‑ai‑framework)
-- **[inferencekit Design](./inferencekit.md)** - Generic inference package design
+- **[Strategy](../strategy.md)** - Big-picture architecture
+- **[inferencekit Design](./inferencekit.md)** - Base execution engine
 
 ---
 

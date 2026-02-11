@@ -799,7 +799,7 @@ For reactive/event-driven systems, use callbacks instead of polling:
 class FrameProcessor(Callback):
     def on_frame(self, camera, frame):
         # Called automatically when new frame arrives
-        result = model.predict(frame)
+        result = model(frame)
         display(result)
 
 # Register callback
@@ -876,7 +876,7 @@ from getiaction.cameras import RealSense
 from getiaction.robots import SO101
 from getiaction.inference import InferenceModel
 
-policy = InferenceModel.load("./exports/act_policy")
+policy = InferenceModel("./exports/act_policy")
 robot = SO101.from_config("robot.yaml")
 camera = RealSense(fps=30)
 

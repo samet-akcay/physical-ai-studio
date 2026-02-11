@@ -240,7 +240,7 @@ from getiaction.cameras import Webcam
 
 robot = SO101.from_config("robot.yaml")
 camera = Webcam.from_config("camera.yaml")
-policy = InferenceModel.load("./exports/act_policy")
+policy = InferenceModel("./exports/act_policy")
 
 with robot, camera:
     obs = robot.get_observation(format="lerobot")

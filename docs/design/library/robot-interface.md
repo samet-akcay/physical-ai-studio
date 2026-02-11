@@ -95,7 +95,7 @@ pip install getiaction[lerobot]
 from getiaction.inference import InferenceModel
 from getiaction.robots import SO101
 
-policy = InferenceModel.load("./exports/act_policy")
+policy = InferenceModel("./exports/act_policy")
 robot = SO101.from_config("robot.yaml")
 
 with robot:
@@ -399,7 +399,7 @@ with robot:
 from getiaction.inference import InferenceModel
 from getiaction.robots import SO101
 
-policy = InferenceModel.load("./exports/act_policy")
+policy = InferenceModel("./exports/act_policy")
 robot = SO101.from_config("robot.yaml")
 
 with robot:
@@ -446,7 +446,7 @@ from getiaction.robots import Robot, SO101
 class InferenceWorker:
     def __init__(self, robot: Robot, model_path: str):
         self.robot = robot
-        self.policy = InferenceModel.load(model_path)
+        self.policy = InferenceModel(model_path)
 ```
 
 One interface, multiple usage patterns.

@@ -9,7 +9,7 @@ Architecture and design documents for Geti Action — an end-to-end platform for
 **[Strategy](./strategy.md)** — The two core architectural decisions:
 
 1. Library-first: the library owns all components, the application is just UI/orchestration
-2. Three-layer deployment stack: inferencekit → getiaction → physical‑ai‑framework
+2. Layered deployment stack: inferencekit (base) → physical‑ai‑framework (universal physical‑AI engine) → plugins (getiaction, LeRobot, custom). Vision remains model_api → inferencekit.
 
 ---
 
@@ -26,13 +26,13 @@ Components owned by the **library** (`pip install getiaction`) — the building 
 
 ## Deployment Stack
 
-The inference and deployment architecture: **inferencekit** (generic) → **getiaction** (robotics) → **physical‑ai‑framework** (shell).
+The inference and deployment architecture: **inferencekit** (base engine) → **physical‑ai‑framework** (universal physical‑AI engine) → **plugins** (getiaction, LeRobot, custom). Vision remains a separate domain layer (**model_api**) on inferencekit.
 
-| Component           | Document                                             | Description                                                          |
-| ------------------- | ---------------------------------------------------- | -------------------------------------------------------------------- |
-| Inference Engine    | [inferencekit](./deployment/inferencekit.md)         | Domain-agnostic inference: InferenceModel, RuntimeAdapter, callbacks |
-| Deployment Shell    | [Deployment Shell](./deployment/deployment-shell.md) | physical‑ai‑framework CLI, configuration, packaging                  |
-| LeRobot Integration | [LeRobot Integration](./deployment/lerobot.md)       | PolicyPackage plugin, runner mapping, extension fields               |
+| Component           | Document                                             | Description                                                             |
+| ------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------- |
+| Inference Engine    | [inferencekit](./deployment/inferencekit.md)         | Base execution engine: RuntimeAdapter, metadata IO, base InferenceModel |
+| Deployment Engine   | [Deployment Shell](./deployment/deployment-shell.md) | physical‑ai‑framework universal engine, CLI, plugin registry            |
+| LeRobot Integration | [LeRobot Integration](./deployment/lerobot.md)       | LeRobot plugin for physical‑ai‑framework                                |
 
 ## Internal Notes
 
@@ -56,7 +56,7 @@ docs/design/
 │   └── data-collection.md                 # Data collection API
 │
 ├── deployment/                            # Deployment stack
-│   ├── inferencekit.md                    # Generic inference package
+│   ├── inferencekit.md                    # Base inference framework
 │   ├── deployment-shell.md                # physical-ai-framework (CLI)
 │   └── lerobot.md                         # LeRobot PolicyPackage integration
 │
@@ -85,8 +85,8 @@ docs/design/
 
 ### For Deployment
 
-1. **[Strategy § Part 2](./strategy.md#part-2-deployment-stack)** — three-layer architecture
-2. **[inferencekit](./deployment/inferencekit.md)** — generic inference layer
+1. **[Strategy § Part 2](./strategy.md#part-2-deployment-stack)** — layered architecture
+2. **[inferencekit](./deployment/inferencekit.md)** — base inference framework and plugin system
 3. **[Deployment Shell](./deployment/deployment-shell.md)** — CLI and configuration
 
 ---
@@ -107,6 +107,7 @@ When updating these documents:
 
 | Version | Date       | Changes                                                                 |
 | ------- | ---------- | ----------------------------------------------------------------------- |
+| 5.1     | 2026-02-09 | Updated deployment stack to physical‑ai‑framework as universal engine   |
 | 4.0     | 2026-02-06 | Reorganized into library/ + deployment/ to reflect ownership boundaries |
 | 3.0     | 2026-02-06 | Reorganized into strategy + components/integrations/internal            |
 | 2.0     | 2026-02-05 | Restructured with physical‑ai‑framework codename                        |
@@ -114,4 +115,4 @@ When updating these documents:
 
 ---
 
-_Last Updated: 2026-02-06_
+_Last Updated: 2026-02-09_
