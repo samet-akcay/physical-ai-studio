@@ -50,6 +50,8 @@ phyai run --model hf://getiaction/act_policy --robot robot.yaml
 
 ### Persona B — LeRobot user (PolicyPackage)
 
+> **Note:** LeRobot PolicyPackage export is our proposal to the LeRobot team — not yet accepted upstream. This persona assumes the proposed format is adopted.
+
 **Goal:** Run a LeRobot policy package through physical‑ai‑framework.
 
 **Install:**
@@ -120,10 +122,11 @@ outputs = model(inputs)
                     ActionChunking)
                         │
                         ▼
-                inferencekit (base)
+              physical_ai.inference
+           (domain-agnostic modular layer)
 ```
 
-**Key principle:** physical‑ai‑framework owns physical‑AI orchestration, hardware lifecycle, and safety. Built‑in format loaders and runners handle common models (getiaction, LeRobot). External plugins are only for exotic execution patterns — user's own package, user's own dependencies. Backend execution lives in inferencekit.
+**Key principle:** physical‑ai‑framework owns physical‑AI orchestration, hardware lifecycle, and safety. Built‑in format loaders and runners handle common models (getiaction, LeRobot). External plugins are only for exotic execution patterns — user's own package, user's own dependencies. Backend execution lives in the inference core (`physical_ai.inference`), a domain‑agnostic modular layer inside the framework that can be silently extracted as a separate package later.
 
 ---
 
@@ -137,8 +140,8 @@ Two approaches for **camera + robot + inference interfaces**. Both are technical
 physical‑ai‑framework
   ├─ camera interfaces (physical_ai.camera)
   ├─ robot interfaces  (physical_ai.robot)
-  ├─ inferencekit (base)
-   └─ format loaders + runners + CLI
+  ├─ inference core    (physical_ai.inference — domain-agnostic modular layer)
+  └─ format loaders + runners + CLI
           ▲
           │ depends on (hard dependency)
      getiaction (training)
@@ -147,18 +150,19 @@ physical‑ai‑framework
 **Why this works:**
 
 - **No circular dependency.** getiaction depends on physical‑ai‑framework. physical‑ai‑framework loads models at runtime via format loaders and `class_path` — never imports getiaction at install time. One-directional dependency.
-- **Fewer repos (3 instead of 5+).** Only inferencekit, physical‑ai‑framework, and getiaction. Less coordination overhead, simpler CI, fewer version matrices.
+- **Fewer repos (2 instead of 5+).** Only physical‑ai‑framework and getiaction. Less coordination overhead, simpler CI, fewer version matrices.
 - **One package for all hardware interfaces.** Teams install physical‑ai‑framework and get cameras, robots, inference, CLI, safety — everything needed for deployment.
 - **Future split is cheap.** Camera/robot interfaces live in clean subpackages (`physical_ai.camera`, `physical_ai.robot`) with no cross-imports. If a vision-only consumer needs camera-api standalone, extract it then. Merging repos later is much harder than splitting.
 
 **Dependency graph:**
 
 ```
-getiaction → physical‑ai‑framework → inferencekit
+getiaction → physical‑ai‑framework
                   │
-                  ├── physical_ai.camera  (clean subpackage)
-                  ├── physical_ai.robot   (clean subpackage)
-                   └── physical_ai.engine  (format loaders, runners, CLI, safety)
+                  ├── physical_ai.camera     (clean subpackage)
+                  ├── physical_ai.robot      (clean subpackage)
+                  ├── physical_ai.inference  (domain-agnostic modular layer)
+                  └── physical_ai.engine     (format loaders, runners, CLI, safety)
 ```
 
 **Condition:** Camera/robot subpackages must have **zero imports** from the rest of physical‑ai‑framework. This is enforced by import linting and makes future extraction trivial.
@@ -183,7 +187,7 @@ getiaction   physical‑ai‑framework
 - You need getiaction installable **without** physical-ai-framework (e.g., for CI environments that only run training, no hardware).
 - Multiple teams independently maintain camera and robot interfaces with separate release cadences.
 
-**Cost:** 5+ repos instead of 3. Every release requires coordinating versions across camera-api, robot-api, inferencekit, physical-ai-framework, and getiaction. This is real overhead.
+**Cost:** 5+ repos instead of 2. Every release requires coordinating versions across camera-api, robot-api, physical-ai-framework, and getiaction. This is real overhead.
 
 **Verdict:** Option 2 is the right choice when the ecosystem is large enough to justify the coordination cost. Start with Option 1 and split when a concrete consumer forces it.
 
@@ -196,18 +200,18 @@ getiaction   physical‑ai‑framework
 ### Dependency (who depends on whom)
 
 ```
-getiaction → physical‑ai‑framework → inferencekit
+getiaction → physical‑ai‑framework
 ```
 
-getiaction depends on physical‑ai‑framework for camera/robot interfaces.
-physical‑ai‑framework depends on inferencekit for backend execution.
+getiaction depends on physical‑ai‑framework for camera/robot interfaces and the inference runtime.
+physical‑ai‑framework contains the inference core (`physical_ai.inference`) as an internal modular layer.
 physical‑ai‑framework loads models at runtime via format loaders (no install-time dependency on getiaction).
 
 ### Runtime dataflow (what happens during inference)
 
 ```
-camera → observation → getiaction preprocessor
-     → inferencekit adapter/run → getiaction postprocessor → action → robot
+camera → observation → preprocessor (built‑in or external)
+     → runner.run(adapter, inputs) → postprocessor → action → robot
 ```
 
 ---
@@ -218,7 +222,7 @@ This section explains **how physical‑ai‑framework resolves format loaders, b
 
 **Inference ownership (explicit):**
 
-- **inferencekit** owns backend execution and the base `InferenceModel`
+- **Inference core** (`physical_ai.inference`) owns backend execution and the base `InferenceModel`
 - **Built‑in runners/pre/post** own common execution patterns (SinglePass, Iterative, ActionChunking)
 - **External plugins** own exotic execution patterns (user's own package)
 - **physical‑ai‑framework** owns orchestration, hardware lifecycle, safety, and the unified API that loads models
@@ -230,9 +234,9 @@ This section explains **how physical‑ai‑framework resolves format loaders, b
 1. `metadata.yaml`
 2. `metadata.yml`
 3. `metadata.json`
-4. `manifest.json` (LeRobot PolicyPackage)
+4. `manifest.json` (LeRobot PolicyPackage — proposed format, pending upstream acceptance)
 
-**Why this matters:** it lets both **physical‑ai** and **LeRobot** packages work without special‑casing. Both formats are parsed by built‑in format loaders — no external imports needed.
+**Why this matters:** it lets both **physical‑ai** and **LeRobot** packages work without special‑casing. Both formats are parsed by built‑in format loaders — no external imports needed. The LeRobot manifest.json format is our proposal; if the upstream format differs, the loader adapts.
 
 ```
 model path/URI
@@ -279,7 +283,7 @@ outputs / action
 **Notes:**
 
 - `select_action()` wraps `__call__` to return actions.
-- Backends execute inside **inferencekit adapters**.
+- Backends execute inside **inference core adapters** (`physical_ai.inference.adapters`).
 
 ### 4) CLI → Config → Runtime Resolution
 
@@ -297,7 +301,7 @@ Priority: CLI > config file > defaults
 model.backend / model.device
           │
           ▼
-inferencekit adapter
+inference core adapter (physical_ai.inference)
           │
           ▼
 hardware runtime
@@ -316,7 +320,7 @@ The framework ships built‑in implementations for common patterns. External plu
 
 External plugins supply additional runners/pre/post via `class_path` in metadata.
 
-See **[inferencekit Design](./inferencekit.md)** and **[LeRobot Integration](./lerobot.md)** for detailed contracts.
+See **[Inference Core Design](./inferencekit.md)** and **[LeRobot Integration](./lerobot.md)** for detailed contracts.
 
 ---
 
@@ -368,28 +372,28 @@ With the engine, teams supply a `metadata.yaml` pointing to built‑in runners a
 Three `InferenceModel` classes exist across the stack. This is intentional — each layer adds domain-specific behavior.
 
 ```
-inferencekit.InferenceModel          ← base: load model, run forward pass
+physical_ai.inference.InferenceModel     ← base: load model, run forward pass
         │
         │  subclasses / wraps
         ▼
-physical_ai.InferenceModel           ← adds: select_action(), reset(), safety,
-        │                               observation pipeline, episode management
+physical_ai.InferenceModel               ← adds: select_action(), reset(), safety,
+        │                                   observation pipeline, episode management
         │  (getiaction uses this for deployment)
         │
         │  library-only shortcut
         ▼
-getiaction.inference.InferenceModel  ← re-exports physical_ai.InferenceModel
-                                       for library-only usage without deploying
-                                       through the engine
+getiaction.inference.InferenceModel      ← re-exports physical_ai.InferenceModel
+                                           for library-only usage without deploying
+                                           through the engine
 ```
 
 **Which one do users import?**
 
-| Use case                           | Import                                            | Why                                                        |
-| ---------------------------------- | ------------------------------------------------- | ---------------------------------------------------------- |
-| Deploying any policy (recommended) | `from physical_ai import InferenceModel`          | Full engine: safety, observation pipeline, CLI integration |
-| Raw inference without engine       | `from inferencekit import InferenceModel`         | Just model + backend, no robotics concerns                 |
-| getiaction library scripts         | `from getiaction.inference import InferenceModel` | Convenience re-export; same as physical_ai.InferenceModel  |
+| Use case                           | Import                                             | Why                                                        |
+| ---------------------------------- | -------------------------------------------------- | ---------------------------------------------------------- |
+| Deploying any policy (recommended) | `from physical_ai import InferenceModel`           | Full engine: safety, observation pipeline, CLI integration |
+| Raw inference without engine       | `from physical_ai.inference import InferenceModel` | Just model + backend, no robotics concerns                 |
+| getiaction library scripts         | `from getiaction.inference import InferenceModel`  | Convenience re-export; same as physical_ai.InferenceModel  |
 
 ---
 
@@ -421,10 +425,10 @@ Built‑in runners, preprocessors, postprocessors, and callbacks cover most cust
 Subclass at the **lowest layer that gives you what you need**:
 
 ```
-inferencekit.InferenceModel          ← subclass here for non-robotics domains
+physical_ai.inference.InferenceModel     ← subclass here for non-robotics domains
         │
         ▼
-physical_ai.InferenceModel           ← subclass here for robotics with custom orchestration
+physical_ai.InferenceModel               ← subclass here for robotics with custom orchestration
 ```
 
 ### Example: Multi-model pipeline
@@ -447,7 +451,7 @@ class PerceptionPolicyModel(InferenceModel):
 ### Example: Custom lifecycle methods
 
 ```python
-from inferencekit import InferenceModel as BaseModel
+from physical_ai.inference import InferenceModel as BaseModel
 
 class WarmableModel(BaseModel):
     """Adds warm-up pass for buffer pre-allocation."""
@@ -499,7 +503,7 @@ exports/my_model/
 backend: onnx
 
 runner:
-  class_path: inferencekit.runners.SinglePassRunner
+  class_path: physical_ai.runners.SinglePassRunner
   init_args: {}
 
 preprocessors: []
@@ -535,12 +539,12 @@ my_policy_plugin/
 [project]
 name = "my-policy-plugin"
 version = "0.1.0"
-dependencies = ["inferencekit"]
+dependencies = ["physical-ai-framework"]
 ```
 
 ```python
 # my_policy_plugin/preprocessor.py
-from inferencekit.preprocessors import Preprocessor
+from physical_ai.inference.preprocessors import Preprocessor
 
 class MyObservationNormalizer(Preprocessor):
     def __init__(self, mean, std):
@@ -554,7 +558,7 @@ class MyObservationNormalizer(Preprocessor):
 
 ```python
 # my_policy_plugin/runner.py
-from inferencekit.runners import InferenceRunner
+from physical_ai.inference.runners import InferenceRunner
 
 class MyIterativeRunner(InferenceRunner):
     def __init__(self, num_steps: int = 10):
@@ -908,6 +912,7 @@ pip install physical-ai-framework[all]
 
 **Contains:**
 
+- Inference core (`physical_ai.inference`) — domain-agnostic modular layer: RuntimeAdapter, backend abstraction, metadata IO, base InferenceModel
 - Unified inference runtime for physical‑AI policies (`InferenceModel`)
 - Observation pipeline (camera → observation dict)
 - Safety runtime (action clamping, velocity limits, emergency stop)
@@ -921,7 +926,6 @@ pip install physical-ai-framework[all]
 
 **Does NOT contain:**
 
-- Backend execution (lives in inferencekit)
 - Vision model wrappers and preprocessing (lives in model_api)
 - Training code (lives in getiaction)
 - Exotic policy-specific runners, pre/postprocessors (lives in external plugins — user's own package)
@@ -931,7 +935,7 @@ pip install physical-ai-framework[all]
 ## Related Documentation
 
 - **[Strategy](../strategy.md)** - Big-picture architecture
-- **[inferencekit Design](./inferencekit.md)** - Core inference package
+- **[Inference Core Design](./inferencekit.md)** - Domain-agnostic inference layer design
 - **[Robot Interface Design](../library/robot-interface.md)** - Robot interface specification
 
 ---

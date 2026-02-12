@@ -5,13 +5,18 @@
 **Date**: 2026-01-13
 **Relates to**: [LeRobot Policy Export Design](./policy_export_design.md)
 
+> **Important: LeRobot export is our proposal, not an agreed standard.**
+> The PolicyPackage format (`manifest.json`) described in this document is a design we have proposed to the LeRobot team. It has **not yet been reviewed or accepted** upstream. If the LeRobot team adopts a different export format or modifies the proposed schema, this integration design will need to adapt accordingly. The architectural approach (built‑in format loader, no lerobot dependency at runtime) remains valid regardless of the final format — only the loader implementation would change.
+
 ---
 
 ## Executive Summary
 
-This document describes how **physical‑ai‑framework** integrates with LeRobot's PolicyPackage format. The integration is implemented as a **built‑in format loader** — the framework reads `manifest.json` (pure JSON, no lerobot import) and maps `policy.kind` to built‑in runners. No LeRobot dependency is needed at deployment time.
+This document describes how **physical‑ai‑framework** would integrate with LeRobot's proposed PolicyPackage format. The integration would be implemented as a **built‑in format loader** — the framework reads `manifest.json` (pure JSON, no lerobot import) and maps `policy.kind` to built‑in runners. No LeRobot dependency would be needed at deployment time.
 
-**Key principle**: LeRobot defines the package format; physical‑ai‑framework consumes it via a built‑in format loader. No circular dependencies. No external plugin needed.
+**Key principle**: LeRobot would define the package format; physical‑ai‑framework consumes it via a built‑in format loader. No circular dependencies. No external plugin needed.
+
+**Note on status**: The PolicyPackage export format is our proposal to the LeRobot team (see [LeRobot Export Suggestions](../internal/lerobot-export-suggestions.md)). The format details below reflect our proposed design. The integration approach is sound regardless of the final format the LeRobot team adopts.
 
 ---
 
@@ -48,9 +53,9 @@ This document describes how **physical‑ai‑framework** integrates with LeRobo
 
 ---
 
-## 2. Shared Contract
+## 2. Shared Contract (Proposed)
 
-physical‑ai‑framework and LeRobot agree on the **PolicyPackage** format defined in the [LeRobot Policy Export Design](./policy_export_design.md).
+physical‑ai‑framework and LeRobot would agree on the **PolicyPackage** format defined in the [LeRobot Policy Export Design](./policy_export_design.md). This format is our proposal — the final contract depends on LeRobot team acceptance.
 
 ### Package Detection
 
@@ -128,7 +133,7 @@ class LeRobotFormatLoader:
         backend = backend or _select_default_backend(manifest)
         artifact_path = path / manifest["artifacts"][backend]
 
-        # Create adapter (via inferencekit)
+        # Create adapter (via inference core)
         adapter = get_adapter(backend)(artifact_path, device=device)
 
         # Select runner based on policy kind
@@ -480,7 +485,7 @@ def load_metadata(path: Path) -> dict:
 
 | Aspect               | `manifest.json` (LeRobot) | `metadata.yaml` (physical‑ai) |
 | -------------------- | ------------------------- | ----------------------------- |
-| Primary use          | LeRobot packages          | inferencekit-native packages  |
+| Primary use          | LeRobot packages          | physical‑ai native packages   |
 | Human editing        | Harder (no comments)      | Easier (comments, cleaner)    |
 | Parsing speed        | Faster                    | Slightly slower               |
 | `class_path` support | No (pure data)            | Yes (power users)             |
@@ -586,14 +591,17 @@ physical‑ai‑framework (built‑in format loader) ◄────────
 **LeRobot does not depend on physical‑ai‑framework.**
 **physical‑ai‑framework can load LeRobot packages without importing LeRobot.**
 
+> **Reminder:** This integration depends on LeRobot adopting the proposed PolicyPackage export format. If LeRobot adopts a different format, the format loader implementation changes but the architecture (built‑in loader, no runtime dependency) remains the same.
+
 ---
 
 ## Related Documents
 
 - **[Strategy](../strategy.md)** - Big-picture architecture
-- **[inferencekit Design](./inferencekit.md)** - Base execution engine
+- **[Inference Core Design](./inferencekit.md)** - Domain-agnostic inference layer
+- **[LeRobot Export Suggestions](../internal/lerobot-export-suggestions.md)** - Our proposed improvements to LeRobot's export API
 
 ---
 
-_Document version: 2.0_
-_Last updated: 2026-02-11_
+_Document version: 2.1_
+_Last updated: 2026-02-12_

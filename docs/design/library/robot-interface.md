@@ -592,7 +592,7 @@ Users can convert to torch at the policy boundary if needed.
 
 ## References
 
-- [Strategy](../strategy.md) - Big-picture architecture (inferencekit → getiaction → physical‑ai‑framework)
+- [Strategy](../strategy.md) - Big-picture architecture (getiaction → physical‑ai‑framework)
 - [Camera Interface Design](./camera-interface.md) - Detailed camera interface specification
 - [Teleoperation API](./teleoperation.md) - Teleoperation design
 

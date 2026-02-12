@@ -9,7 +9,7 @@ Architecture and design documents for Geti Action — an end-to-end platform for
 **[Strategy](./strategy.md)** — The two core architectural decisions:
 
 1. Library-first: the library owns all components, the application is just UI/orchestration
-2. Layered deployment stack: inferencekit (base) → physical‑ai‑framework (universal physical‑AI engine with built‑in format loaders and runners) → external plugins (exotic patterns only). Vision remains model_api → inferencekit.
+2. Layered deployment stack: physical‑ai‑framework (universal physical‑AI engine with inference core as internal modular layer, built‑in format loaders and runners) → external plugins (exotic patterns only). Vision (model_api) can share the inference core.
 
 ---
 
@@ -26,13 +26,13 @@ Components owned by the **library** (`pip install getiaction`) — the building 
 
 ## Deployment Stack
 
-The inference and deployment architecture: **inferencekit** (base engine) → **physical‑ai‑framework** (universal physical‑AI engine with built‑in format loaders and runners) → **external plugins** (only for exotic execution patterns). Vision remains a separate domain layer (**model_api**) on inferencekit.
+The inference and deployment architecture: **physical‑ai‑framework** (universal physical‑AI engine with inference core as internal modular layer, built‑in format loaders and runners) → **external plugins** (only for exotic execution patterns). Vision remains a separate domain layer (**model_api**) that can share the inference core.
 
-| Component           | Document                                             | Description                                                             |
-| ------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------- |
-| Inference Engine    | [inferencekit](./deployment/inferencekit.md)         | Base execution engine: RuntimeAdapter, metadata IO, base InferenceModel |
-| Deployment Engine   | [Deployment Shell](./deployment/deployment-shell.md) | physical‑ai‑framework universal engine, CLI, format loaders             |
-| LeRobot Integration | [LeRobot Integration](./deployment/lerobot.md)       | Built‑in format loader for LeRobot manifest.json                        |
+| Component           | Document                                             | Description                                                        |
+| ------------------- | ---------------------------------------------------- | ------------------------------------------------------------------ |
+| Inference Core      | [Inference Core](./deployment/inferencekit.md)       | Domain-agnostic inference layer design (internal to framework)     |
+| Deployment Engine   | [Deployment Shell](./deployment/deployment-shell.md) | physical‑ai‑framework universal engine, CLI, format loaders        |
+| LeRobot Integration | [LeRobot Integration](./deployment/lerobot.md)       | Built‑in format loader for LeRobot manifest.json (proposed format) |
 
 ## Internal Notes
 
@@ -56,7 +56,7 @@ docs/design/
 │   └── data-collection.md                 # Data collection API
 │
 ├── deployment/                            # Deployment stack
-│   ├── inferencekit.md                    # Base inference framework
+│   ├── inferencekit.md                    # Inference core layer design
 │   ├── deployment-shell.md                # physical-ai-framework (CLI)
 │   └── lerobot.md                         # LeRobot format loader integration
 │
@@ -71,7 +71,7 @@ docs/design/
 ### For New Readers
 
 1. Start with **[Strategy](./strategy.md)** — understand the two core decisions
-2. Read **[inferencekit](./deployment/inferencekit.md)** for the inference foundation
+2. Read **[Inference Core](./deployment/inferencekit.md)** for the inference foundation
 3. Explore library component docs for specific areas
 
 ### For Library Development
@@ -86,7 +86,7 @@ docs/design/
 ### For Deployment
 
 1. **[Strategy § Part 2](./strategy.md#part-2-deployment-stack)** — layered architecture
-2. **[inferencekit](./deployment/inferencekit.md)** — base inference framework and plugin system
+2. **[Inference Core](./deployment/inferencekit.md)** — domain-agnostic inference layer design
 3. **[Deployment Shell](./deployment/deployment-shell.md)** — CLI and configuration
 
 ---

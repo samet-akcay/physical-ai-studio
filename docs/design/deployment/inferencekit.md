@@ -1,4 +1,6 @@
-# inferencekit Design Document
+# Inference Core Design Document
+
+> **Scope note:** This document describes the design of the **domain‑agnostic inference core** — the layer that provides backend execution, metadata IO, and the base `InferenceModel`. In our proposed architecture, this layer lives **inside physical‑ai‑framework** as `physical_ai.inference`, not as a separate package. References to "inferencekit" in this document describe the module's design; the module path is `physical_ai.inference.*`. This layer can be silently extracted as a standalone package later if other domains (e.g., vision via model_api) need it independently.
 
 **Base inference framework providing unified model loading, prediction, and extensibility across backends and domains.**
 
@@ -452,7 +454,7 @@ postprocessors:
 1. `metadata.yaml`
 2. `metadata.yml`
 3. `metadata.json`
-4. `manifest.json` (LeRobot PolicyPackage format)
+4. `manifest.json` (LeRobot PolicyPackage — proposed format, pending upstream acceptance)
 
 The `class_path` + `init_args` pattern allows domain layers to specify their own components in metadata without inferencekit needing to know about them.
 
@@ -1047,7 +1049,7 @@ Instead of replacing model_api, inferencekit provides the **foundation** that mo
 ## Related Documents
 
 - **[Strategy](../strategy.md)** — Big-picture architecture and layering decisions
-- **[Deployment Shell](./deployment-shell.md)** — physical-ai-framework CLI and packaging
+- **[Deployment Engine](./deployment-shell.md)** — physical-ai-framework CLI and packaging
 - **[LeRobot Integration](./lerobot.md)** — LeRobot format loader for physical‑ai‑framework (built‑in, reads manifest.json)
 
 ---

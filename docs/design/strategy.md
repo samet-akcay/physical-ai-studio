@@ -8,7 +8,7 @@ Geti Action is an end-to-end platform for robot AI development: data collection,
 
 1. **Library-first**: The library owns every component needed for end-to-end robot AI (robots, cameras, teleop, data collection, policies, inference, training, export). The application is purely UI and orchestration — glue on top.
 
-2. **Layered deployment stack**: For inference/deployment, we propose a clean layering — **inferencekit** (base execution engine) → **physical‑ai‑framework** (universal physical‑AI inference engine with built‑in format loaders and runners) → **external plugins** (only for exotic execution patterns). Vision remains a separate domain layer (model_api) on top of inferencekit.
+2. **Layered deployment stack**: For inference/deployment, we propose a clean layering — **physical‑ai‑framework** (universal physical‑AI inference engine with a domain‑agnostic inference core as an internal modular layer, built‑in format loaders and runners) → **external plugins** (only for exotic execution patterns). Vision remains a separate domain layer (model_api) that can share the inference core.
 
 ---
 
@@ -145,21 +145,21 @@ After data collection and training, you have an exported model. How do you run i
 │                                                             │
 │  pip install physical-ai-framework                          │
 │  phyai run --config deploy.yaml                             │
+│                                                             │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │      physical_ai.inference (inference core)          │    │
+│  │      Domain-agnostic modular layer:                  │    │
+│  │      RuntimeAdapter, backend abstraction (OpenVINO,  │    │
+│  │      ONNX, TensorRT, Torch), metadata IO,           │    │
+│  │      base InferenceModel.                            │    │
+│  │      No robotics, no vision, no domain logic.        │    │
+│  │      Can be silently extracted as a separate package  │    │
+│  │      later if other domains need it standalone.      │    │
+│  └─────────────────────────────────────────────────────┘    │
 └──────────────────────────┬──────────────────────────────────┘
-                           │ depends on
+                           │
+                           │ Domain Layers (build on top)
                            ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    inferencekit (base)                       │
-│                                                             │
-│  Domain-agnostic execution engine:                          │
-│  RuntimeAdapter, backend abstraction (OpenVINO, ONNX,       │
-│  TensorRT, Torch), metadata IO, base InferenceModel.        │
-│  No robotics, no vision, no domain logic.                   │
-│                                                             │
-│  from inferencekit import InferenceModel                    │
-│  model = InferenceModel("./exports/my_model")               │
-└─────────────────────────────────────────────────────────────┘
-
 ┌─────────────────────────────────────────────────────────────┐
 │                     Domain Layers                           │
 │                                                             │
@@ -170,15 +170,10 @@ After data collection and training, you have an exported model. How do you run i
 │  │  YOLO, SAM, Anomaly,   │  │  for patterns not covered │  │
 │  │  image preprocessing,  │  │  by built‑in components   │  │
 │  │  NMS, result types     │  │                           │  │
-│  └───────────┬────────────┘  └─────────────┬─────────────┘  │
-│              │                             │                │
-│              └──────────┬──────────────────┘                │
-│                         │                                   │
-└─────────────────────────┼───────────────────────────────────┘
-                          │ depends on
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    inferencekit (base)                       │
+│  └────────────────────────┘  └───────────────────────────┘  │
+│                                                             │
+│  model_api can share the inference core                     │
+│  (physical_ai.inference) for backend execution.             │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -186,7 +181,7 @@ After data collection and training, you have an exported model. How do you run i
 
 | Layer                     | Owns                                                                                                                                                                                             | Does NOT own                   |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------ |
-| **inferencekit**          | Runtime adapters, backend abstraction, metadata IO, base InferenceModel                                                                                                                          | Vision, robotics, domain logic |
+| **physical_ai.inference** | Runtime adapters, backend abstraction, metadata IO, base InferenceModel (domain‑agnostic modular layer inside physical‑ai‑framework)                                                             | Vision, robotics, domain logic |
 | **model_api**             | Vision preprocessing, task wrappers (YOLO, SAM), result types, image-specific pipelines                                                                                                          | Backend execution, robotics    |
 | **physical‑ai‑framework** | Physical‑AI orchestration, unified APIs, built‑in format loaders, built‑in runners, observation pipeline, safety runtime, episode orchestration, device management, camera/robot interfaces, CLI | Training, vision models        |
 | **external plugins**      | Exotic pre/post, runners for patterns not covered by built‑in components (user's own package)                                                                                                    | Backend execution              |
@@ -196,7 +191,7 @@ After data collection and training, you have an exported model. How do you run i
 physical‑ai‑framework is not a thin shell. It is the **universal inference engine for physical‑AI** — it owns every domain concern common to all physical‑AI deployments so that teams only supply their model-specific logic:
 
 - **Unified API surface** (`InferenceModel`) for all physical‑AI policies
-- **Built‑in format loaders** to parse metadata.yaml (getiaction) and manifest.json (LeRobot) — no training framework imports needed
+- **Built‑in format loaders** to parse metadata.yaml (getiaction) and manifest.json (LeRobot, proposed format — pending upstream acceptance) — no training framework imports needed
 - **Built‑in runners** (SinglePassRunner, IterativeRunner, ActionChunkingRunner) for common execution patterns
 - **Observation pipeline** — camera → observation dict, timestamp alignment, buffering
 - **Safety runtime** — action clamping, velocity limits, workspace bounds, emergency stop (first-class engine layer, not a callback)
@@ -205,11 +200,11 @@ physical‑ai‑framework is not a thin shell. It is the **universal inference e
 - **Validation CLI** — `phyai validate` to verify metadata, resolve class_paths, dry-run pipeline without hardware
 - **CLI** for edge and server inference (`phyai run`, `phyai serve`, `phyai export`)
 
-Most models work with built‑in format loaders and runners — zero external dependencies. Exotic execution patterns use external plugins (user's own package). All backend execution lives in inferencekit. Camera and robot interfaces live as clean subpackages inside physical‑ai‑framework (`physical_ai.camera`, `physical_ai.robot`).
+Most models work with built‑in format loaders and runners — zero external dependencies. Exotic execution patterns use external plugins (user's own package). Backend execution lives in the inference core (`physical_ai.inference`), a domain‑agnostic modular layer inside the framework. Camera and robot interfaces live as clean subpackages inside physical‑ai‑framework (`physical_ai.camera`, `physical_ai.robot`).
 
 ### Why This Layering?
 
-1. **inferencekit** is reusable beyond robotics (vision, NLP, anomaly detection). Keeping it domain-agnostic maximizes reuse.
+1. **The inference core** (`physical_ai.inference`) is reusable beyond robotics (vision, NLP, anomaly detection). Keeping it domain-agnostic as a clean modular layer maximizes reuse and allows silent extraction as a standalone package later.
 2. **physical‑ai‑framework** centralizes physical‑AI orchestration without re-implementing backends or training code.
 3. **Built‑in format loaders and runners** allow rapid support for new models without any external dependencies. External plugins handle exotic patterns.
 
@@ -218,11 +213,10 @@ Most models work with built‑in format loaders and runners — zero external de
 Dependencies flow **upward only**:
 
 ```
-getiaction → physical‑ai‑framework → inferencekit
-model_api                          → inferencekit
+getiaction → physical‑ai‑framework
 ```
 
-getiaction depends on physical‑ai‑framework for camera/robot interfaces and the engine runtime. physical‑ai‑framework depends on inferencekit for backend execution. physical‑ai‑framework loads models at runtime via built‑in format loaders and `class_path` — never imports getiaction at install time. External plugins are optional and can live in their own repos. inferencekit stays domain‑agnostic.
+getiaction depends on physical‑ai‑framework for camera/robot interfaces and the engine runtime. The inference core (`physical_ai.inference`) lives inside physical‑ai‑framework as a domain‑agnostic modular layer. physical‑ai‑framework loads models at runtime via built‑in format loaders and `class_path` — never imports getiaction at install time. External plugins are optional and can live in their own repos. The inference core stays domain‑agnostic.
 
 ### Why getiaction Inference Stays in getiaction
 
@@ -235,17 +229,18 @@ Both **getiaction** and **physical‑ai‑framework** need access to robot + cam
 #### Option 1 (Recommended): physical‑ai‑framework owns the interfaces
 
 ```
-getiaction → physical‑ai‑framework → inferencekit
+getiaction → physical‑ai‑framework
                    │
-                   ├── physical_ai.camera  (clean subpackage)
-                   ├── physical_ai.robot   (clean subpackage)
-                   └── physical_ai.engine  (plugin system, CLI, safety)
+                   ├── physical_ai.camera     (clean subpackage)
+                   ├── physical_ai.robot      (clean subpackage)
+                   ├── physical_ai.inference  (domain-agnostic modular layer)
+                   └── physical_ai.engine     (format loaders, runners, CLI, safety)
 ```
 
 **Why:**
 
 - **No circular dependency.** getiaction depends on physical‑ai‑framework. physical‑ai‑framework loads models at runtime via built‑in format loaders and `class_path` — never imports getiaction at install time. One-directional dependency.
-- **Fewer repos (3 instead of 5+).** Only inferencekit, physical‑ai‑framework, and getiaction. Less coordination overhead, simpler CI, fewer version matrices.
+- **Fewer repos (2 instead of 5+).** Only physical‑ai‑framework and getiaction. Less coordination overhead, simpler CI, fewer version matrices.
 - **One package for all hardware interfaces.** Teams install physical‑ai‑framework and get cameras, robots, inference, CLI, safety — everything needed for deployment.
 - **Future split is cheap.** Camera/robot interfaces live in clean subpackages with no cross-imports. If a vision-only consumer needs camera-api standalone, extract it then. Merging repos later is much harder than splitting.
 
@@ -271,7 +266,7 @@ getiaction   physical‑ai‑framework
 - You need getiaction installable **without** physical-ai-framework (e.g., CI environments that only run training).
 - Multiple teams independently maintain camera and robot interfaces with separate release cadences.
 
-**Cost:** 5+ repos instead of 3. Every release requires coordinating versions across camera-api, robot-api, inferencekit, physical-ai-framework, and getiaction.
+**Cost:** 5+ repos instead of 2. Every release requires coordinating versions across camera-api, robot-api, physical-ai-framework, and getiaction.
 
 **Verdict:** Start with Option 1. Split when a concrete consumer forces it.
 
@@ -347,12 +342,11 @@ phyai serve --model ./exports/act_policy --robot robot.yaml
 
 ## Package Naming
 
-| Package           | Name                    | Status                                                  |
-| ----------------- | ----------------------- | ------------------------------------------------------- |
-| Base Inference    | `inferencekit`          | Base inference framework; domain layers build on top    |
-| Vision Layer      | `model_api`             | Vision inference layer on top of inferencekit           |
-| Robotics Stack    | `getiaction`            | Robotics inference layer + library + application        |
-| Deployment Engine | `physical‑ai‑framework` | Universal physical‑AI inference engine + plugin runtime |
+| Package           | Name                    | Status                                                                               |
+| ----------------- | ----------------------- | ------------------------------------------------------------------------------------ |
+| Vision Layer      | `model_api`             | Vision inference layer; can share framework's inference core                         |
+| Robotics Stack    | `getiaction`            | Robotics inference layer + library + application                                     |
+| Deployment Engine | `physical‑ai‑framework` | Universal physical‑AI inference engine with inference core as internal modular layer |
 
 _Names are subject to marketing/branding review._
 
@@ -381,11 +375,11 @@ _Names are subject to marketing/branding review._
 
 ### Deployment Stack
 
-| Component           | Document                                              | Description                                                 |
-| ------------------- | ----------------------------------------------------- | ----------------------------------------------------------- |
-| Inference Engine    | [inferencekit](./deployment/inferencekit.md)          | Base inference framework with plugin system                 |
-| Deployment Engine   | [Deployment Engine](./deployment/deployment-shell.md) | physical‑ai‑framework universal engine, CLI, format loaders |
-| LeRobot Integration | [LeRobot Integration](./deployment/lerobot.md)        | Built‑in format loader for manifest.json, runner mapping    |
+| Component           | Document                                              | Description                                                                |
+| ------------------- | ----------------------------------------------------- | -------------------------------------------------------------------------- |
+| Inference Core      | [Inference Core](./deployment/inferencekit.md)        | Domain-agnostic inference layer design (internal to framework)             |
+| Deployment Engine   | [Deployment Engine](./deployment/deployment-shell.md) | physical‑ai‑framework universal engine, CLI, format loaders                |
+| LeRobot Integration | [LeRobot Integration](./deployment/lerobot.md)        | Built‑in format loader for manifest.json (proposed format), runner mapping |
 
 ---
 
