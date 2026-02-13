@@ -95,7 +95,7 @@ pip install getiaction[lerobot]
 from getiaction.inference import InferenceModel
 from getiaction.robots import SO101
 
-policy = InferenceModel("./exports/act_policy")
+policy = InferenceModel.load("./exports/act_policy")
 robot = SO101.from_config("robot.yaml")
 
 with robot:
@@ -399,7 +399,7 @@ with robot:
 from getiaction.inference import InferenceModel
 from getiaction.robots import SO101
 
-policy = InferenceModel("./exports/act_policy")
+policy = InferenceModel.load("./exports/act_policy")
 robot = SO101.from_config("robot.yaml")
 
 with robot:
@@ -446,7 +446,7 @@ from getiaction.robots import Robot, SO101
 class InferenceWorker:
     def __init__(self, robot: Robot, model_path: str):
         self.robot = robot
-        self.policy = InferenceModel(model_path)
+        self.policy = InferenceModel.load(model_path)
 ```
 
 One interface, multiple usage patterns.
@@ -551,6 +551,49 @@ Core interface stays simple. Industrial features are opt-in. Alternatively, we c
 
 ---
 
+## Multi-Robot Composition
+
+A common question: if you have two robot arms with a shared camera (e.g., Aloha's bimanual setup), is that one `Robot` or two?
+
+**From the DL perspective, it is one robot.** A bimanual policy produces a single action vector spanning both arms and consumes a single observation dict with images from shared cameras plus joint states from both arms. The policy doesn't know or care that the hardware is two separate serial connections.
+
+**The `Robot` ABC already supports this.** A concrete implementation like `Aloha` manages multiple hardware connections internally and exposes a unified observation/action interface:
+
+```python
+class Aloha(LeRobotRobot):
+    """Bimanual Aloha robot — two arms, shared cameras, one interface."""
+
+    def __init__(
+        self,
+        *,
+        leader_port: str = "/dev/ttyUSB0",
+        follower_port: str = "/dev/ttyUSB1",
+        cameras: dict[str, dict[str, Any] | "Camera"] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        ...
+
+    def get_observation(self, format: ObsFormat = "dict") -> dict[str, Any]:
+        # Reads from both arms + shared cameras
+        # Returns single observation with combined state vector
+        ...
+
+    def send_action(self, action: np.ndarray) -> None:
+        # Splits action vector and dispatches to both arms
+        ...
+```
+
+No `RobotGroup` abstraction is needed. The composite pattern lives inside the concrete implementation. Each multi-arm setup is a single `Robot` subclass that:
+
+1. Manages N hardware connections internally
+2. Merges joint states into one `state` array in `get_observation()`
+3. Splits the action vector and dispatches to each arm in `send_action()`
+4. Shares cameras naturally (cameras are keyed by name, not by arm)
+
+This keeps the interface simple — upstream code (policies, inference loops, application) always sees one `Robot` with one observation space and one action space.
+
+---
+
 ## Design Rationale
 
 ### Why `format` Parameter Instead of Separate Methods?
@@ -577,6 +620,8 @@ The Robot ABC uses `dict[str, dict[str, Any]]` for cameras because:
 
 Robot implementations (SO101, etc.) accept **both** dicts and Camera objects for convenience, normalizing internally.
 
+Note that camera connection parameters are intentionally camera-type-specific rather than collapsed into a generic `device_key`. Webcams use an integer `index` (device enumeration order), RealSense cameras use a string `serial` (hardware serial number), and IP cameras use a `url`. These are semantically different types serving different purposes — collapsing them into a single string would lose type safety and make the API less self-documenting. The dict-based config (`dict[str, Any]`) already accommodates this flexibility naturally, since each camera type defines its own connection parameters.
+
 ### Why numpy Instead of torch?
 
 The core interface uses `np.ndarray` because:
@@ -598,4 +643,4 @@ Users can convert to torch at the policy boundary if needed.
 
 ---
 
-_Last Updated: 2026-02-05_
+_Last Updated: 2026-02-13_
