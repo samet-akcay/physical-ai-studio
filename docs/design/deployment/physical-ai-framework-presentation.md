@@ -386,14 +386,71 @@ outputs = model(inputs)
 
 ## Custom Model: Custom Logic (Target: 15 Minutes)
 
-**Non‑standard execution pattern — write an external plugin:**
+**Non‑standard execution pattern — write a small plugin package:**
 
-1. Create package with Runner / Preprocessor / Postprocessor
-2. `pip install -e ./my_plugin`
-3. Point `class_path` in `metadata.yaml` at your classes
-4. Run: `phyai run --model ./exports/my_model --robot robot.yaml`
+**Your custom Runner** (6 lines of real logic):
 
-**Plugin ownership:** Your team writes it, installs it, maintains it. Your dependencies are your problem. The framework loads it. No PR to our repos needed.
+```python
+# my_plugin/runners.py
+from physical_ai.inference import InferenceRunner
+
+class MyChunkingRunner(InferenceRunner):
+    """Execute in chunks — return one action per step."""
+    def __init__(self, chunk_size: int = 50):
+        self.chunk_size = chunk_size
+        self._buffer = []
+
+    def run(self, adapter, inputs):
+        if not self._buffer:
+            self._buffer = adapter.predict(inputs)  # one forward pass
+        return self._buffer.pop(0)                   # return next action
+```
+
+**Your custom Preprocessor** (4 lines of real logic):
+
+```python
+# my_plugin/pre.py
+from physical_ai.inference import Preprocessor
+
+class MyNormalizer(Preprocessor):
+    """Normalize observations to [-1, 1]."""
+    def __init__(self, mean, std):
+        self.mean, self.std = mean, std
+
+    def __call__(self, inputs):
+        return {k: (v - self.mean) / self.std for k, v in inputs.items()}
+```
+
+**Wire them up in metadata.yaml:**
+
+```yaml
+# exports/my_model/metadata.yaml
+backend: openvino
+runner:
+  class_path: my_plugin.runners.MyChunkingRunner
+  init_args:
+    chunk_size: 100
+preprocessors:
+  - class_path: my_plugin.pre.MyNormalizer
+    init_args:
+      mean: [0.485, 0.456, 0.406]
+      std: [0.229, 0.224, 0.225]
+```
+
+```bash
+pip install -e ./my_plugin
+phyai run --model ./exports/my_model --robot robot.yaml
+```
+
+```python
+# Or via Python API — same result
+from physical_ai import InferenceModel
+
+model = InferenceModel("./exports/my_model")   # metadata.yaml resolves your class_paths
+outputs = model(inputs)
+```
+
+**Plugin ownership:** Your team writes it, installs it, maintains it. Your deps are your problem. No PR to our repos needed.
 
 ---
 
@@ -412,19 +469,6 @@ phyai validate ./exports/my_model
 ```
 
 **Catch errors before touching a robot.**
-
----
-
-## Where Does My Logic Go?
-
-| I need to...                              | Implement         | Base class          |
-| ----------------------------------------- | ----------------- | ------------------- |
-| Custom forward pass (chunking, iterative) | **Runner**        | `InferenceRunner`   |
-| Transform inputs before inference         | **Preprocessor**  | `Preprocessor`      |
-| Transform outputs after inference         | **Postprocessor** | `Postprocessor`     |
-| Cross‑cutting (timing, logging, safety)   | **Callback**      | `InferenceCallback` |
-
-**Rule of thumb:** If it touches the model → Runner. If it shapes data → Pre/Post. If it observes → Callback.
 
 ---
 
