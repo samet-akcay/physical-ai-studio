@@ -22,6 +22,7 @@
     - [Camera ABC](#camera-abc)
     - [Callback System (PyTorch Lightning-inspired)](#callback-system-pytorch-lightning-inspired)
     - [Capability Mixins](#capability-mixins)
+    - [Device Discovery](#device-discovery)
   - [Proposed Implementations](#proposed-implementations)
     - [Live Cameras](#live-cameras)
     - [Recorded Sources](#recorded-sources)
@@ -477,6 +478,14 @@ class RecordingCallback(Callback):
         self.writer.close()
 ```
 
+**Threading model**: Callbacks are invoked on the internal capture thread, **not** on the caller's thread. This means:
+
+- Callback implementations must be **thread-safe** if they access shared state
+- Heavy processing in `on_frame` will delay the next frame capture — offload to a queue if needed
+- In **async frameworks** (FastAPI, asyncio), callbacks should enqueue work rather than `await` directly, since they run on a synchronous background thread. Use `asyncio.get_event_loop().call_soon_threadsafe()` or a `queue.Queue` to bridge between the capture thread and the async event loop
+
+This design deliberately avoids spawning additional threads internally, keeping the threading model simple and predictable. FrameSource's experience showed that hidden multi-threading causes issues when embedded in already-threaded environments like FastAPI workers.
+
 ### Capability Mixins
 
 Optional capabilities are added via mixins. Each mixin sets a `ClassVar` flag automatically.
@@ -598,6 +607,59 @@ class AsyncContextMixin:
         self.disconnect()
 ```
 
+### Device Discovery
+
+Each camera subclass provides a `discover()` classmethod that lists available devices without opening them. This enables a factory-style workflow: discover → inspect → configure → open.
+
+```python
+class Camera(ABC):
+    # ... existing methods ...
+
+    @classmethod
+    def discover(cls) -> list[DeviceInfo]:
+        """List available devices of this camera type.
+
+        Returns:
+            List of DeviceInfo with device_key, name, and metadata.
+            Default implementation returns empty list (discovery not supported).
+        """
+        return []
+
+
+@dataclass
+class DeviceInfo:
+    """Metadata about a discovered camera device."""
+    device_key: str           # Stable identifier (serial number, path, URL)
+    name: str                 # Human-readable name
+    manufacturer: str = ""    # e.g., "Intel", "Basler"
+    model: str = ""           # e.g., "D435", "acA1920-40gc"
+    formats: list[Format] | None = None  # Supported formats (if queryable)
+```
+
+**Discovery + factory workflow:**
+
+```python
+# List all available webcams
+devices = Webcam.discover()
+# [DeviceInfo(device_key="/dev/video0", name="USB Camera", ...),
+#  DeviceInfo(device_key="/dev/video2", name="Logitech C920", ...)]
+
+# List RealSense cameras
+devices = RealSense.discover()
+# [DeviceInfo(device_key="serial:123456", name="D435", formats=[...])]
+
+# Open by device_key (stable, survives reboots)
+cam = Webcam(device_path="/dev/video2")
+
+# Query formats before opening (via ResolutionDiscoveryMixin)
+cam = Basler(serial_number="12345678")
+cam.connect()
+formats = cam.get_supported_formats()  # From ResolutionDiscoveryMixin
+cam.set_format(formats[0])
+```
+
+Discovery is optional — subclasses override it when the underlying SDK supports enumeration (pypylon, librealsense, V4L2). Camera types that don't support discovery (VideoFile, ImageFolder) inherit the default empty-list implementation.
+
 ---
 
 ## Proposed Implementations
@@ -612,11 +674,19 @@ class Webcam(Camera):
 
     Backend: Can use OpenCV or nokhwa (via omnicamera). nokhwa provides
     better stability for USB cameras on some platforms.
+
+    Note: ``index`` is convenient for quick prototyping ("just grab the
+    first webcam"), but device indices are **not stable** across reboots
+    or when USB devices are plugged/unplugged. For production and
+    multi-camera setups, prefer identifying cameras by device path
+    (e.g., ``/dev/video0``) or serial number when available. The
+    ``device_key`` property returns a stable identifier for sharing.
     """
 
     def __init__(
         self, *,
         index: int = 0,
+        device_path: str | None = None,
         fps: int | None = None,
         width: int | None = None,
         height: int | None = None,
@@ -669,7 +739,17 @@ class StereoCamera(DepthMixin, Camera):
 
 
 class Basler(Camera):
-    """Basler industrial cameras via pypylon."""
+    """Basler industrial cameras via pypylon.
+
+    Note: For industrial cameras, the achievable framerate depends on
+    multiple hardware factors — ROI/binning (fewer pixels = faster),
+    connection bandwidth (GigE vs USB3), capture mode, and exposure time
+    (longer exposure = lower max FPS). The ``fps`` parameter sets a
+    *requested* framerate; the actual rate is capped by hardware limits.
+    Use ``ResolutionDiscoveryMixin.get_supported_formats()`` to query
+    achievable configurations. See `Basler's frame rate calculator
+    <https://docs.baslerweb.com/resulting-frame-rate>`_ for details.
+    """
 
     def __init__(
         self, *,
@@ -687,7 +767,7 @@ class Genicam(Camera):
     def __init__(
         self, *,
         cti_file: str | Path,
-        device_id: int = 0,
+        device_id: str = "",
         width: int | None = None,
         height: int | None = None,
         color_mode: ColorMode = ColorMode.RGB,
@@ -856,6 +936,38 @@ cam_ui.disconnect()     # Device stays open
 cam_record.disconnect() # Device closes (last user)
 ```
 
+**Combining callbacks with sharing for subscription-style delivery**: For use cases like WebSocket/WebRTC streaming where multiple consumers need push-based frames from a single camera, use callbacks on a shared camera instance:
+
+```python
+# Single camera, multiple subscribers via callbacks
+camera = Webcam(index=0)
+
+class WebSocketStreamer(Callback):
+    def __init__(self, ws):
+        self.ws = ws
+
+    def on_frame(self, camera, frame):
+        self.ws.send(encode_jpeg(frame))
+
+class DiskRecorder(Callback):
+    def __init__(self, path):
+        self.writer = VideoWriter(path)
+
+    def on_frame(self, camera, frame):
+        self.writer.write(frame)
+
+# Add subscribers dynamically
+camera.add_callback(WebSocketStreamer(ws_connection))
+camera.add_callback(DiskRecorder("output.mp4"))
+camera.connect()
+
+# All subscribers receive frames from the single capture thread.
+# Remove subscribers as they disconnect:
+camera.remove_callback(streamer)
+```
+
+This combines invisible sharing (one physical device open) with callbacks (push-based delivery) to achieve subscription semantics without introducing a separate subscription abstraction.
+
 ### From Config
 
 ```python
@@ -876,7 +988,7 @@ from getiaction.cameras import RealSense
 from getiaction.robots import SO101
 from getiaction.inference import InferenceModel
 
-policy = InferenceModel("./exports/act_policy")
+policy = InferenceModel.load("./exports/act_policy")
 robot = SO101.from_config("robot.yaml")
 camera = RealSense(fps=30)
 
@@ -996,4 +1108,4 @@ Specialized processors (360°, depth colorization) would be separate utilities, 
 
 ---
 
-_Last Updated: 2026-02-05_
+_Last Updated: 2026-02-13_
