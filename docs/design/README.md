@@ -9,7 +9,7 @@ Architecture and design documents for Geti Action — an end-to-end platform for
 **[Strategy](./strategy.md)** — The two core architectural decisions:
 
 1. Library-first: the library owns all components, the application is just UI/orchestration
-2. Layered deployment stack: physical‑ai‑framework (universal physical‑AI engine with inference core as internal modular layer, built‑in format loaders and runners) → external plugins (exotic patterns only). Vision (model_api) can share the inference core.
+2. Layered deployment stack: physical‑ai‑framework (universal physical‑AI engine with inference core as internal modular layer, unified `manifest.json` format, and built‑in runners) → external plugins (exotic patterns only). Vision (model_api) can share the inference core.
 
 ---
 
@@ -26,12 +26,12 @@ Components owned by the **library** (`pip install getiaction`) — the building 
 
 ## Deployment Stack
 
-The inference and deployment architecture: **physical‑ai‑framework** (universal physical‑AI engine with inference core as internal modular layer, built‑in format loaders and runners) → **external plugins** (only for exotic execution patterns). Vision remains a separate domain layer (**model_api**) that can share the inference core.
+The inference and deployment architecture: **physical‑ai‑framework** (universal physical‑AI engine with inference core as internal modular layer, unified `manifest.json` format, and built‑in runners) → **external plugins** (only for exotic execution patterns). Vision remains a separate domain layer (**model_api**) that can share the inference core.
 
 | Component           | Document                                             | Description                                                        |
 | ------------------- | ---------------------------------------------------- | ------------------------------------------------------------------ |
 | Inference Core      | [Inference Core](./deployment/inferencekit.md)       | Domain-agnostic inference layer design (internal to framework)     |
-| Deployment Engine   | [Deployment Shell](./deployment/deployment-shell.md) | physical‑ai‑framework universal engine, CLI, format loaders        |
+| Deployment Engine   | [Deployment Shell](./deployment/deployment-shell.md) | physical‑ai‑framework universal engine, CLI, manifest loading      |
 | LeRobot Integration | [LeRobot Integration](./deployment/lerobot.md)       | Built‑in format loader for LeRobot manifest.json (proposed format) |
 
 ## Internal Notes
@@ -107,6 +107,7 @@ When updating these documents:
 
 | Version | Date       | Changes                                                                       |
 | ------- | ---------- | ----------------------------------------------------------------------------- |
+| 7.0     | 2026-02-16 | Unified manifest.json format across all packages; removed format loader model |
 | 6.0     | 2026-02-11 | Updated to two-tier model: built‑in format loaders/runners + external plugins |
 | 5.1     | 2026-02-09 | Updated deployment stack to physical‑ai‑framework as universal engine         |
 | 4.0     | 2026-02-06 | Reorganized into library/ + deployment/ to reflect ownership boundaries       |
@@ -116,4 +117,4 @@ When updating these documents:
 
 ---
 
-_Last Updated: 2026-02-11_
+_Last Updated: 2026-02-16_
