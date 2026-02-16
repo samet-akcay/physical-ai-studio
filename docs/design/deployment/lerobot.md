@@ -6,15 +6,15 @@
 **Relates to**: [LeRobot Policy Export Design](./policy_export_design.md)
 
 > **Important: LeRobot export is our proposal, not an agreed standard.**
-> The PolicyPackage format (`manifest.json`) described in this document is a design we have proposed to the LeRobot team. It has **not yet been reviewed or accepted** upstream. If the LeRobot team adopts a different export format or modifies the proposed schema, this integration design will need to adapt accordingly. The architectural approach (built‑in format loader, no lerobot dependency at runtime) remains valid regardless of the final format — only the loader implementation would change.
+> The PolicyPackage format (`manifest.json`) described in this document is a design we have proposed to the LeRobot team. It has **not yet been reviewed or accepted** upstream. If the LeRobot team adopts a different export format or modifies the proposed schema, this integration design will need to adapt accordingly. The architectural approach (unified manifest format, no lerobot dependency at runtime) remains valid regardless of the final format — only the loader implementation would change.
 
 ---
 
 ## Executive Summary
 
-This document describes how **physical‑ai‑framework** would integrate with LeRobot's proposed PolicyPackage format. The integration would be implemented as a **built‑in format loader** — the framework reads `manifest.json` (pure JSON, no lerobot import) and maps `policy.kind` to built‑in runners. No LeRobot dependency would be needed at deployment time.
+This document describes how **physical‑ai‑framework** integrates with LeRobot's proposed PolicyPackage format. The integration is seamless because both getiaction and LeRobot use the **same unified `manifest.json` format**. The framework reads `manifest.json` (pure JSON, no lerobot import) and maps `policy.kind` to built‑in runners. No LeRobot dependency is needed at deployment time.
 
-**Key principle**: LeRobot would define the package format; physical‑ai‑framework consumes it via a built‑in format loader. No circular dependencies. No external plugin needed.
+**Key principle:** All packages (getiaction, LeRobot, custom) export models using the same `manifest.json` format. physical‑ai‑framework consumes them identically. No special-casing, no separate format loaders, no circular dependencies.
 
 **Note on status**: The PolicyPackage export format is our proposal to the LeRobot team (see [LeRobot Export Suggestions](../internal/lerobot-export-suggestions.md)). The format details below reflect our proposed design. The integration approach is sound regardless of the final format the LeRobot team adopts.
 
@@ -32,40 +32,36 @@ This document describes how **physical‑ai‑framework** would integrate with L
 │  └──────────────┘  └──────────────┘  └──────────────────────┘  │
 │                                                                │
 │  ┌──────────────────────────────────────────────────────────┐  │
-│  │               Built‑in Format Loaders                    │  │
-│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────┐   │  │
-│  │  │ manifest.json│  │metadata.yaml│  │  Custom Format  │   │  │
-│  │  │  (LeRobot)  │  │ (getiaction)│  │  (external)     │   │  │
-│  │  └─────────────┘  └─────────────┘  └─────────────────┘   │  │
+│  │                 Unified Manifest Loader                   │  │
+│  │                                                          │  │
+│  │  manifest.json (same format for all model sources)       │  │
+│  │  getiaction, LeRobot, custom — all use the same schema   │  │
 │  └──────────────────────────────────────────────────────────┘  │
 └────────────────────────────────────────────────────────────────┘
                               │
                               │ reads (pure file I/O)
                               ▼
-                    ┌──────────────────┐
-                    │  PolicyPackage   │
-                    │  (LeRobot format)│
-                    │                  │
-                    │  manifest.json   │
-                    │  artifacts/      │
-                    └──────────────────┘
+               ┌──────────────────────────┐
+               │     Exported Model       │
+               │   (any source)           │
+               │                          │
+               │   manifest.json          │
+               │   model artifacts        │
+               └──────────────────────────┘
 ```
 
 ---
 
-## 2. Shared Contract (Proposed)
+## 2. Unified Manifest Format
 
-physical‑ai‑framework and LeRobot would agree on the **PolicyPackage** format defined in the [LeRobot Policy Export Design](./policy_export_design.md). This format is our proposal — the final contract depends on LeRobot team acceptance.
+All packages (getiaction, LeRobot, custom) use the same `manifest.json` schema. This section describes the fields relevant to LeRobot policies specifically.
 
 ### Package Detection
 
-A directory is a LeRobot PolicyPackage if:
-
-1. It contains `manifest.json`
-2. The manifest has `"format": "policy_package"`
+A directory is an exported model package if it contains `manifest.json` with `"format": "policy_package"`:
 
 ```python
-def is_lerobot_package(path: Path) -> bool:
+def is_policy_package(path: Path) -> bool:
     manifest_path = path / "manifest.json"
     if not manifest_path.exists():
         return False
@@ -89,22 +85,21 @@ def is_lerobot_package(path: Path) -> bool:
 
 ---
 
-## 3. Format Loader Implementation
+## 3. Manifest Loader Implementation
 
-### Registration
+### How It Works
+
+The manifest loader is unified — there is no separate "LeRobot loader" vs "getiaction loader". The same code parses `manifest.json` for all model sources. The `policy.kind` field determines which built‑in runner to use.
 
 ```python
-# physical_ai/format_loaders/lerobot.py
+# physical_ai/manifest_loader.py
 
-from physical_ai.format_loaders import register_format
-
-@register_format("policy_package")
-class LeRobotFormatLoader:
-    """Built‑in format loader for LeRobot PolicyPackages."""
+class ManifestLoader:
+    """Unified manifest loader for all model sources."""
 
     @staticmethod
     def detect(path: Path) -> bool:
-        """Check if path is a LeRobot PolicyPackage."""
+        """Check if path contains a valid manifest."""
         manifest_path = path / "manifest.json"
         if not manifest_path.exists():
             return False
@@ -121,7 +116,7 @@ class LeRobotFormatLoader:
         device: str = "cpu",
         **kwargs
     ) -> "InferenceModel":
-        """Load a PolicyPackage into an InferenceModel."""
+        """Load a model package into an InferenceModel."""
         manifest = json.loads((path / "manifest.json").read_text())
 
         # Validate schema version
@@ -140,7 +135,7 @@ class LeRobotFormatLoader:
         kind = manifest["policy"]["kind"]
         runner = _create_runner(kind, manifest, **kwargs)
 
-        # Create normalizer
+        # Create normalizer (if specified)
         normalizer = _create_normalizer(path, manifest)
 
         # Load callbacks from extensions
@@ -156,48 +151,44 @@ class LeRobotFormatLoader:
 
 
 def _create_runner(kind: str, manifest: dict, **kwargs) -> InferenceRunner:
-    """Map LeRobot policy kind to physical‑ai runner."""
-    if kind == "single_shot":
+    """Map policy.kind to a built‑in runner."""
+    if kind == "single_pass":
         return SinglePassRunner()
 
     elif kind == "iterative":
-        iter_config = manifest.get("iterative", {})
+        iter_config = manifest.get("inference", {})
         return IterativeRunner(
             num_steps=kwargs.get("num_steps", iter_config.get("num_steps", 10)),
             scheduler=kwargs.get("scheduler", iter_config.get("scheduler", "euler")),
             timestep_spacing=iter_config.get("timestep_spacing", "linear"),
         )
 
+    elif kind == "two_phase":
+        iter_config = manifest.get("inference", {})
+        return TwoPhaseRunner(
+            num_steps=kwargs.get("num_steps", iter_config.get("num_steps", 10)),
+            scheduler=kwargs.get("scheduler", iter_config.get("scheduler", "euler")),
+        )
+
+    elif kind == "custom":
+        # Custom runner specified via class_path
+        runner_config = manifest.get("runner", {})
+        return instantiate(runner_config)
+
     else:
         raise ValueError(f"Unknown policy kind: {kind}")
-
-
-def _load_callbacks(manifest: dict) -> list[Callback]:
-    """Load callbacks from x-physical-ai extension."""
-    callbacks = []
-    ext = manifest.get("x-physical-ai", {})
-
-    for cb_config in ext.get("callbacks", []):
-        if isinstance(cb_config, str):
-            # Short form: "timing" -> TimingCallback()
-            callbacks.append(get_callback(cb_config)())
-        elif isinstance(cb_config, dict):
-            # Full form: {"class_path": "...", "init_args": {...}}
-            callbacks.append(instantiate(cb_config))
-
-    return callbacks
 ```
 
 ### Installation
 
-The LeRobot format loader is **built‑in** — it ships with physical‑ai‑framework. No extra install needed.
+The manifest loader is **built‑in** — it ships with physical‑ai‑framework. No extra install needed.
 
 ```bash
-# This is all you need to run LeRobot-exported models
+# This is all you need to run any exported model (getiaction, LeRobot, custom)
 pip install physical-ai-framework
 ```
 
-The format loader reads `manifest.json` (pure JSON parsing) and maps `policy.kind` to built‑in runners. No `lerobot` import. No `physical-ai-framework[lerobot]` extra.
+The loader reads `manifest.json` (pure JSON parsing) and maps `policy.kind` to built‑in runners. No `lerobot` import. No `getiaction` import. No `physical-ai-framework[lerobot]` extra.
 
 ---
 
@@ -287,7 +278,7 @@ model = InferenceModel(
 
 ## 5. Extension Fields
 
-physical‑ai‑framework-specific configuration can be embedded in the manifest under `x-physical-ai`:
+physical‑ai‑framework-specific configuration can be embedded in the manifest under `x-physical-ai`. These fields are ignored by LeRobot's own runtime:
 
 ```json
 {
@@ -328,12 +319,14 @@ physical‑ai‑framework-specific configuration can be embedded in the manifest
 
 ## 6. Runner Mapping
 
-### LeRobot `policy.kind` → physical‑ai Runner
+### `policy.kind` → Built‑in Runner
 
-| LeRobot Kind  | physical‑ai Runner | Notes                            |
+| `policy.kind` | Runner             | Notes                            |
 | ------------- | ------------------ | -------------------------------- |
-| `single_shot` | `SinglePassRunner` | Direct forward pass              |
+| `single_pass` | `SinglePassRunner` | Direct forward pass              |
 | `iterative`   | `IterativeRunner`  | Configurable loop with scheduler |
+| `two_phase`   | `TwoPhaseRunner`   | Encode once + denoise loop       |
+| `custom`      | via `class_path`   | User-provided runner class       |
 
 ### IterativeRunner Configuration
 
@@ -464,44 +457,38 @@ class EpisodeLoggingCallback(Callback):
 
 ---
 
-## 8. Metadata File Format
+## 8. Unified Manifest Format
 
-physical‑ai‑framework supports both YAML and JSON metadata:
+All exported models — regardless of source framework — use the same `manifest.json` format.
 
-### Loading Priority
+### Why One Format
 
-```python
-def load_metadata(path: Path) -> dict:
-    """Load metadata from package directory."""
-    # Priority order
-    for name in ["metadata.yaml", "metadata.yml", "manifest.json"]:
-        file_path = path / name
-        if file_path.exists():
-            return _parse_file(file_path)
-    raise FileNotFoundError(f"No metadata found in {path}")
-```
+Previous designs had two formats: `metadata.yaml` for getiaction and `manifest.json` for LeRobot. This created unnecessary divergence:
 
-### Format Comparison
+- Two parsers to maintain
+- Two sets of schema conventions
+- Confusion about which format to use
 
-| Aspect               | `manifest.json` (LeRobot) | `metadata.yaml` (physical‑ai) |
-| -------------------- | ------------------------- | ----------------------------- |
-| Primary use          | LeRobot packages          | physical‑ai native packages   |
-| Human editing        | Harder (no comments)      | Easier (comments, cleaner)    |
-| Parsing speed        | Faster                    | Slightly slower               |
-| `class_path` support | No (pure data)            | Yes (power users)             |
+The unified `manifest.json` format eliminates this. Benefits:
+
+- **One parser** — simpler codebase, fewer bugs
+- **One schema** — consistent across all model sources
+- **No special-casing** — the loader doesn't need to know where a model came from
+- **JSON for data, not code** — `policy.kind` maps to built‑in runners; `class_path` is only for exotic patterns
 
 ### Unified Loading
 
-physical‑ai‑framework handles both transparently:
-
 ```python
-# Works with LeRobot packages (manifest.json)
+# Works with LeRobot packages
 model = InferenceModel("./lerobot_package")
 
-# Works with physical‑ai packages (metadata.yaml)
-model = InferenceModel("./physical_ai_package")
+# Works with getiaction packages
+model = InferenceModel("./getiaction_package")
 
-# Format detected automatically
+# Works with custom packages
+model = InferenceModel("./custom_package")
+
+# All read manifest.json — same code path
 ```
 
 ---
@@ -561,37 +548,38 @@ class TestLeRobotFormatLoaderConformance:
 
 ### What physical‑ai‑framework Adds Over LeRobot Runtime
 
-| Feature                             | LeRobot Runtime | physical‑ai‑framework       |
-| ----------------------------------- | --------------- | --------------------------- |
-| Load PolicyPackage                  | ✓               | ✓                           |
-| Single-shot inference               | ✓               | ✓                           |
-| Iterative inference                 | ✓               | ✓                           |
-| Action queue wrapper                | ✓               | ✓                           |
-| Callbacks (timing, logging, safety) | ✗               | ✓                           |
-| Multi-backend with fallback         | ✗               | ✓                           |
-| Preprocessor/postprocessor chains   | ✗               | ✓                           |
-| Plugin system for other formats     | ✗               | ✓ (built‑in format loaders) |
-| YAML metadata support               | ✗               | ✓                           |
+| Feature                             | LeRobot Runtime | physical‑ai‑framework   |
+| ----------------------------------- | --------------- | ----------------------- |
+| Load PolicyPackage                  | ✓               | ✓                       |
+| Single-pass inference               | ✓               | ✓                       |
+| Iterative inference                 | ✓               | ✓                       |
+| Two-phase inference                 | ✓               | ✓                       |
+| Action queue wrapper                | ✓               | ✓                       |
+| Callbacks (timing, logging, safety) | ✗               | ✓                       |
+| Multi-backend with fallback         | ✗               | ✓                       |
+| Preprocessor/postprocessor chains   | ✗               | ✓                       |
+| Unified manifest format             | ✗               | ✓ (same format for all) |
 
 ### Dependency Direction
 
 ```
 LeRobot ──────────────────────────────────────────────────┐
     │                                                      │
-    │ defines                                              │
+    │ defines (proposed)                                   │
     ▼                                                      │
-PolicyPackage format (manifest.json)                       │
+manifest.json (unified format)                             │
     │                                                      │
     │ consumed by                                          │
     ▼                                                      │
-physical‑ai‑framework (built‑in format loader) ◄──────────────────────┘
+physical‑ai‑framework (unified manifest loader) ◄─────────┘
                                no dependency on LeRobot code
 ```
 
 **LeRobot does not depend on physical‑ai‑framework.**
 **physical‑ai‑framework can load LeRobot packages without importing LeRobot.**
+**getiaction exports the same manifest.json format — no special handling needed.**
 
-> **Reminder:** This integration depends on LeRobot adopting the proposed PolicyPackage export format. If LeRobot adopts a different format, the format loader implementation changes but the architecture (built‑in loader, no runtime dependency) remains the same.
+> **Reminder:** This integration depends on LeRobot adopting the proposed PolicyPackage export format. If LeRobot adopts a different format, the manifest loader implementation changes but the architecture (unified loader, no runtime dependency) remains the same.
 
 ---
 
@@ -603,5 +591,5 @@ physical‑ai‑framework (built‑in format loader) ◄────────
 
 ---
 
-_Document version: 2.1_
-_Last updated: 2026-02-12_
+_Document version: 3.0_
+_Last updated: 2026-02-16_

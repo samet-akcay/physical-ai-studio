@@ -11,7 +11,7 @@ Universal physical‑AI inference engine that runs policies from multiple framew
 **Key Features:**
 
 - Unified API (`InferenceModel`)
-- Built‑in format loaders (metadata.yaml, manifest.json) — no training framework imports needed
+- Unified manifest format (`manifest.json`) — no training framework imports needed
 - Built‑in runners (SinglePassRunner, IterativeRunner, ActionChunkingRunner) — covers common execution patterns
 - External plugin support for exotic patterns only (user's own package)
 - Configuration-driven workflows
@@ -87,16 +87,22 @@ phyai run --model hf://lerobot/pi0 --robot robot.yaml
 pip install -e ./dreamzero/physical_ai_plugin
 ```
 
-**Model metadata (in your export directory):**
+**Model manifest (in your export directory):**
 
-```yaml
-# metadata.yaml
-runner:
-  class_path: physical_ai_plugin.runner.DreamZeroRunner
-preprocessors:
-  - class_path: physical_ai_plugin.pre.DreamZeroPre
-postprocessors:
-  - class_path: physical_ai_plugin.post.DreamZeroPost
+```json
+{
+  "format": "policy_package",
+  "version": "1.0",
+  "policy": {
+    "name": "dreamzero",
+    "kind": "custom"
+  },
+  "runner": {
+    "class_path": "physical_ai_plugin.runner.DreamZeroRunner"
+  },
+  "preprocessors": [{ "class_path": "physical_ai_plugin.pre.DreamZeroPre" }],
+  "postprocessors": [{ "class_path": "physical_ai_plugin.post.DreamZeroPost" }]
+}
 ```
 
 **Python (unified API):**
@@ -115,18 +121,18 @@ outputs = model(inputs)
                         │
           ┌─────────────┼─────────────┐
           │             │             │
-   format loaders   built‑in      external plugins
-   (metadata.yaml,  runners       (user's own package,
-    manifest.json)  (SinglePass,   exotic patterns only)
-                    Iterative,
-                    ActionChunking)
+    manifest.json    built‑in      external plugins
+    (unified format  runners       (user's own package,
+     for all models) (SinglePass,   exotic patterns only)
+                     Iterative,
+                     ActionChunking)
                         │
                         ▼
               physical_ai.inference
            (domain-agnostic modular layer)
 ```
 
-**Key principle:** physical‑ai‑framework owns physical‑AI orchestration, hardware lifecycle, and safety. Built‑in format loaders and runners handle common models (getiaction, LeRobot). External plugins are only for exotic execution patterns — user's own package, user's own dependencies. Backend execution lives in the inference core (`physical_ai.inference`), a domain‑agnostic modular layer inside the framework that can be silently extracted as a separate package later.
+**Key principle:** physical‑ai‑framework owns physical‑AI orchestration, hardware lifecycle, and safety. All models use a unified `manifest.json` format. Built‑in runners handle common execution patterns (getiaction, LeRobot). External plugins are only for exotic execution patterns — user's own package, user's own dependencies. Backend execution lives in the inference core (`physical_ai.inference`), a domain‑agnostic modular layer inside the framework that can be silently extracted as a separate package later.
 
 ---
 
@@ -227,42 +233,35 @@ This section explains **how physical‑ai‑framework resolves format loaders, b
 - **External plugins** own exotic execution patterns (user's own package)
 - **physical‑ai‑framework** owns orchestration, hardware lifecycle, safety, and the unified API that loads models
 
-### 1) Format Loading & Metadata Resolution
+### 1) Manifest Loading & Resolution
 
-**Discovery order** (first match wins):
-
-1. `metadata.yaml`
-2. `metadata.yml`
-3. `metadata.json`
-4. `manifest.json` (LeRobot PolicyPackage — proposed format, pending upstream acceptance)
-
-**Why this matters:** it lets both **physical‑ai** and **LeRobot** packages work without special‑casing. Both formats are parsed by built‑in format loaders — no external imports needed. The LeRobot manifest.json format is our proposal; if the upstream format differs, the loader adapts.
+All models use `manifest.json` — a single, unified metadata format across getiaction, LeRobot, and custom models.
 
 ```
 model path/URI
      │
      ▼
-metadata/manifest detection
+manifest.json detection
      │
      ▼
-format loader (built‑in)
+manifest parser (built‑in)
      │
      ▼
 built‑in runner + pre/post (or external class_path if exotic)
 ```
 
-### 2) Metadata → Class Instantiation (class_path)
+### 2) Manifest → Class Instantiation (class_path)
 
-Runners and pre/post are wired by **class_path + init_args** in metadata:
+Runners and pre/post are wired by **class_path + init_args** in the manifest:
 
 ```
-metadata.yaml
+manifest.json
   ├─ runner.class_path
   ├─ preprocessors[].class_path
   └─ postprocessors[].class_path
 ```
 
-This allows **external plugins** (editable installs) without upstreaming. For most models, class_paths point to built‑in runners shipped with the framework.
+This allows **external plugins** (editable installs) without upstreaming. For most models, the manifest uses `policy.kind` to select built‑in runners shipped with the framework. The `class_path` mechanism is only needed for exotic patterns.
 
 ### 3) InferenceModel Runtime Flow
 
@@ -313,12 +312,12 @@ Use the **Backend Selection Guide** to choose values per hardware.
 
 The framework ships built‑in implementations for common patterns. External plugins extend this for exotic cases:
 
-- **Runners** (execution pattern) — built‑in: SinglePassRunner, IterativeRunner, ActionChunkingRunner
+- **Runners** (execution pattern) — built‑in: SinglePassRunner, IterativeRunner, ActionChunkingRunner; selected via `policy.kind` in manifest
 - **Preprocessors** (input shaping) — built‑in: ObservationNormalizer, TensorResize
 - **Postprocessors** (output shaping) — built‑in: ActionClamp
 - **Callbacks** (instrumentation, safety, logging)
 
-External plugins supply additional runners/pre/post via `class_path` in metadata.
+External plugins supply additional runners/pre/post via `class_path` in manifest.json.
 
 See **[Inference Core Design](./inferencekit.md)** and **[LeRobot Integration](./lerobot.md)** for detailed contracts.
 
@@ -338,8 +337,8 @@ physical‑ai‑framework is the **universal physical‑AI inference engine** �
 | **Safety runtime**        | Action clamping, velocity limits, workspace bounds, emergency stop. First-class runtime layer, not a callback.       | Domain-specific safety constraints (e.g., force limits for specific robots)                 |
 | **Episode orchestration** | Run N episodes, reset between episodes, log results. The control loop is the same for every policy.                  | Episode termination conditions (policy-specific)                                            |
 | **Device management**     | Robot connection lifecycle, camera initialization, cleanup on error.                                                 | Robot/camera driver implementations (SDK-specific)                                          |
-| **Validation CLI**        | `phyai validate ./exports/my_model` — verify metadata, check class_paths resolve, dry-run pipeline without hardware. | Model-specific validation (e.g., expected input shapes)                                     |
-| **Format loading**        | Metadata resolution (metadata.yaml, manifest.json), class_path instantiation, entry point discovery.                 | External plugin code (exotic runners, pre/post processors)                                  |
+| **Validation CLI**        | `phyai validate ./exports/my_model` — verify manifest, check class_paths resolve, dry-run pipeline without hardware. | Model-specific validation (e.g., expected input shapes)                                     |
+| **Format loading**        | Manifest resolution (`manifest.json`), class_path instantiation, `policy.kind` → runner mapping.                     | External plugin code (exotic runners, pre/post processors)                                  |
 | **Unified API + CLI**     | `InferenceModel`, `phyai run`, `phyai serve`, config resolution.                                                     | N/A                                                                                         |
 
 ### What this means for teams
@@ -352,7 +351,7 @@ Without the engine, teams deploying a new model need to:
 4. Manage robot/camera connections and cleanup
 5. Build a CLI or script harness
 
-With the engine, teams supply a `metadata.yaml` pointing to built‑in runners and preprocessors. The engine handles everything else. Custom code is only needed for exotic execution patterns.
+With the engine, teams supply a `manifest.json` pointing to built‑in runners and preprocessors (via `policy.kind`). The engine handles everything else. Custom code is only needed for exotic execution patterns.
 
 ### Current vs Target State
 
@@ -495,19 +494,21 @@ If your model is a standard ONNX/OpenVINO model that takes inputs and produces o
 ```
 exports/my_model/
 ├── model.onnx
-└── metadata.yaml
+└── manifest.json
 ```
 
-```yaml
-# metadata.yaml
-backend: onnx
-
-runner:
-  class_path: physical_ai.runners.SinglePassRunner
-  init_args: {}
-
-preprocessors: []
-postprocessors: []
+```json
+{
+  "format": "policy_package",
+  "version": "1.0",
+  "policy": {
+    "name": "my_model",
+    "kind": "single_pass"
+  },
+  "artifacts": {
+    "onnx": "model.onnx"
+  }
+}
 ```
 
 ```python
@@ -583,24 +584,36 @@ class MyIterativeRunner(InferenceRunner):
 pip install -e ./my_policy_plugin
 ```
 
-**Step 3 — Point metadata at your classes:**
+**Step 3 — Point manifest at your classes:**
 
-```yaml
-# exports/my_model/metadata.yaml
-backend: onnx
-
-runner:
-  class_path: my_policy_plugin.runner.MyIterativeRunner
-  init_args:
-    num_steps: 20
-
-preprocessors:
-  - class_path: my_policy_plugin.preprocessor.MyObservationNormalizer
-    init_args:
-      mean: 0.5
-      std: 0.2
-
-postprocessors: []
+```json
+{
+  "format": "policy_package",
+  "version": "1.0",
+  "policy": {
+    "name": "my_model",
+    "kind": "custom"
+  },
+  "artifacts": {
+    "onnx": "model.onnx"
+  },
+  "runner": {
+    "class_path": "my_policy_plugin.runner.MyIterativeRunner",
+    "init_args": {
+      "num_steps": 20
+    }
+  },
+  "preprocessors": [
+    {
+      "class_path": "my_policy_plugin.preprocessor.MyObservationNormalizer",
+      "init_args": {
+        "mean": 0.5,
+        "std": 0.2
+      }
+    }
+  ],
+  "postprocessors": []
+}
 ```
 
 **Step 4 — Run:**
@@ -622,7 +635,7 @@ phyai run --model ./exports/my_model --robot robot.yaml
 
 ```bash
 phyai validate ./exports/my_model
-# ✓ metadata.yaml found
+# ✓ manifest.json found
 # ✓ runner class_path resolves: my_policy_plugin.runner.MyIterativeRunner
 # ✓ preprocessor class_path resolves: my_policy_plugin.preprocessor.MyObservationNormalizer
 # ✓ model.onnx loadable with onnx backend
@@ -648,14 +661,14 @@ Teams can **package and distribute their inference pipeline independently**, wit
 
 ### How it works
 
-The `class_path` mechanism means physical‑ai‑framework never needs to know about your code at install time. It loads your classes dynamically from metadata. As long as your package is installed in the same Python environment, it works.
+The `class_path` mechanism means physical‑ai‑framework never needs to know about your code at install time. It loads your classes dynamically from `manifest.json`. As long as your package is installed in the same Python environment, it works.
 
 ### Three levels of integration
 
 | Level                                    | What you do                                                          | Who can use it                           | Upstream needed?                                 |
 | ---------------------------------------- | -------------------------------------------------------------------- | ---------------------------------------- | ------------------------------------------------ |
-| **Local (editable install)**             | `pip install -e ./my_plugin` + metadata.yaml with class_paths        | You and your team                        | No                                               |
-| **Published (PyPI / internal registry)** | `pip install my-policy-plugin` + metadata.yaml                       | Anyone who installs your package         | No                                               |
+| **Local (editable install)**             | `pip install -e ./my_plugin` + manifest.json with class_paths        | You and your team                        | No                                               |
+| **Published (PyPI / internal registry)** | `pip install my-policy-plugin` + manifest.json                       | Anyone who installs your package         | No                                               |
 | **Upstreamed (entry points)**            | Add `[project.entry-points."physical_ai.plugins"]` to pyproject.toml | Auto-discovered by physical-ai-framework | PR to register name, but code stays in your repo |
 
 ### Local → Published → Upstream workflow
@@ -683,7 +696,7 @@ phyai run --model ./exports/my_model --robot robot.yaml
 my_policy = "my_policy_plugin:MyPolicyPlugin"
 ```
 
-Now `phyai run` auto-discovers the plugin without explicit class_paths in metadata. But this step is **optional** — class_path in metadata always works without entry points.
+Now `phyai run` auto-discovers the plugin without explicit class_paths in the manifest. But this step is **optional** — class_path in manifest.json always works without entry points.
 
 ---
 
@@ -889,22 +902,22 @@ pip install physical-ai-framework[tensorrt]
 pip install physical-ai-framework[all]
 ```
 
-**No `physical-ai-framework[getiaction]` or `physical-ai-framework[lerobot]` needed.** Built‑in format loaders parse metadata.yaml and manifest.json natively. Built‑in runners (SinglePassRunner, IterativeRunner, ActionChunkingRunner) handle common execution patterns. No training framework required at deployment time.
+**No `physical-ai-framework[getiaction]` or `physical-ai-framework[lerobot]` needed.** The unified `manifest.json` format is parsed natively. Built‑in runners (SinglePassRunner, IterativeRunner, ActionChunkingRunner) handle common execution patterns. No training framework required at deployment time.
 
 ---
 
 ## Installation Matrix (What You Get)
 
-| Install command                     | Includes                                               | Excludes          |
-| ----------------------------------- | ------------------------------------------------------ | ----------------- |
-| `physical-ai-framework`             | Core runtime + CLI + format loaders + built‑in runners | No heavy backends |
-| `physical-ai-framework[openvino]`   | Core + OpenVINO runtime                                | No other backends |
-| `physical-ai-framework[onnx-gpu]`   | Core + ONNX Runtime (GPU)                              | No other backends |
-| `physical-ai-framework[tensorrt]`   | Core + TensorRT                                        | No other backends |
-| `physical-ai-framework[executorch]` | Core + ExecuTorch runtime                              | No other backends |
-| `physical-ai-framework[all]`        | Core + all backends                                    | —                 |
+| Install command                     | Includes                                                | Excludes          |
+| ----------------------------------- | ------------------------------------------------------- | ----------------- |
+| `physical-ai-framework`             | Core runtime + CLI + manifest loader + built‑in runners | No heavy backends |
+| `physical-ai-framework[openvino]`   | Core + OpenVINO runtime                                 | No other backends |
+| `physical-ai-framework[onnx-gpu]`   | Core + ONNX Runtime (GPU)                               | No other backends |
+| `physical-ai-framework[tensorrt]`   | Core + TensorRT                                         | No other backends |
+| `physical-ai-framework[executorch]` | Core + ExecuTorch runtime                               | No other backends |
+| `physical-ai-framework[all]`        | Core + all backends                                     | —                 |
 
-**Note:** No `[getiaction]` or `[lerobot]` extras exist. Built‑in format loaders and runners handle both frameworks natively. External plugins for exotic patterns are the user's own `pip install`.
+**Note:** No `[getiaction]` or `[lerobot]` extras exist. The unified `manifest.json` format and built‑in runners handle both frameworks natively. External plugins for exotic patterns are the user's own `pip install`.
 
 ---
 
@@ -912,13 +925,13 @@ pip install physical-ai-framework[all]
 
 **Contains:**
 
-- Inference core (`physical_ai.inference`) — domain-agnostic modular layer: RuntimeAdapter, backend abstraction, metadata IO, base InferenceModel
+- Inference core (`physical_ai.inference`) — domain-agnostic modular layer: RuntimeAdapter, backend abstraction, manifest IO, base InferenceModel
 - Unified inference runtime for physical‑AI policies (`InferenceModel`)
 - Observation pipeline (camera → observation dict)
 - Safety runtime (action clamping, velocity limits, emergency stop)
 - Episode orchestration (run N episodes, reset, log)
 - Device management (robot/camera connection lifecycle)
-- Format loaders (metadata.yaml, manifest.json) and built‑in runners
+- Manifest loader (`manifest.json`) and built‑in runners
 - CLI entrypoints (`phyai run`, `phyai serve`, `phyai export`, `phyai validate`)
 - Configuration loading and validation
 - Camera interfaces (`physical_ai.camera`) — clean subpackage, no cross-imports
@@ -940,4 +953,4 @@ pip install physical-ai-framework[all]
 
 ---
 
-_Last Updated: 2026-02-11_
+_Last Updated: 2026-02-16_

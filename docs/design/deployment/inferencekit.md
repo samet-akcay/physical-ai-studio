@@ -22,7 +22,7 @@
   - [InferenceRunner](#inferencerunner)
   - [Callback System](#callback-system)
   - [Preprocessors and Postprocessors](#preprocessors-and-postprocessors)
-  - [Metadata Format](#metadata-format)
+  - [Manifest Format](#manifest-format)
 - [Extension & Plugin System](#extension--plugin-system)
   - [Registry Architecture](#registry-architecture)
   - [Entry Points](#entry-points)
@@ -49,7 +49,7 @@
 **inferencekit** is the base execution engine for the Geti ecosystem. It standardizes backend execution and metadata IO. It provides:
 
 - Backend abstraction (OpenVINO, ONNX, TensorRT, Torch)
-- Metadata loading (YAML/JSON)
+- Manifest loading (`manifest.json`)
 - Minimal `InferenceModel(path)` + `model(inputs)` API
 
 **inferencekit knows nothing about vision, robotics, or any specific domain.** Domain plugins live above it (physical‑ai‑framework, model_api, custom layers).
@@ -92,7 +92,7 @@ inferencekit is the **foundation layer** in a layered architecture. Domain-speci
 
 | Layer                     | Owns                                                                                                                                                      | Does NOT own                          |
 | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
-| **inferencekit**          | Backend adapters, metadata IO, base InferenceModel                                                                                                        | Vision models, robotics, domain logic |
+| **inferencekit**          | Backend adapters, manifest IO, base InferenceModel                                                                                                        | Vision models, robotics, domain logic |
 | **model_api**             | Vision preprocessing, task wrappers (YOLO, SAM), result types                                                                                             | Backend execution, robotics           |
 | **physical‑ai‑framework** | Policy plugins, unified APIs, orchestration, observation pipeline, safety runtime, episode orchestration, device management, camera/robot interfaces, CLI | Backend execution, training           |
 | **custom layers**         | Domain-specific models, runners, pre/postprocessors                                                                                                       | Backend execution, core infra         |
@@ -101,7 +101,7 @@ inferencekit is the **foundation layer** in a layered architecture. Domain-speci
 
 | Goal                         | Description                                                  |
 | ---------------------------- | ------------------------------------------------------------ |
-| **G1: Execution Engine**     | Provide backend execution and metadata IO                    |
+| **G1: Execution Engine**     | Provide backend execution and manifest IO                    |
 | **G2: Minimal API**          | `InferenceModel(path)` + `model(inputs)` across backends     |
 | **G3: Backend Agnostic**     | Support OpenVINO, ONNX, TensorRT, Torch without code changes |
 | **G4: Minimal Dependencies** | Core has few requirements; optional extras per backend       |
@@ -153,7 +153,7 @@ inferencekit/
 │   └── base.py                              # Postprocessor ABC
 ├── io/
 │   ├── __init__.py
-│   ├── metadata.py                          # Metadata loading (YAML/JSON)
+│   ├── manifest.py                          # Manifest loading (JSON)
 │   └── instantiate.py                       # class_path + init_args
 ├── plugins/
 │   ├── __init__.py                          # Plugin registry + entry points
@@ -419,44 +419,58 @@ class Postprocessor(ABC):
         ...
 ```
 
-### Metadata Format
+### Manifest Format
 
-Following `jsonargparse` conventions with `class_path` + `init_args`:
+All exported models use a unified `manifest.json` format. The manifest uses `class_path` + `init_args` (following `jsonargparse` conventions) for component specification:
 
-```yaml
-# metadata.yaml
-backend: onnx
-
-runner:
-  class_path: inferencekit.runners.SinglePassRunner
-  init_args: {}
-
-adapter:
-  class_path: inferencekit.adapters.ONNXAdapter
-  init_args:
-    providers:
-      - CUDAExecutionProvider
-      - CPUExecutionProvider
-
-preprocessors:
-  - class_path: mypackage.preprocessors.ImageResize
-    init_args:
-      target_size: [640, 640]
-
-postprocessors:
-  - class_path: mypackage.postprocessors.NMS
-    init_args:
-      confidence_threshold: 0.5
+```json
+{
+  "format": "policy_package",
+  "version": "1.0",
+  "policy": {
+    "name": "my_model",
+    "kind": "single_pass"
+  },
+  "artifacts": {
+    "onnx": "model.onnx"
+  },
+  "runner": {
+    "class_path": "inferencekit.runners.SinglePassRunner",
+    "init_args": {}
+  },
+  "adapter": {
+    "class_path": "inferencekit.adapters.ONNXAdapter",
+    "init_args": {
+      "providers": ["CUDAExecutionProvider", "CPUExecutionProvider"]
+    }
+  },
+  "preprocessors": [
+    {
+      "class_path": "mypackage.preprocessors.ImageResize",
+      "init_args": {
+        "target_size": [640, 640]
+      }
+    }
+  ],
+  "postprocessors": [
+    {
+      "class_path": "mypackage.postprocessors.NMS",
+      "init_args": {
+        "confidence_threshold": 0.5
+      }
+    }
+  ]
+}
 ```
 
-**Loading priority:**
+**How models are loaded:**
 
-1. `metadata.yaml`
-2. `metadata.yml`
-3. `metadata.json`
-4. `manifest.json` (LeRobot PolicyPackage — proposed format, pending upstream acceptance)
+The framework reads `manifest.json` and resolves the model configuration:
 
-The `class_path` + `init_args` pattern allows domain layers to specify their own components in metadata without inferencekit needing to know about them.
+1. **Built‑in models** (getiaction, LeRobot): `policy.kind` maps to a built‑in runner. No `class_path` needed for the runner — the `kind` field is sufficient.
+2. **Custom/exotic models**: `runner.class_path` points to the user's runner class. The framework instantiates it dynamically.
+
+The `class_path` + `init_args` pattern allows domain layers to specify their own components in the manifest without inferencekit needing to know about them.
 
 ---
 
@@ -537,24 +551,34 @@ pip install my-domain-inference
 Domain layers can publish model packages to HuggingFace that include:
 
 1. **Exported model artifacts** (ONNX, OpenVINO, etc.)
-2. **Metadata** specifying the inferencekit runner, preprocessors, etc.
-3. **Domain package dependency** declared in metadata
+2. **Manifest** (`manifest.json`) specifying the inferencekit runner, preprocessors, etc.
+3. **Domain package dependency** declared in the manifest
 
-```yaml
-# metadata.yaml (inside HuggingFace model repo)
-backend: onnx
-
-# This tells inferencekit which domain package to use
-domain_package: my-domain-inference # pip install'd if missing
-
-runner:
-  class_path: my_domain_inference.runners.MyDomainRunner
-  init_args:
-    param1: value1
-
-preprocessors:
-  - class_path: my_domain_inference.preprocessors.MyPreprocessor
-    init_args: {}
+```json
+{
+  "format": "policy_package",
+  "version": "1.0",
+  "policy": {
+    "name": "my_model",
+    "kind": "custom"
+  },
+  "domain_package": "my-domain-inference",
+  "artifacts": {
+    "onnx": "model.onnx"
+  },
+  "runner": {
+    "class_path": "my_domain_inference.runners.MyDomainRunner",
+    "init_args": {
+      "param1": "value1"
+    }
+  },
+  "preprocessors": [
+    {
+      "class_path": "my_domain_inference.preprocessors.MyPreprocessor",
+      "init_args": {}
+    }
+  ]
+}
 ```
 
 **Loading from HuggingFace:**
@@ -1012,7 +1036,7 @@ Instead of replacing model_api, inferencekit provides the **foundation** that mo
 | Concern           | inferencekit provides                  | model_api adds                           |
 | ----------------- | -------------------------------------- | ---------------------------------------- |
 | Backend execution | RuntimeAdapter (OV, ONNX, TRT)         | Wraps RuntimeAdapter in InferenceAdapter |
-| Model loading     | Metadata-driven `InferenceModel(path)` | Vision-specific `Model.create_model()`   |
+| Model loading     | Manifest-driven `InferenceModel(path)` | Vision-specific `Model.create_model()`   |
 | Preprocessing     | Preprocessor ABC                       | ImageResize, Normalize, LayoutTransform  |
 | Postprocessing    | Postprocessor ABC                      | NMS, BoxDecoder, MaskDecoder             |
 | Runners           | SinglePassRunner, BatchRunner          | TiledRunner (via contrib or own impl)    |
@@ -1050,9 +1074,9 @@ Instead of replacing model_api, inferencekit provides the **foundation** that mo
 
 - **[Strategy](../strategy.md)** — Big-picture architecture and layering decisions
 - **[Deployment Engine](./deployment-shell.md)** — physical-ai-framework CLI and packaging
-- **[LeRobot Integration](./lerobot.md)** — LeRobot format loader for physical‑ai‑framework (built‑in, reads manifest.json)
+- **[LeRobot Integration](./lerobot.md)** — LeRobot integration for physical‑ai‑framework (built‑in, reads manifest.json)
 
 ---
 
-_Document Version: 2.0_
-_Last Updated: 2026-02-11_
+_Document Version: 3.0_
+_Last Updated: 2026-02-16_
