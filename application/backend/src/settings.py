@@ -29,11 +29,19 @@ class Settings(BaseSettings):
     environment: Literal["dev", "prod"] = "dev"
     data_dir: Path = Field(default=Path("data"), alias="DATA_DIR")
     storage_dir: Path = Field(default=Path("~/.cache/geti_action").expanduser(), alias="STORAGE_DIR")
+    static_files_dir: str | None = Field(default=None, alias="STATIC_FILES_DIR")
+
+    supported_backends: list[str] = ["torch"]
 
     @property
     def datasets_dir(self) -> Path:
         """Storage directory for datasets."""
         return self.storage_dir / "datasets"
+
+    @property
+    def cache_dir(self) -> Path:
+        """Storage directory for cache."""
+        return self.storage_dir / "cache"
 
     @property
     def models_dir(self) -> Path:

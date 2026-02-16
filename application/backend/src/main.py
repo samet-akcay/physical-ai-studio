@@ -1,4 +1,9 @@
+# Copyright (C) 2026 Intel Corporation
+# SPDX-License-Identifier: Apache-2.0
+
+import multiprocessing as mp
 import os
+from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI
@@ -17,9 +22,11 @@ from api.robot_calibration import router as robot_calibration_router
 from api.robot_control import router as robot_control_router
 from api.robots import router as project_robots_router
 from api.settings import router as settings_router
+from api.webui import SPAStaticFiles
 from core import lifespan
 from exception_handlers import register_application_exception_handlers
 from settings import get_settings
+from utils.device import get_torch_device
 
 settings = get_settings()
 app = FastAPI(
@@ -57,6 +64,18 @@ async def health_check(camera_registry: CameraRegistryDep, robot_registry: Robot
     }
 
 
+# In docker deployment, the UI is built and served statically
+if (
+    settings.static_files_dir
+    and Path(settings.static_files_dir).is_dir()
+    and (Path(settings.static_files_dir) / "index.html").exists()
+):
+    static_files = SPAStaticFiles(directory=Path(settings.static_files_dir), html=True)
+
+    app.mount("/", static_files, name="webui")
+
 if __name__ == "__main__":
+    if get_torch_device() == "xpu" and mp.get_start_method(allow_none=True) != "spawn":
+        mp.set_start_method("spawn", force=True)
     uvicorn_port = int(os.environ.get("HTTP_SERVER_PORT", settings.port))
     uvicorn.run("main:app", host=settings.host, port=uvicorn_port)
