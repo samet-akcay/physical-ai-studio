@@ -8,6 +8,21 @@ Internal document capturing suggestions for improving the LeRobot export API.
 
 ---
 
+## Convergence Status
+
+As part of the unified design across getiaction, LeRobot, and physical‑ai‑framework, the following suggestions have been adopted or deferred:
+
+| Suggestion                             | Status       | Notes                                                                                                                                       |
+| -------------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Add explicit `kind` field              | **Adopted**  | `policy.kind` is now a required field in the unified `manifest.json` format. Used by the framework to select built‑in runners.              |
+| Clarify action queuing                 | **Adopted**  | Action handling is explicit in the manifest via `action.chunk_size` and `action.n_action_steps`. ActionChunkingRunner is a built‑in runner. |
+| Document single-pass + action chunking | **Adopted**  | The runner mapping table in the design docs clarifies that `single_pass` may still use ActionChunkingRunner.                                |
+| Normalization timing                   | **Adopted**  | Normalization is handled via built‑in Preprocessor (normalize inputs) and Postprocessor (denormalize outputs).                              |
+| TwoPhase naming                        | **Deferred** | Keeping `two_phase` as a distinct `policy.kind` value. May revisit naming later.                                                            |
+| Version strategy                       | **Adopted**  | `version: "1.0"` with `1.x` backward-compatible additions, `2.x` breaking changes.                                                          |
+
+---
+
 ## Current Implementation Summary
 
 The LeRobot export implementation uses:
@@ -264,4 +279,4 @@ For runtimes consuming PolicyPackage:
 
 ---
 
-_Last Updated: 2026-01-28_
+_Last Updated: 2026-02-16_

@@ -8,7 +8,7 @@ Geti Action is an end-to-end platform for robot AI development: data collection,
 
 1. **Library-first**: The library owns every component needed for end-to-end robot AI (robots, cameras, teleop, data collection, policies, inference, training, export). The application is purely UI and orchestration — glue on top.
 
-2. **Layered deployment stack**: For inference/deployment, we propose a clean layering — **physical‑ai‑framework** (universal physical‑AI inference engine with a domain‑agnostic inference core as an internal modular layer, built‑in format loaders and runners) → **external plugins** (only for exotic execution patterns). Vision remains a separate domain layer (model_api) that can share the inference core.
+2. **Layered deployment stack**: For inference/deployment, we propose a clean layering — **physical‑ai‑framework** (universal physical‑AI inference engine with a domain‑agnostic inference core as an internal modular layer, unified `manifest.json` format, and built‑in runners) → **external plugins** (only for exotic execution patterns). Vision remains a separate domain layer (model_api) that can share the inference core.
 
 ---
 
@@ -181,7 +181,7 @@ After data collection and training, you have an exported model. How do you run i
 
 | Layer                     | Owns                                                                                                                                                                                             | Does NOT own                   |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------ |
-| **physical_ai.inference** | Runtime adapters, backend abstraction, metadata IO, base InferenceModel (domain‑agnostic modular layer inside physical‑ai‑framework)                                                             | Vision, robotics, domain logic |
+| **physical_ai.inference** | Runtime adapters, backend abstraction, manifest IO, base InferenceModel (domain‑agnostic modular layer inside physical‑ai‑framework)                                                             | Vision, robotics, domain logic |
 | **model_api**             | Vision preprocessing, task wrappers (YOLO, SAM), result types, image-specific pipelines                                                                                                          | Backend execution, robotics    |
 | **physical‑ai‑framework** | Physical‑AI orchestration, unified APIs, built‑in format loaders, built‑in runners, observation pipeline, safety runtime, episode orchestration, device management, camera/robot interfaces, CLI | Training, vision models        |
 | **external plugins**      | Exotic pre/post, runners for patterns not covered by built‑in components (user's own package)                                                                                                    | Backend execution              |
@@ -191,7 +191,7 @@ After data collection and training, you have an exported model. How do you run i
 physical‑ai‑framework is not a thin shell. It is the **universal inference engine for physical‑AI** — it owns every domain concern common to all physical‑AI deployments so that teams only supply their model-specific logic:
 
 - **Unified API surface** (`InferenceModel`) for all physical‑AI policies
-- **Built‑in format loaders** to parse metadata.yaml (getiaction) and manifest.json (LeRobot, proposed format — pending upstream acceptance) — no training framework imports needed
+- **Unified manifest format** (`manifest.json`) for all model sources — getiaction, LeRobot, and custom
 - **Built‑in runners** (SinglePassRunner, IterativeRunner, ActionChunkingRunner) for common execution patterns
 - **Observation pipeline** — camera → observation dict, timestamp alignment, buffering
 - **Safety runtime** — action clamping, velocity limits, workspace bounds, emergency stop (first-class engine layer, not a callback)
@@ -200,7 +200,7 @@ physical‑ai‑framework is not a thin shell. It is the **universal inference e
 - **Validation CLI** — `phyai validate` to verify metadata, resolve class_paths, dry-run pipeline without hardware
 - **CLI** for edge and server inference (`phyai run`, `phyai serve`, `phyai export`)
 
-Most models work with built‑in format loaders and runners — zero external dependencies. Exotic execution patterns use external plugins (user's own package). Backend execution lives in the inference core (`physical_ai.inference`), a domain‑agnostic modular layer inside the framework. Camera and robot interfaces live as clean subpackages inside physical‑ai‑framework (`physical_ai.camera`, `physical_ai.robot`).
+Most models work with the unified manifest format and built‑in runners — zero external dependencies. Exotic execution patterns use external plugins (user's own package). Backend execution lives in the inference core (`physical_ai.inference`), a domain‑agnostic modular layer inside the framework. Camera and robot interfaces live as clean subpackages inside physical‑ai‑framework (`physical_ai.camera`, `physical_ai.robot`).
 
 ### Why This Layering?
 
@@ -216,11 +216,11 @@ Dependencies flow **upward only**:
 getiaction → physical‑ai‑framework
 ```
 
-getiaction depends on physical‑ai‑framework for camera/robot interfaces and the engine runtime. The inference core (`physical_ai.inference`) lives inside physical‑ai‑framework as a domain‑agnostic modular layer. physical‑ai‑framework loads models at runtime via built‑in format loaders and `class_path` — never imports getiaction at install time. External plugins are optional and can live in their own repos. The inference core stays domain‑agnostic.
+getiaction depends on physical‑ai‑framework for camera/robot interfaces and the engine runtime. The inference core (`physical_ai.inference`) lives inside physical‑ai‑framework as a domain‑agnostic modular layer. physical‑ai‑framework loads models at runtime via the unified `manifest.json` format and `class_path` — never imports getiaction at install time. External plugins are optional and can live in their own repos. The inference core stays domain‑agnostic.
 
 ### Why getiaction Inference Stays in getiaction
 
-getiaction remains the source of truth for its own policies. Its exported models use `metadata.yaml` which the framework's built‑in format loader reads natively. Built‑in runners (like ActionChunkingRunner) handle getiaction execution patterns. No getiaction import is needed at deployment time.
+getiaction remains the source of truth for its own policies. Its exported models use the unified `manifest.json` format which the framework's manifest loader reads natively. Built‑in runners (like ActionChunkingRunner) handle getiaction execution patterns. No getiaction import is needed at deployment time.
 
 ### Robot/Camera APIs: Interface Ownership
 
@@ -239,7 +239,7 @@ getiaction → physical‑ai‑framework
 
 **Why:**
 
-- **No circular dependency.** getiaction depends on physical‑ai‑framework. physical‑ai‑framework loads models at runtime via built‑in format loaders and `class_path` — never imports getiaction at install time. One-directional dependency.
+- **No circular dependency.** getiaction depends on physical‑ai‑framework. physical‑ai‑framework loads models at runtime via the unified manifest format and `class_path` — never imports getiaction at install time. One-directional dependency.
 - **Fewer repos (2 instead of 5+).** Only physical‑ai‑framework and getiaction. Less coordination overhead, simpler CI, fewer version matrices.
 - **One package for all hardware interfaces.** Teams install physical‑ai‑framework and get cameras, robots, inference, CLI, safety — everything needed for deployment.
 - **Future split is cheap.** Camera/robot interfaces live in clean subpackages with no cross-imports. If a vision-only consumer needs camera-api standalone, extract it then. Merging repos later is much harder than splitting.
@@ -272,7 +272,7 @@ getiaction   physical‑ai‑framework
 
 ### Extension Contract (Built‑in + External)
 
-The framework ships built‑in format loaders and runners for common patterns. For exotic models, external plugins provide:
+The framework ships a unified `manifest.json` format and built‑in runners for common patterns. For exotic models, external plugins provide:
 
 - **Preprocessors**: observation → model inputs
 - **Runners**: policy‑specific execution patterns (beyond SinglePass, Iterative, ActionChunking)
@@ -317,17 +317,17 @@ phyai serve --model ./exports/act_policy --robot robot.yaml
 
 ## Key Decisions
 
-| Decision              | Choice                                             | Rationale                                        |
-| --------------------- | -------------------------------------------------- | ------------------------------------------------ |
-| Core logic location   | getiaction library                                 | Single source of truth, no version skew          |
-| Application role      | UI + orchestration only                            | Library-first; app adds no core logic            |
-| Deployment packaging  | Universal engine + built‑in format loaders/runners | Supports any model framework, zero external deps |
-| Robot/camera API home | Library, not application                           | Edge deployment without web server               |
-| Installation model    | Optional extras per SDK                            | Lightweight core, no SDK pollution               |
-| Async strategy        | Async core + sync wrapper                          | App needs async, CLI needs sync                  |
-| CLI framework         | LightningCLI / jsonargparse                        | Align with existing getiaction patterns          |
-| Dataset format        | LeRobot format (v0.1.0)                            | Required for VLA use cases                       |
-| Connection model      | Explicit connection strings only (v1)              | No discovery layer complexity                    |
+| Decision              | Choice                                                        | Rationale                                        |
+| --------------------- | ------------------------------------------------------------- | ------------------------------------------------ |
+| Core logic location   | getiaction library                                            | Single source of truth, no version skew          |
+| Application role      | UI + orchestration only                                       | Library-first; app adds no core logic            |
+| Deployment packaging  | Universal engine + unified manifest format + built‑in runners | Supports any model framework, zero external deps |
+| Robot/camera API home | Library, not application                                      | Edge deployment without web server               |
+| Installation model    | Optional extras per SDK                                       | Lightweight core, no SDK pollution               |
+| Async strategy        | Async core + sync wrapper                                     | App needs async, CLI needs sync                  |
+| CLI framework         | LightningCLI / jsonargparse                                   | Align with existing getiaction patterns          |
+| Dataset format        | LeRobot format (v0.1.0)                                       | Required for VLA use cases                       |
+| Connection model      | Explicit connection strings only (v1)                         | No discovery layer complexity                    |
 
 ## Guardrails
 
@@ -375,12 +375,12 @@ _Names are subject to marketing/branding review._
 
 ### Deployment Stack
 
-| Component           | Document                                              | Description                                                                |
-| ------------------- | ----------------------------------------------------- | -------------------------------------------------------------------------- |
-| Inference Core      | [Inference Core](./deployment/inferencekit.md)        | Domain-agnostic inference layer design (internal to framework)             |
-| Deployment Engine   | [Deployment Engine](./deployment/deployment-shell.md) | physical‑ai‑framework universal engine, CLI, format loaders                |
-| LeRobot Integration | [LeRobot Integration](./deployment/lerobot.md)        | Built‑in format loader for manifest.json (proposed format), runner mapping |
+| Component           | Document                                              | Description                                                    |
+| ------------------- | ----------------------------------------------------- | -------------------------------------------------------------- |
+| Inference Core      | [Inference Core](./deployment/inferencekit.md)        | Domain-agnostic inference layer design (internal to framework) |
+| Deployment Engine   | [Deployment Engine](./deployment/deployment-shell.md) | physical‑ai‑framework universal engine, CLI, format loaders    |
+| LeRobot Integration | [LeRobot Integration](./deployment/lerobot.md)        | LeRobot integration via unified manifest.json format           |
 
 ---
 
-_Last Updated: 2026-02-11_
+_Last Updated: 2026-02-16_
