@@ -7,349 +7,317 @@
   - [Executive Summary](#executive-summary)
   - [Overview](#overview)
   - [Packaging Strategy](#packaging-strategy)
-    - [Option A: Subpackage](#option-a-subpackage)
-    - [Option B: Standalone Package (In long term, this is preferred)](#option-b-standalone-package-in-long-term-this-is-preferred)
-  - [Background: FrameSource](#background-framesource)
-  - [Class Hierarchy](#class-hierarchy)
-    - [Coverage vs. FrameSource](#coverage-vs-framesource)
+  - [Architecture](#architecture)
+    - [Class Hierarchy](#class-hierarchy)
+    - [Package Structure](#package-structure)
+    - [Backend Strategy](#backend-strategy)
   - [Dependencies](#dependencies)
-  - [Multi-Consumer \& Lifecycle Management](#multi-consumer--lifecycle-management)
-    - [Problem Statement](#problem-statement)
-    - [Design Choice: Invisible Sharing](#design-choice-invisible-sharing)
-    - [Alternative Considered: CameraManager](#alternative-considered-cameramanager)
-    - [Other Alternatives](#other-alternatives)
   - [Core Interface](#core-interface)
+    - [Frame](#frame)
+    - [Sensor ABC](#sensor-abc)
     - [Camera ABC](#camera-abc)
-    - [Callback System (PyTorch Lightning-inspired)](#callback-system-pytorch-lightning-inspired)
+    - [DeviceInfo](#deviceinfo)
     - [Capability Mixins](#capability-mixins)
-    - [Device Discovery](#device-discovery)
+  - [Read Semantics](#read-semantics)
   - [Proposed Implementations](#proposed-implementations)
-    - [Live Cameras](#live-cameras)
-    - [Recorded Sources](#recorded-sources)
-    - [Interop (Outside cameras package)](#interop-outside-cameras-package)
+    - [OpenCVCamera](#opencvcamera)
+    - [RealSenseCamera](#realsensecamera)
+    - [BaslerCamera](#baslercamera)
+    - [GenicamCamera](#genicamcamera)
+    - [IPCamera](#ipcamera)
+  - [Recorded Sources (Future)](#recorded-sources-future)
+  - [Factory Function](#factory-function)
+  - [Sharing Model](#sharing-model)
   - [Usage](#usage)
     - [Basic](#basic)
-    - [Push-Based Frame Delivery (Callbacks)](#push-based-frame-delivery-callbacks)
     - [Multi-Camera Setup](#multi-camera-setup)
-    - [Multi-Consumer (Automatic Sharing)](#multi-consumer-automatic-sharing)
-    - [From Config](#from-config)
+    - [Device Discovery](#device-discovery)
+    - [Config-Driven](#config-driven)
     - [Robot Integration](#robot-integration)
-    - [IPCam with PTZ Control](#ipcam-with-ptz-control)
-  - [Comparison: FrameSource vs. getiaction.cameras/geticam](#comparison-framesource-vs-getiactioncamerasgeticam)
+    - [Async (FastAPI)](#async-fastapi)
+  - [Migration from FrameSource](#migration-from-framesource)
+    - [Feature Parity Checklist](#feature-parity-checklist)
+    - [API Migration Map](#api-migration-map)
+    - [Migration Plan](#migration-plan)
+  - [Comparison with LeRobot](#comparison-with-lerobot)
   - [Open Design Decisions](#open-design-decisions)
-    - [1. Package vs. Subpackage (Critical Decision)](#1-package-vs-subpackage-critical-decision)
-    - [2. Frame Transforms](#2-frame-transforms)
-    - [3. Additional Opens](#3-additional-opens)
   - [References](#references)
 
 ---
 
 ## Executive Summary
 
-This document proposes a unified `Camera` interface for `getiaction`, built on top of the existing [FrameSource](https://github.com/ArendJanKramer/FrameSource) library. FrameSource provides solid low-level camera integrations across multiple hardware backends (webcams, RealSense, Basler, GenICam, etc.)—excellent foundational work by our team.
+This document defines the camera/capture interface for the physical-AI ecosystem, packaged as `physical_ai.capture` inside `physical-ai-framework`.
 
-**The challenge**: FrameSource is a fork of a another repository and was developed without strict engineering standards. While the low-level implementations are functional, the codebase has limitations:
+**Key decisions:**
 
-- Consistent API design and documentation
-- Production-level code quality (typing, testing, error handling)
-- A user-friendly high-level interface
-- PyPI compatibility: FrameSource has GitHub-based dependencies that could prevent PyPI publication—it cannot be installed via `pip install framesource`
+- **Package**: `physical_ai.capture` — lives in `physical-ai-framework`, zero coupling to other subpackages, designed for future extraction as a standalone repo
+- **Backends**: Low-level capture code absorbed selectively from our team's FrameSource fork, rewritten under `physical_ai.capture` naming — no FrameSource branding
+- **Primary API**: Dedicated camera classes (`OpenCVCamera`, `RealSenseCamera`, etc.) with explicit constructor parameters
+- **Convenience API**: Thin `create_camera()` factory for config-driven workflows
+- **Read model**: Three-tier — `read()` (blocking sequential), `read_latest()` (non-blocking latest), `async_read()` (async/await)
+- **Frame type**: `Frame` dataclass carrying image data + timestamp + sequence number
+- **Sharing**: Explicit only — no invisible global state, no hidden reference counting
+- **Callbacks**: Removed from base class — application layer concern
 
-**Our goal**: Build a clean, production-ready camera abstraction layer that:
-
-1. **Differentiates** from the original codebase with a well-designed API
-2. **Elevates** to product-level quality (typed, tested, documented)
-3. **Provides** an intuitive high-level interface for excellent UX/DX
-4. **Is pip-installable** — deployable as a standard Python package on PyPI
-
-This design retains FrameSource's low-level strengths while delivering the polish expected of a production library. This would, overall, be our unique contribution, and novel product within the Geti ecosystem.
+**Goal**: The best camera framework for vision and robotics applications. Clean API, production-grade quality, hardware-agnostic.
 
 ---
 
 ## Overview
 
-A unified `Camera` interface for frame acquisition from live cameras, video files, and image folders. Video files and image folders are recorded camera output—the data originally came from a camera, we're just replaying it. One abstraction covers all cases.
-
 **Design Principles:**
 
-- **Hparams-first**: Explicit constructor args with IDE autocomplete, plus `from_config()` for configs
-- **Context manager**: Safe resource management with `with` statement
-- **Single ABC**: One `Camera` interface for all sources
-- **Invisible sharing**: Multiple Camera instances for the same device share automatically
-- **Callback-driven**: PyTorch Lightning-style callbacks for reactive/event-driven use cases
-- **Capability mixins**: Optional features (Async, PTZ, color control, resolution discovery) via composable mixins
+- **Hparams-first**: Explicit constructor args with IDE autocomplete — `OpenCVCamera(index=0, fps=30, width=640)`
+- **Context manager**: Safe resource management via `with` statement
+- **Async context manager**: `async with` supported for event-loop integration
+- **Dedicated classes**: Each camera type is a concrete class, not a factory string — `RealSenseCamera(serial="...")` not `create("realsense", serial="...")`
+- **Explicit sharing**: No hidden global state. Multi-consumer access is the application's responsibility.
+- **Three-tier reads**: `read()`, `read_latest()`, `async_read()` cover sequential, real-time, and async use cases
+- **Timestamped frames**: Every frame carries `timestamp` and `sequence` — no ambiguity about when data was captured
+- **Capability mixins**: Optional features (depth, PTZ, format discovery) via composable mixins
+- **Zero coupling**: No imports from other `physical_ai` subpackages
 
 ---
 
 ## Packaging Strategy
 
-This camera interface is needed across the Geti ecosystem (`geti-action`, `geti-prompt`, `geti-inspect`, `geti-tune`) and by external users. We therefore have **two approaches**:
-
-### Option A: Subpackage
-
-We could start inside `getiaction` for rapid iteration:
+`physical_ai.capture` lives inside the `physical-ai-framework` monorepo as a subpackage with **zero coupling** to other subpackages. It is designed as if it were standalone — no internal cross-imports — so it can be extracted into its own repository once mature.
 
 ```text
-library/src/getiaction/cameras/
-├── __init__.py         # Public API + aliases
-├── base.py             # Camera ABC, _Capture, ColorMode
-├── callbacks.py        # Callback base class and hooks
-├── mixins.py           # PTZMixin, ColorControlMixin, ResolutionDiscoveryMixin
-├── webcam.py           # Webcam (with nokhwa/opencv backends)
-├── realsense.py        # RealSense
-├── basler.py           # Basler
-├── genicam.py          # Genicam
-├── ipcam.py            # IPCam (with PTZMixin)
-├── screen.py           # Screen
-├── video.py            # VideoFile
-├── folder.py           # ImageFolder
-└── lerobot.py          # LeRobot
+physical-ai-framework/
+└── physical_ai/
+    └── capture/
+        ├── __init__.py          # Public API: re-exports cameras, Frame, discover_all
+        ├── _frame.py            # Frame dataclass
+        ├── _sensor.py           # Sensor ABC
+        ├── _camera.py           # Camera ABC (extends Sensor)
+        ├── _discovery.py        # DeviceInfo, discover_all()
+        ├── cameras/
+        │   ├── __init__.py
+        │   ├── opencv.py        # OpenCVCamera
+        │   ├── realsense.py     # RealSenseCamera
+        │   ├── basler.py        # BaslerCamera
+        │   ├── genicam.py       # GenicamCamera
+        │   └── ip.py            # IPCamera
+        ├── sources/             # Future: non-live sources
+        │   ├── __init__.py
+        │   ├── video.py         # VideoSource
+        │   └── directory.py     # ImageDirectorySource
+        └── mixins/
+            ├── __init__.py
+            ├── depth.py         # DepthMixin
+            ├── ptz.py           # PTZMixin
+            └── formats.py       # FormatDiscoveryMixin
 ```
 
 ```python
-from getiaction.cameras import Webcam, RealSense
+from physical_ai.capture import OpenCVCamera, RealSenseCamera, Frame
+from physical_ai.capture import create_camera, discover_all
 ```
 
-### Option B: Standalone Package (In long term, this is preferred)
+**Why subpackage now, standalone later?**
 
-We could extract to a standalone package for ecosystem-wide reuse. FrameSource is already a standalone repo.
-However, we want a unique identity separate from the original codebase, so we would create a new package, e.g., `geticam`:
-
-```text
-geticam/
-├── src/geticam/
-│   ├── __init__.py
-│   ├── base.py
-│   ├── webcam.py
-│   ├── ...
-├── pyproject.toml
-└── README.md
-```
-
-```python
-from geticam import Webcam, RealSense
-```
-
-We could start with **Option A** for speed. We could design the API to be extraction-friendly (no internal `getiaction` imports in camera code) so migration to **Option B** is seamless once the interface stabilizes.
-
-See [Open Design Decisions](#1-package-vs-subpackage-critical-decision) for full trade-off analysis.
+- Rapid iteration without repo/CI overhead
+- Zero coupling means extraction is a `mv` + `pyproject.toml` change
+- Once other repos (`geti-prompt`, `geti-inspect`) need cameras, extract
 
 ---
 
-## Background: FrameSource
+## Architecture
 
-[FrameSource](https://github.com/ArendJanKramer/FrameSource) is an existing library that handles low-level camera integrations. It supports:
-
-| FrameSource Class     | Hardware/Source                                                                   |
-| --------------------- | --------------------------------------------------------------------------------- |
-| `WebcamCapture`       | USB webcams (OpenCV backend)                                                      |
-| `WebcamCaptureNokhwa` | USB webcams ([nokhwa](https://github.com/l1npengtul/nokhwa) backend, more stable) |
-| `BaslerCapture`       | Basler industrial cameras                                                         |
-| `GenicamCapture`      | Generic GenICam devices                                                           |
-| `RealsenseCapture`    | Intel RealSense depth                                                             |
-| `IPCameraCapture`     | RTSP/HTTP network cameras                                                         |
-| `ScreenCapture`       | Desktop screen capture                                                            |
-| `VideoFileCapture`    | Video file playback                                                               |
-| `FolderCapture`       | Image sequence playback                                                           |
-
-**What FrameSource does well**: Hardware abstraction, threading, buffer management
-
-**What this design adds**:
-
-- Consistent, typed API with IDE autocomplete
-- Context manager pattern for safe resource management
-- Config-driven instantiation (`from_config()`)
-- Invisible sharing: multiple Camera instances share the same physical device automatically
-- Callback system for push-based frame delivery
-- Capability mixins for optional features (PTZ, color control, resolution discovery)
-- Production-level error handling and documentation
-
----
-
-## Class Hierarchy
+### Class Hierarchy
 
 ```text
-Camera (ABC)
-├── Webcam              # Webcam, USB cameras
-├── RealSense           # Intel depth cameras
-├── Basler              # Industrial (pypylon)
-├── Genicam             # Generic industrial (harvesters)
-├── IPCam               # Network cameras (RTSP/HTTP)
-├── Screen              # Desktop capture
-├── VideoFile           # Recorded: video files
-└── ImageFolder         # Recorded: image sequences
+Sensor (ABC)                       # Base: connect/disconnect/read/read_latest/async_read
+├── Camera (ABC)                   # Adds: device discovery, hardware config (width/height/fps)
+│   ├── OpenCVCamera               # USB webcams via OpenCV
+│   ├── RealSenseCamera            # Intel RealSense (+ DepthMixin)
+│   ├── BaslerCamera               # Basler industrial cameras (pypylon)
+│   ├── GenicamCamera              # Generic GenICam devices (harvesters)
+│   └── IPCamera                   # RTSP/HTTP network cameras
+└── [Future] RecordedSource        # Non-live playback
+    ├── VideoSource                # Video file playback
+    └── ImageDirectorySource       # Image sequence playback
 ```
 
-### Coverage vs. FrameSource
+`Sensor` is the universal ABC — anything that produces frames. `Camera` extends it with hardware-specific concepts (device discovery, resolution, FPS). `RecordedSource` is future work for replaying recorded data.
 
-| FrameSource               | This Design   | Notes        |
-| ------------------------- | ------------- | ------------ |
-| `WebcamCapture`           | `Webcam`      | Yes          |
-| `BaslerCapture`           | `Basler`      | Yes          |
-| `GenicamCapture`          | `Genicam`     | Yes          |
-| `RealsenseCapture`        | `RealSense`   | Yes          |
-| `IPCameraCapture`         | `IPCam`       | Yes          |
-| `ScreenCapture`           | `Screen`      | Yes          |
-| `VideoFileCapture`        | `VideoFile`   | Yes          |
-| `FolderCapture`           | `ImageFolder` | Yes          |
-| `AudioSpectrogramCapture` | No            | Not a camera |
+### Package Structure
+
+Internal modules use underscore prefix (`_frame.py`, `_sensor.py`) to signal they are not public API. Users import from `physical_ai.capture` directly.
+
+Each camera backend is a separate module under `cameras/`. This keeps dependencies isolated — importing `OpenCVCamera` doesn't pull in `pypylon` or `pyrealsense2`.
+
+Optional SDK imports must be **lazy**: camera modules should import their SDKs only when instantiated or when `connect()` is called, and raise `MissingDependencyError` with an install hint if the extra is not installed. `physical_ai.capture.__init__` should avoid eager imports that force optional dependencies.
+
+### Backend Strategy
+
+We selectively absorb low-level capture code from our team's FrameSource fork. The fork is maintained by our team, but the FrameSource brand belongs to the original author. We:
+
+1. **Cherry-pick** proven capture logic (device enumeration, buffer management, format negotiation)
+2. **Rewrite** under `physical_ai.capture` naming and conventions
+3. **Improve** with typed APIs, proper error handling, and timestamped frames
+4. **Own** the code — no external dependency on FrameSource at runtime
+
+The fork maintainer continues adding features. We absorb selectively as needed, not wholesale.
 
 ---
 
 ## Dependencies
 
-OpenCV is a base dependency. Optional extras for specialized hardware:
+OpenCV is the only required dependency. Hardware-specific SDKs are optional extras:
 
 ```bash
-pip install getiaction[realsense]  # Intel RealSense
-pip install getiaction[basler]     # Basler (pypylon)
-pip install getiaction[genicam]    # GenICam (harvesters)
-pip install getiaction[cameras]    # All camera dependencies
+pip install physical-ai-framework                    # Core + OpenCVCamera only
+pip install physical-ai-framework[realsense]         # + Intel RealSense (pyrealsense2)
+pip install physical-ai-framework[basler]            # + Basler (pypylon)
+pip install physical-ai-framework[genicam]           # + GenICam (harvesters)
+pip install physical-ai-framework[capture]           # All camera dependencies
 ```
 
----
-
-## Multi-Consumer & Lifecycle Management
-
-### Problem Statement
-
-Real-world camera usage involves multiple consumers accessing the same physical device:
-
-- **UI display** needs camera feed for live preview
-- **Recording** needs same camera feed to save to disk
-- **Teleoperation** needs feed for remote control
-- **WebSocket/WebRTC** streams need feed for network transmission
-
-**The challenge**: A physical camera can only be opened once. Multiple opens fail or cause undefined behavior.
-
-**Requirements**:
-
-| Requirement                    | Description                                        |
-| ------------------------------ | -------------------------------------------------- |
-| **R1: Single device access**   | Only one process opens the physical camera         |
-| **R2: Multi-consumer support** | Multiple code paths read from same device          |
-| **R3: Automatic lifecycle**    | Device opens on first use, closes when unused      |
-| **R4: Simple API**             | Basic usage should remain simple                   |
-| **R5: Thread safety**          | Safe access from multiple threads                  |
-| **R6: Camera as main concept** | Avoid introducing many new abstractions            |
-| **R7: Extensibility**          | Support callbacks and capability mixins            |
-| **R8: Push & Pull delivery**   | Both polling (`read()`) and callbacks (`on_frame`) |
-
-### Design Choice: Invisible Sharing
-
-**Concept**: `Camera` remains the only public concept. Sharing happens automatically based on device identity. Internal reference counting manages lifecycle.
-
-```python
-# Simple usage
-with Webcam(index=0) as cam:
-    frame = cam.read()
-
-# Multi-consumer - automatic sharing
-cam1 = Webcam(index=0)
-cam2 = Webcam(index=0)  # Same device
-
-cam1.connect()  # Opens device, ref_count = 1
-cam2.connect()  # Reuses capture, ref_count = 2
-
-frame1 = cam1.read()  # Both get frames
-frame2 = cam2.read()  # from same source
-
-cam1.disconnect()  # ref_count = 1, device stays open
-cam2.disconnect()  # ref_count = 0, device closes
-```
-
-**How it works**:
-
-```text
-┌─────────────────────────────────────────────┐
-│              User Code                      │
-│  cam1 = Webcam(0)     cam2 = Webcam(0)      │
-│        ↑                    ↑               │
-│   cam1.read()          callback.on_frame()  │
-└─────────────────────────────────────────────┘
-                    │
-                    ▼
-┌─────────────────────────────────────────────┐
-│           Camera Interface                  │
-│  - Clean public API                         │
-│  - Delegates to internal shared state       │
-└─────────────────────────────────────────────┘
-                    │
-                    ▼
-┌─────────────────────────────────────────────┐
-│     Internal: _Capture (ref counted)        │
-│  "webcam:0" → _Capture                      │
-│     └─ ref_count: 2                         │
-│     └─ callbacks: [Logging, Recording]      │
-│     └─ Background capture thread            │
-│     └─ Invokes on_frame() for each frame    │
-└─────────────────────────────────────────────┘
-```
-
-**Why this approach?**
-
-The best abstractions **hide complexity**, not expose it. Similar patterns:
-
-- `logging.getLogger("app")` — Multiple calls return same logger
-- Python reference counting — Automatic, invisible
-- ORM connection pooling — You just query, pool is hidden
-
-| Pros                                | Cons                                |
-| ----------------------------------- | ----------------------------------- |
-| Camera stays the only concept       | Implicit sharing may surprise users |
-| Zero API change for consumers       | Hidden global state                 |
-| Automatic resource management       | Testing requires care               |
-| Simple single-camera case unchanged | Need clear docs on sharing behavior |
-| Supports callbacks for push-based   |                                     |
-
-### Alternative Considered: CameraManager
-
-A separate manager object could handle sharing explicitly:
-
-```python
-manager = CameraManager()
-cam1 = manager.get_camera("webcam:0", fps=30)
-cam2 = manager.get_camera("webcam:0", fps=30)  # Shared
-```
-
-| Pros                           | Cons                            |
-| ------------------------------ | ------------------------------- |
-| Explicit resource coordination | Requires managing the manager   |
-| Clear ownership model          | Extra object to pass around     |
-| Easy to test                   | Less ergonomic for simple cases |
-
-**Not recommended** because it introduces a second concept users must learn.
-
-### Other Alternatives
-
-**Camera + Explicit Feed**: Separate "device ownership" from "frame reading" via a `Feed` object. May not be ideal because callbacks (`on_frame`) provide the same push-based delivery more elegantly.
-
-**Broadcast Mode**: Add `start_broadcast()` / `subscribe()` methods. May not be ideal because two modes of operation is confusing, and `_Capture` already runs a background thread.
+| Camera            | Required Package | Optional Extra |
+| ----------------- | ---------------- | -------------- |
+| `OpenCVCamera`    | `opencv-python`  | (base)         |
+| `RealSenseCamera` | `pyrealsense2`   | `[realsense]`  |
+| `BaslerCamera`    | `pypylon`        | `[basler]`     |
+| `GenicamCamera`   | `harvesters`     | `[genicam]`    |
+| `IPCamera`        | `opencv-python`  | (base)         |
 
 ---
 
 ## Core Interface
 
-### Camera ABC
+### Frame
 
-The `Camera` ABC defines the interface all camera implementations must follow.
-
-**Key design elements**:
-
-- **Abstract methods** (`device_key`, `_connect_device`, `_disconnect_device`, `_read_frame`) — Subclasses implement these
-- **Public API** (`connect`, `disconnect`, `read`, `add_callback`) — Users call these
-- **Invisible sharing** — Handled automatically via class-level `_captures` dict
-- **Capability flags** — `supports_ptz`, `supports_color_control`, etc. (set by mixins)
+Every read operation returns a `Frame` — never a raw numpy array.
 
 ```python
+@dataclass(frozen=True, slots=True)
+class Frame:
+    """A captured image with metadata."""
+
+    data: NDArray[np.uint8]    # (H, W, C) or (H, W) image array
+    timestamp: float           # time.monotonic() at capture moment
+    sequence: int              # Monotonic counter per source (0, 1, 2, ...)
+```
+
+**Why not just `ndarray`?**
+
+- `timestamp` answers "when was this frame captured?" — critical for multi-camera sync, latency measurement, and replay. The timestamp uses a monotonic clock at capture time; if the device provides hardware timestamps, implementations should map them to monotonic time where possible.
+- `sequence` answers "did I miss any frames?" — enables drop detection
+- Frozen dataclass prevents accidental mutation of metadata (the underlying `data` buffer is still mutable)
+
+### Sensor ABC
+
+The base abstraction for anything that produces frames.
+
+```python
+class Sensor(ABC):
+    """Base interface for frame acquisition."""
+
+    # === Lifecycle ===
+
+    @abstractmethod
+    def connect(self) -> None:
+        """Open the source. Must be called before reading."""
+        ...
+
+    @abstractmethod
+    def disconnect(self) -> None:
+        """Close the source and release resources."""
+        ...
+
+    @property
+    @abstractmethod
+    def is_connected(self) -> bool:
+        """Whether the source is currently open."""
+        ...
+
+    # === Reading ===
+
+    @abstractmethod
+    def read(self) -> Frame:
+        """Read the next frame. Blocks until available.
+
+        Frames are returned in sequence — no frames are skipped.
+        Use for recording, sequential processing, or any case where
+        every frame matters.
+
+        Raises:
+            NotConnectedError: If not connected.
+            CaptureError: If frame acquisition fails.
+        """
+        ...
+
+    @abstractmethod
+    def read_latest(self) -> Frame:
+        """Read the most recent frame. Non-blocking.
+
+        Returns immediately with the latest captured frame. May skip
+        intermediate frames. Use for real-time control, teleoperation,
+        or any case where freshness matters more than completeness.
+
+        Raises:
+            NotConnectedError: If not connected.
+            NoFrameError: If no frame is available.
+        """
+        ...
+
+    async def async_read(self) -> Frame:
+        """Read the next frame, yielding to the event loop while waiting.
+
+        Default implementation wraps read() in a thread pool executor.
+        Subclasses with native async support can override.
+        """
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self.read)
+
+    # === Async context manager ===
+
+    async def __aenter__(self) -> Self:
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, self.connect)
+        return self
+
+    async def __aexit__(self, *args) -> None:
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, self.disconnect)
+
+    # === Context manager ===
+
+    def __enter__(self) -> Self:
+        self.connect()
+        return self
+
+    def __exit__(self, *args) -> None:
+        self.disconnect()
+
+    # === Iterator ===
+
+    def __iter__(self) -> Self:
+        return self
+
+    def __next__(self) -> Frame:
+        try:
+            return self.read()
+        except CaptureError:
+            raise StopIteration
+```
+
+### Camera ABC
+
+Extends `Sensor` with hardware-specific concepts.
+
+````python
 class ColorMode(str, Enum):
     RGB = "rgb"
     BGR = "bgr"
     GRAY = "gray"
 
 
-class Camera(ABC):
-    """Abstract interface for frame acquisition with automatic sharing."""
+class Camera(Sensor):
+    """Abstract interface for live camera hardware."""
 
     def __init__(
         self,
@@ -358,141 +326,114 @@ class Camera(ABC):
         height: int | None = None,
         fps: int | None = None,
         color_mode: ColorMode = ColorMode.RGB,
-        callbacks: list[Callback] | None = None,
-    ) -> None: ...
+    ) -> None:
+        self._width = width
+        self._height = height
+        self._fps = fps
+        self._color_mode = color_mode
 
-    # === Abstract: Subclasses must implement ===
-
-    @property
-    @abstractmethod
-    def device_key(self) -> str:
-        """Unique identifier for the physical device (e.g., 'webcam:0')."""
-        ...
-
-    @abstractmethod
-    def _connect_device(self) -> None:
-        """Open the physical device (called only for first user)."""
-        ...
-
-    @abstractmethod
-    def _disconnect_device(self) -> None:
-        """Close the physical device (called only when last user disconnects)."""
-        ...
-
-    @abstractmethod
-    def _read_frame(self) -> NDArray[np.uint8] | None:
-        """Read a single frame from the device."""
-        ...
-
-    # === Public API ===
+    # Implementations must honor color_mode by converting output as needed.
+    # For example, OpenCV provides BGR by default and should convert to RGB when color_mode=RGB.
 
     @property
-    def is_connected(self) -> bool: ...
+    @abstractmethod
+    def device_id(self) -> str:
+        """Stable identifier for the physical device.
 
-    @property
-    def is_shared(self) -> bool:
-        """Whether other Camera instances are using this device."""
-        ...
-
-    def connect(self) -> None:
-        """Connect to the device (shares if already open)."""
-        ...
-
-    def disconnect(self) -> None:
-        """Disconnect (device closes only when last user disconnects)."""
-        ...
-
-    def read(self) -> NDArray[np.uint8]:
-        """Read the latest frame (pull-based)."""
-        ...
-
-    def add_callback(self, callback: Callback) -> None:
-        """Add a callback for push-based frame delivery."""
-        ...
-
-    def remove_callback(self, callback: Callback) -> None:
-        """Remove a callback."""
+        Examples: "/dev/video0", "serial:12345678", "rtsp://192.168.1.100/stream"
+        """
         ...
 
     @classmethod
-    def from_config(cls, config: str | Path | dict) -> Self:
-        """Create from YAML file, dict, dataclass, or Pydantic model."""
-        ...
+    def discover(cls) -> list[DeviceInfo]:
+        """List available devices of this camera type.
+
+        Returns empty list if discovery is not supported for this camera type.
+        """
+        return []
 
     @classmethod
-    def active_devices(cls) -> list[str]:
-        """List device keys of all currently open captures."""
-        ...
+    def from_config(cls, config: dict) -> Self:
+        """Create from a configuration dictionary."""
+        return cls(**config)
 
-    # Context manager and iterator support
-    def __enter__(self) -> Self: ...
-    def __exit__(self, *args) -> None: ...
-    def __iter__(self) -> Self: ...
-    def __next__(self) -> NDArray[np.uint8]: ...
-```
+### Errors
 
-### Callback System (PyTorch Lightning-inspired)
-
-Callbacks provide push-based frame delivery and lifecycle hooks. Override only the hooks you need.
+`physical_ai.capture` defines explicit error types for predictable handling:
 
 ```python
-class Callback:
-    """Base callback class. Override hooks as needed."""
+class CaptureError(RuntimeError):
+    """Base error for capture failures."""
 
-    def on_connect(self, camera: Camera) -> None:
-        """Called after camera connects."""
-        pass
 
-    def on_disconnect(self, camera: Camera) -> None:
-        """Called before camera disconnects."""
-        pass
+class NotConnectedError(CaptureError):
+    """Raised when read methods are called before connect()."""
 
-    def on_frame(self, camera: Camera, frame: NDArray[np.uint8]) -> None:
-        """Called when a new frame is captured (push-based)."""
-        pass
 
-    def on_error(self, camera: Camera, error: Exception) -> None:
-        """Called when a capture error occurs."""
-        pass
-```
+class NoFrameError(CaptureError):
+    """Raised when no frame is available for read_latest()."""
 
-**Example callbacks:**
+
+class MissingDependencyError(CaptureError):
+    """Raised when a camera SDK extra is not installed."""
+````
+
+````
+
+### DeviceInfo
+
+Metadata about a discovered camera, returned by `Camera.discover()`.
 
 ```python
-class LoggingCallback(Callback):
-    def on_connect(self, camera):
-        logger.info(f"Connected: {camera.device_key}")
+@dataclass
+class DeviceInfo:
+    """Metadata about a discovered camera device."""
 
-    def on_frame(self, camera, frame):
-        logger.debug(f"Frame: {frame.shape}")
-
-
-class RecordingCallback(Callback):
-    def __init__(self, path: Path):
-        self.writer = VideoWriter(path)
-
-    def on_frame(self, camera, frame):
-        self.writer.write(frame)
-
-    def on_disconnect(self, camera):
-        self.writer.close()
-```
-
-**Threading model**: Callbacks are invoked on the internal capture thread, **not** on the caller's thread. This means:
-
-- Callback implementations must be **thread-safe** if they access shared state
-- Heavy processing in `on_frame` will delay the next frame capture — offload to a queue if needed
-- In **async frameworks** (FastAPI, asyncio), callbacks should enqueue work rather than `await` directly, since they run on a synchronous background thread. Use `asyncio.get_event_loop().call_soon_threadsafe()` or a `queue.Queue` to bridge between the capture thread and the async event loop
-
-This design deliberately avoids spawning additional threads internally, keeping the threading model simple and predictable. FrameSource's experience showed that hidden multi-threading causes issues when embedded in already-threaded environments like FastAPI workers.
+    device_id: str              # Stable identifier (serial number, path, URL)
+    name: str                   # Human-readable name ("Logitech C920", "D435")
+    manufacturer: str = ""      # "Intel", "Basler", etc.
+    model: str = ""             # "D435", "acA1920-40gc", etc.
+````
 
 ### Capability Mixins
 
-Optional capabilities are added via mixins. Each mixin sets a `ClassVar` flag automatically.
+Optional capabilities added via mixins. Each mixin adds a `ClassVar` flag.
+
+**DepthMixin** — for cameras with depth sensing:
+
+```python
+class DepthMixin:
+    """Adds depth capture capability."""
+
+    supports_depth: ClassVar[bool] = True
+
+    @abstractmethod
+    def read_depth(self) -> Frame:
+        """Read depth frame.
+
+        Returns:
+            Frame with data as (H, W) uint16 array in millimeters.
+        """
+        ...
+
+    def read_rgbd(self) -> tuple[Frame, Frame]:
+        """Read aligned RGB and depth frames.
+
+        Returns:
+            Tuple of (rgb_frame, depth_frame). RGB is uint8, depth is uint16.
+            Default implementation calls read() and read_depth() sequentially.
+        """
+        return self.read(), self.read_depth()
+```
+
+**Note**: `read_rgbd()` returns a tuple, not a single mixed-type array. RGB data is `uint8`, depth data is `uint16` — stacking them into one array would require type coercion and lose information.
+
+**PTZMixin** — for cameras with pan-tilt-zoom:
 
 ```python
 class PTZMixin:
     """Adds pan-tilt-zoom controls."""
+
     supports_ptz: ClassVar[bool] = True
 
     @abstractmethod
@@ -505,346 +446,314 @@ class PTZMixin:
     def zoom(self, level: float) -> None: ...
 
     def move_to(self, pan: float, tilt: float, zoom: float) -> None:
-        """Move to absolute position (default implementation)."""
+        """Move to absolute position."""
         self.pan(pan)
         self.tilt(tilt)
         self.zoom(zoom)
+```
 
+**FormatDiscoveryMixin** — for cameras that support format enumeration:
 
-class ColorControlMixin:
-    """Adds camera color/exposure controls."""
-    supports_color_control: ClassVar[bool] = True
-
-    @abstractmethod
-    def get_brightness(self) -> float: ...
-    @abstractmethod
-    def set_brightness(self, value: float) -> None: ...
-    @abstractmethod
-    def get_exposure(self) -> float: ...
-    @abstractmethod
-    def set_exposure(self, value: float) -> None: ...
-
-
-class DepthMixin:
-    """Adds depth capture capability.
-
-    For cameras that support depth sensing (RealSense, stereo cameras,
-    ToF sensors, etc.). Depth is returned as uint16 in millimeters.
-
-    Example:
-        cam = RealSense(serial_number="12345678")
-        cam.connect()
-
-        if cam.supports_depth:
-            rgb = cam.read()
-            depth = cam.read_depth()  # (H, W) uint16 in mm
-            rgbd = cam.read_rgbd()    # (H, W, 4) with depth as 4th channel
-    """
-    supports_depth: ClassVar[bool] = True
-
-    @abstractmethod
-    def read_depth(self) -> NDArray[np.uint16]:
-        """Read depth frame.
-
-        Returns:
-            Depth map as (H, W) uint16 array in millimeters.
-        """
-        ...
-
-    def read_rgbd(self) -> NDArray[np.uint16]:
-        """Read aligned RGB-D frame.
-
-        Returns:
-            RGBD as (H, W, 4) array. RGB channels are uint8, depth is uint16.
-            Default implementation stacks read() and read_depth().
-        """
-        rgb = self.read()
-        depth = self.read_depth()
-        # Stack RGB (H,W,3) with depth (H,W,1)
-        return np.dstack([rgb, depth[..., np.newaxis]])
-
-
-class ResolutionDiscoveryMixin:
-    """Adds format discovery and selection."""
-    supports_resolution_discovery: ClassVar[bool] = True
-
-    @abstractmethod
-    def get_supported_formats(self) -> list[Format]: ...
-
-    @abstractmethod
-    def set_format(self, format: Format) -> None: ...
-
-
+```python
 @dataclass
 class Format:
-    """Represents a supported camera format."""
+    """A supported camera format."""
     width: int
     height: int
     fps: float
     pixel_format: str = "RGB"
 
 
-class AsyncContextMixin:
-    """Adds async context manager support for async/await usage.
+class FormatDiscoveryMixin:
+    """Adds resolution/format discovery and selection."""
 
-    Enables `async with` syntax for cameras in async code:
+    supports_format_discovery: ClassVar[bool] = True
 
-        async with Webcam(index=0) as cam:
-            frame = cam.read()
+    @abstractmethod
+    def get_supported_formats(self) -> list[Format]: ...
 
-    Note: This wraps synchronous connect/disconnect. For fully async I/O,
-    subclasses can override with thread pool executors.
-    """
-    supports_async_context: ClassVar[bool] = True
-
-    async def __aenter__(self) -> Self:
-        """Async context entry - connects the camera."""
-        self.connect()
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
-        """Async context exit - disconnects the camera."""
-        self.disconnect()
+    @abstractmethod
+    def set_format(self, fmt: Format) -> None: ...
 ```
 
-### Device Discovery
+---
 
-Each camera subclass provides a `discover()` classmethod that lists available devices without opening them. This enables a factory-style workflow: discover → inspect → configure → open.
+## Read Semantics
+
+Three read methods cover all production use cases:
+
+| Method          | Blocking | Skips Frames | Use Case                                       |
+| --------------- | -------- | ------------ | ---------------------------------------------- |
+| `read()`        | Yes      | No           | Recording, sequential processing               |
+| `read_latest()` | No       | Yes          | Teleoperation, real-time control, live preview |
+| `async_read()`  | Yields   | No           | FastAPI endpoints, asyncio event loops         |
+
+**`read()`** — blocks until the next frame is available. Every frame is returned in order. Use when every frame matters (recording, data collection).
 
 ```python
-class Camera(ABC):
-    # ... existing methods ...
-
-    @classmethod
-    def discover(cls) -> list[DeviceInfo]:
-        """List available devices of this camera type.
-
-        Returns:
-            List of DeviceInfo with device_key, name, and metadata.
-            Default implementation returns empty list (discovery not supported).
-        """
-        return []
-
-
-@dataclass
-class DeviceInfo:
-    """Metadata about a discovered camera device."""
-    device_key: str           # Stable identifier (serial number, path, URL)
-    name: str                 # Human-readable name
-    manufacturer: str = ""    # e.g., "Intel", "Basler"
-    model: str = ""           # e.g., "D435", "acA1920-40gc"
-    formats: list[Format] | None = None  # Supported formats (if queryable)
+with OpenCVCamera(index=0) as cam:
+    for i in range(100):
+        frame = cam.read()
+        save_frame(frame.data, frame.timestamp)
 ```
 
-**Discovery + factory workflow:**
+**`read_latest()`** — returns the most recent frame immediately. Intermediate frames may be skipped. Use when freshness matters more than completeness (teleoperation, inference). If no frame has been captured yet, it raises `NoFrameError`.
+
+**Capture loop and buffer** — `connect()` starts a background capture loop that fills a small ring buffer (default 2–4 frames). `read()` consumes in order; `read_latest()` returns the newest frame and may drop older ones when the buffer is full. No explicit `start/stop` is required.
 
 ```python
-# List all available webcams
-devices = Webcam.discover()
-# [DeviceInfo(device_key="/dev/video0", name="USB Camera", ...),
-#  DeviceInfo(device_key="/dev/video2", name="Logitech C920", ...)]
-
-# List RealSense cameras
-devices = RealSense.discover()
-# [DeviceInfo(device_key="serial:123456", name="D435", formats=[...])]
-
-# Open by device_key (stable, survives reboots)
-cam = Webcam(device_path="/dev/video2")
-
-# Query formats before opening (via ResolutionDiscoveryMixin)
-cam = Basler(serial_number="12345678")
-cam.connect()
-formats = cam.get_supported_formats()  # From ResolutionDiscoveryMixin
-cam.set_format(formats[0])
+with OpenCVCamera(index=0) as cam:
+    while running:
+        frame = cam.read_latest()
+        action = policy.predict(frame.data)
+        robot.send_action(action)
 ```
 
-Discovery is optional — subclasses override it when the underlying SDK supports enumeration (pypylon, librealsense, V4L2). Camera types that don't support discovery (VideoFile, ImageFolder) inherit the default empty-list implementation.
+**`async_read()`** — awaitable version of `read()`. Yields control to the event loop while waiting for the next frame. Implementations may override for native async SDKs.
+
+```python
+async def stream_frames(cam: Camera):
+    async with cam:
+        while True:
+            frame = await cam.async_read()
+            yield frame
+```
+
+This three-tier model is inspired by [LeRobot's camera interface](https://github.com/huggingface/lerobot/tree/main/src/lerobot/cameras), battle-tested in robotics applications.
+
+**Thread safety**: `Sensor` instances are safe to share across threads for read-only access, but concurrent reads are serialized internally. If multiple consumers need strict per-consumer ordering guarantees, create a dedicated `CameraPool` in the application layer.
 
 ---
 
 ## Proposed Implementations
 
-The following subclasses implement the `Camera` ABC. Details are illustrative—final implementations will be determined after interface agreement.
+### OpenCVCamera
 
-### Live Cameras
+USB webcams, built-in cameras, V4L2 devices.
 
 ```python
-class Webcam(Camera):
-    """USB cameras, built-in webcams, V4L2 devices.
+class OpenCVCamera(Camera):
+    """USB cameras and built-in webcams via OpenCV.
 
-    Backend: Can use OpenCV or nokhwa (via omnicamera). nokhwa provides
-    better stability for USB cameras on some platforms.
-
-    Note: ``index`` is convenient for quick prototyping ("just grab the
-    first webcam"), but device indices are **not stable** across reboots
-    or when USB devices are plugged/unplugged. For production and
-    multi-camera setups, prefer identifying cameras by device path
-    (e.g., ``/dev/video0``) or serial number when available. The
-    ``device_key`` property returns a stable identifier for sharing.
+    ``index`` is convenient for quick prototyping but not stable across
+    reboots. For production, prefer ``device_path`` (Linux) or serial
+    number-based identification.
     """
 
     def __init__(
-        self, *,
+        self,
+        *,
         index: int = 0,
         device_path: str | None = None,
         fps: int | None = None,
         width: int | None = None,
         height: int | None = None,
         color_mode: ColorMode = ColorMode.RGB,
-        rotation: Rotation = Rotation.NONE,
+        rotation: int = 0,
         warmup_s: float = 1.0,
-        backend: str = "opencv",  # or "nokhwa"
     ) -> None: ...
+```
 
+### RealSenseCamera
 
-class RealSense(DepthMixin, Camera):
-    """Intel RealSense with depth sensing capability.
+Intel RealSense with depth sensing.
 
-    Inherits from DepthMixin to provide read_depth() and read_rgbd().
+```python
+class RealSenseCamera(DepthMixin, Camera):
+    """Intel RealSense depth cameras.
+
+    Provides RGB via read() and depth via read_depth() from DepthMixin.
+    read_rgbd() returns (rgb_frame, depth_frame) tuple.
     """
 
     def __init__(
-        self, *,
+        self,
+        *,
         serial_number: str | None = None,
         fps: int = 30,
         width: int = 640,
         height: int = 480,
         color_mode: ColorMode = ColorMode.RGB,
+        depth_width: int | None = None,
+        depth_height: int | None = None,
     ) -> None: ...
 
-    # read_depth() inherited from DepthMixin, implemented here
-    def read_depth(self) -> NDArray[np.uint16]:
-        """Read depth frame from RealSense depth sensor."""
+    def read_depth(self) -> Frame:
+        """Read depth frame from RealSense depth sensor.
+
+        Returns:
+            Frame with data as (H, W) uint16 in millimeters.
+        """
         ...
+```
 
+### BaslerCamera
 
-class StereoCamera(DepthMixin, Camera):
-    """Stereo camera pair with computed depth.
+Basler industrial cameras via pypylon.
 
-    Example of another camera type using DepthMixin.
-    Depth is computed from stereo disparity.
+```python
+class BaslerCamera(FormatDiscoveryMixin, Camera):
+    """Basler industrial cameras.
+
+    Achievable framerate depends on ROI/binning, connection bandwidth
+    (GigE vs USB3), and exposure time. The ``fps`` parameter sets a
+    requested rate; actual rate is capped by hardware limits.
     """
 
     def __init__(
-        self, *,
-        left_index: int = 0,
-        right_index: int = 1,
-        baseline_mm: float = 60.0,
-        # ... other stereo params
-    ) -> None: ...
-
-    def read_depth(self) -> NDArray[np.uint16]:
-        """Compute depth from stereo disparity."""
-        ...
-
-
-class Basler(Camera):
-    """Basler industrial cameras via pypylon.
-
-    Note: For industrial cameras, the achievable framerate depends on
-    multiple hardware factors — ROI/binning (fewer pixels = faster),
-    connection bandwidth (GigE vs USB3), capture mode, and exposure time
-    (longer exposure = lower max FPS). The ``fps`` parameter sets a
-    *requested* framerate; the actual rate is capped by hardware limits.
-    Use ``ResolutionDiscoveryMixin.get_supported_formats()`` to query
-    achievable configurations. See `Basler's frame rate calculator
-    <https://docs.baslerweb.com/resulting-frame-rate>`_ for details.
-    """
-
-    def __init__(
-        self, *,
+        self,
+        *,
         serial_number: str | None = None,
         fps: int = 30,
         width: int | None = None,
         height: int | None = None,
         color_mode: ColorMode = ColorMode.RGB,
     ) -> None: ...
+```
 
+### GenicamCamera
 
-class Genicam(Camera):
-    """Generic GenICam devices via harvesters."""
+Generic GenICam devices via harvesters.
+
+```python
+class GenicamCamera(Camera):
+    """Generic GenICam-compliant cameras via harvesters."""
 
     def __init__(
-        self, *,
+        self,
+        *,
         cti_file: str | Path,
         device_id: str = "",
         width: int | None = None,
         height: int | None = None,
         color_mode: ColorMode = ColorMode.RGB,
     ) -> None: ...
+```
 
+### IPCamera
 
-class IPCam(Camera):
-    """Network cameras via RTSP/HTTP."""
+Network cameras via RTSP/HTTP.
+
+```python
+class IPCamera(Camera):
+    """Network cameras via RTSP or HTTP streams."""
 
     def __init__(
-        self, *,
+        self,
+        *,
         url: str,
         width: int | None = None,
         height: int | None = None,
         color_mode: ColorMode = ColorMode.RGB,
     ) -> None: ...
-
-
-class Screen(Camera):
-    """Desktop screen capture."""
-
-    def __init__(
-        self, *,
-        monitor: int = 0,
-        region: tuple[int, int, int, int] | None = None,
-        fps: int = 30,
-    ) -> None: ...
 ```
 
-### Recorded Sources
+---
+
+## Recorded Sources (Future)
+
+Non-live sources for replaying recorded data. Useful when the package is separated from `physical-ai-framework` and used for offline development and testing.
+
+**These are future work — not part of the initial implementation.**
 
 ```python
-class VideoFile(Camera):
+class VideoSource(Sensor):
     """Playback from video file."""
 
     def __init__(
-        self, *,
+        self,
+        *,
         path: str | Path,
         loop: bool = False,
-        width: int | None = None,
-        height: int | None = None,
-        color_mode: ColorMode = ColorMode.RGB,
     ) -> None: ...
 
 
-class ImageFolder(Camera):
-    """Playback from image sequence."""
+class ImageDirectorySource(Sensor):
+    """Playback from a directory of images."""
 
     def __init__(
-        self, *,
+        self,
+        *,
         path: str | Path,
         pattern: str = "*.png",
         loop: bool = False,
-        width: int | None = None,
-        height: int | None = None,
-        color_mode: ColorMode = ColorMode.RGB,
     ) -> None: ...
 ```
 
-### Interop (Outside cameras package)
+These extend `Sensor` directly (not `Camera`) since they don't represent live hardware.
 
-LeRobot interop lives in `getiaction.cameras.lerobot`, not in the cameras package:
+---
 
-```python
-# getiaction/lerobot/cameras.py
-class LeRobotCamera(Camera):
-    """Adapter wrapping LeRobot camera instances."""
+## Factory Function
 
-    def __init__(self, lerobot_camera) -> None: ...
-
-    @classmethod
-    def from_lerobot_config(cls, config) -> "LeRobotCamera": ...
-```
+Dedicated camera classes are the **primary API**. The factory is a convenience for config-driven workflows (YAML files, database configs, UI dropdowns).
 
 ```python
-from getiaction.lerobot import LeRobotCamera
+def create_camera(driver: str, **kwargs) -> Camera:
+    """Create a camera by driver name.
+
+    Convenience function for config-driven instantiation. Prefer
+    dedicated classes (OpenCVCamera, RealSenseCamera, etc.) for
+    direct usage.
+
+    Args:
+        driver: Camera type — "opencv", "realsense", "basler", "genicam", "ip". Driver names are lowercase and case-insensitive; unknown drivers raise `ValueError`.
+        **kwargs: Forwarded to the camera constructor.
+
+    Returns:
+        Camera instance.
+
+    Raises:
+        ValueError: If the driver name is unknown.
+        MissingDependencyError: If the driver requires an optional SDK that is not installed.
+
+    Examples:
+        cam = create_camera("opencv", index=0, fps=30)
+        cam = create_camera("realsense", serial_number="12345678")
+    """
+    ...
+
+
+def discover_all() -> dict[str, list[DeviceInfo]]:
+    """Discover available cameras across all supported types.
+
+    Returns:
+        Dict mapping driver name to list of discovered devices. All known drivers are included; drivers with missing optional dependencies return an empty list.
+
+    Examples:
+        devices = discover_all()
+        # {"opencv": [DeviceInfo(...)], "realsense": [DeviceInfo(...)]}
+    """
+    ...
 ```
+
+---
+
+## Sharing Model
+
+**Sharing is explicit.** There is no invisible reference counting, no global `_captures` dict, no hidden shared state.
+
+If you need the same camera in two places, you have two options:
+
+1. **Pass the same instance** — the simplest and most explicit approach
+2. **Application-level pool** — if your app needs managed multi-consumer access, build a `CameraPool` at the application layer
+
+```python
+# Option 1: Pass the instance (recommended)
+cam = OpenCVCamera(index=0)
+cam.connect()
+
+# Pass to multiple consumers explicitly
+display_thread = Thread(target=display_loop, args=(cam,))
+record_thread = Thread(target=record_loop, args=(cam,))
+```
+
+**Why not invisible sharing?**
+
+- Hidden global state makes testing unreliable — tests that run in parallel interfere with each other
+- Implicit behavior surprises users when two `Camera` objects silently share state
+- Config conflicts (same device, different FPS) have no clean resolution
+- Explicit passing is simple and debuggable
 
 ---
 
@@ -853,259 +762,239 @@ from getiaction.lerobot import LeRobotCamera
 ### Basic
 
 ```python
-from getiaction.cameras import Webcam, VideoFile, ImageFolder
-# or from geticam import Webcam, VideoFile, ImageFolder
+from physical_ai.capture import OpenCVCamera, RealSenseCamera
 
-# Live camera
-with Webcam(index=0, fps=30, width=640, height=480) as camera:
-    frame = camera.read()
+# Single camera, context manager
+with OpenCVCamera(index=0, fps=30, width=640, height=480) as cam:
+    frame = cam.read()
+    print(f"Got {frame.data.shape} at t={frame.timestamp:.3f}")
 
-# Video file
-with VideoFile(path="recording.mp4") as video:
-    for frame in video:
-        process(frame)
-
-# Image folder
-with ImageFolder(path="dataset/images/") as folder:
-    for frame in folder:
-        process(frame)
-```
-
-### Push-Based Frame Delivery (Callbacks)
-
-For reactive/event-driven systems, use callbacks instead of polling:
-
-```python
-class FrameProcessor(Callback):
-    def on_frame(self, camera, frame):
-        # Called automatically when new frame arrives
-        result = model(frame)
-        display(result)
-
-# Register callback
-camera = Webcam(index=0, callbacks=[FrameProcessor()])
-with camera:
-    # Frames are pushed to callback automatically
-    time.sleep(10)  # Just wait, frames are processed in background
-
-# Or add callback later
-camera = Webcam(index=0)
-camera.add_callback(FrameProcessor())
-camera.connect()
+# Depth camera
+with RealSenseCamera(serial_number="12345678") as cam:
+    rgb, depth = cam.read_rgbd()
+    print(f"RGB: {rgb.data.shape}, Depth: {depth.data.shape}")
 ```
 
 ### Multi-Camera Setup
 
 ```python
+from physical_ai.capture import OpenCVCamera, RealSenseCamera
+
 cameras = {
-    "wrist": Webcam(index=0),
-    "overhead": RealSense(serial_number="012345"),
+    "wrist": OpenCVCamera(index=0, fps=30),
+    "overhead": RealSenseCamera(serial_number="12345678"),
 }
 
 for cam in cameras.values():
     cam.connect()
 
-# Pull-based: synchronous reads
-frames = {name: cam.read() for name, cam in cameras.items()}
-
-for cam in cameras.values():
-    cam.disconnect()
+try:
+    frames = {name: cam.read() for name, cam in cameras.items()}
+finally:
+    for cam in cameras.values():
+        cam.disconnect()
 ```
 
-### Multi-Consumer (Automatic Sharing)
-
-Multiple Camera instances for the same device share automatically:
+### Device Discovery
 
 ```python
-# UI display thread
-cam_ui = Webcam(index=0)
-cam_ui.connect()
+from physical_ai.capture import OpenCVCamera, RealSenseCamera, discover_all
 
-# Recording thread (same physical camera, shared automatically)
-cam_record = Webcam(index=0)
-cam_record.connect()
+# Discover specific type
+realsense_devices = RealSenseCamera.discover()
+for dev in realsense_devices:
+    print(f"{dev.name} (serial: {dev.device_id})")
 
-print(cam_ui.is_shared)  # True
-
-# Both read from the same device
-while running:
-    display(cam_ui.read())
-    save_to_disk(cam_record.read())
-
-cam_ui.disconnect()     # Device stays open
-cam_record.disconnect() # Device closes (last user)
+# Discover all camera types
+all_devices = discover_all()
+for driver, devices in all_devices.items():
+    print(f"{driver}: {len(devices)} device(s)")
 ```
 
-**Combining callbacks with sharing for subscription-style delivery**: For use cases like WebSocket/WebRTC streaming where multiple consumers need push-based frames from a single camera, use callbacks on a shared camera instance:
+### Config-Driven
 
 ```python
-# Single camera, multiple subscribers via callbacks
-camera = Webcam(index=0)
+from physical_ai.capture import create_camera, OpenCVCamera
 
-class WebSocketStreamer(Callback):
-    def __init__(self, ws):
-        self.ws = ws
+# From dict (e.g., loaded from YAML or database)
+config = {"index": 0, "fps": 30, "width": 640}
+cam = OpenCVCamera.from_config(config)
 
-    def on_frame(self, camera, frame):
-        self.ws.send(encode_jpeg(frame))
-
-class DiskRecorder(Callback):
-    def __init__(self, path):
-        self.writer = VideoWriter(path)
-
-    def on_frame(self, camera, frame):
-        self.writer.write(frame)
-
-# Add subscribers dynamically
-camera.add_callback(WebSocketStreamer(ws_connection))
-camera.add_callback(DiskRecorder("output.mp4"))
-camera.connect()
-
-# All subscribers receive frames from the single capture thread.
-# Remove subscribers as they disconnect:
-camera.remove_callback(streamer)
-```
-
-This combines invisible sharing (one physical device open) with callbacks (push-based delivery) to achieve subscription semantics without introducing a separate subscription abstraction.
-
-### From Config
-
-```python
-# From YAML
-camera = Webcam.from_config("camera.yaml")
-
-# From dict
-camera = Webcam.from_config({"index": 0, "fps": 30})
-
-# From dataclass/Pydantic
-camera = Webcam.from_config(my_config)
+# Factory for driver-string configs (UI dropdowns, YAML)
+cam = create_camera("realsense", serial_number="12345678", fps=30)
 ```
 
 ### Robot Integration
 
 ```python
-from getiaction.cameras import RealSense
-from getiaction.robots import SO101
-from getiaction.inference import InferenceModel
+from physical_ai.capture import RealSenseCamera
 
-policy = InferenceModel.load("./exports/act_policy")
+camera = RealSenseCamera(fps=30)
 robot = SO101.from_config("robot.yaml")
-camera = RealSense(fps=30)
+policy = InferenceModel.load("./exports/act_policy")
 
 with robot, camera:
     while True:
+        frame = camera.read_latest()
         action = policy.select_action({
-            "images": {"wrist": camera.read()},
+            "images": {"wrist": frame.data},
             "state": robot.get_state(),
         })
         robot.send_action(action)
 ```
 
-### IPCam with PTZ Control
+### Async (FastAPI)
 
 ```python
-class IPCam(Camera, PTZMixin):
-    """Network camera with PTZ support."""
-    ...
+from physical_ai.capture import OpenCVCamera
 
-cam = IPCam(url="rtsp://192.168.1.100/stream")
-with cam:
-    print(cam.supports_ptz)  # True (from PTZMixin)
+camera = OpenCVCamera(index=0, fps=30)
+camera.connect()
 
-    cam.pan(45)   # Pan 45 degrees
-    cam.tilt(-10) # Tilt down 10 degrees
-    cam.zoom(2.0) # Zoom level 2x
+@app.get("/frame")
+async def get_frame():
+    frame = await camera.async_read()
+    return {"timestamp": frame.timestamp, "shape": frame.data.shape}
 
-    frame = cam.read()
+@app.on_event("shutdown")
+async def shutdown():
+    camera.disconnect()
 ```
 
 ---
 
-## Comparison: FrameSource vs. getiaction.cameras/geticam
+## Migration from FrameSource
 
-| Aspect              | FrameSource               | getiaction.cameras / geticam           |
-| ------------------- | ------------------------- | -------------------------------------- |
-| Instantiation       | Factory with string types | Hparams-first constructors             |
-| Configuration       | Kwargs dict               | Explicit params + `from_config()`      |
-| Multi-consumer      | Manual threading          | Invisible sharing (automatic)          |
-| Frame delivery      | Pull only                 | Pull (`read()`) + push (callbacks)     |
-| Resource management | Manual                    | Context manager (`with`) + ref-counted |
-| Error handling      | `(success, frame)` tuples | Exceptions + `on_error` callback       |
-| Capabilities        | All-or-nothing            | Composable mixins (PTZ, color, etc.)   |
-| Dependencies        | All bundled               | Optional per camera type               |
+The application backend currently uses FrameSource in 6 files. Migration swaps FrameSource for `physical_ai.capture` in a single PR once feature parity is reached.
+
+### Feature Parity Checklist
+
+| FrameSource API                               | physical_ai.capture Equivalent                      | Status                                   |
+| --------------------------------------------- | --------------------------------------------------- | ---------------------------------------- |
+| `FrameSourceFactory.create(driver, **params)` | `OpenCVCamera(...)` or `create_camera(driver, ...)` | Direct replacement                       |
+| `.connect()`                                  | `.connect()`                                        | Same                                     |
+| `.read()` → `(success, frame)`                | `.read()` → `Frame`                                 | Returns `Frame` (raises on failure)      |
+| `.start_async()` + `.get_latest_frame()`      | `.read_latest()`                                    | Simplified to one call                   |
+| `.stop()`                                     | (not needed)                                        | `read_latest()` is stateless             |
+| `.disconnect()`                               | `.disconnect()`                                     | Same                                     |
+| `FrameSourceFactory.discover_devices(driver)` | `discover_all()` or `Camera.discover()`             | Direct replacement                       |
+| `.get_supported_formats()`                    | `FormatDiscoveryMixin.get_supported_formats()`      | Via mixin                                |
+| `.attach_processor()`                         | Removed                                             | Was broken in production (commented out) |
+
+### API Migration Map
+
+**camera_worker.py** — sync read pattern:
+
+```python
+# Before (FrameSource)
+source = FrameSourceFactory.create(driver, **params)
+source.connect()
+success, frame = source.read()
+source.disconnect()
+
+# After (physical_ai.capture)
+camera = create_camera(driver, **params)
+camera.connect()
+frame = camera.read()  # frame.data for the image
+camera.disconnect()
+```
+
+**teleoperate_worker.py / inference_worker.py** — async latest-frame pattern:
+
+```python
+# Before (FrameSource)
+source = FrameSourceFactory.create(driver, **params)
+source.connect()
+source.start_async()
+frame = source.get_latest_frame()
+source.stop()
+source.disconnect()
+
+# After (physical_ai.capture)
+camera = create_camera(driver, **params)
+camera.connect()
+frame = camera.read_latest()  # frame.data for the image
+camera.disconnect()
+```
+
+**hardware.py** — device discovery:
+
+```python
+# Before (FrameSource)
+devices = FrameSourceFactory.discover_devices(driver)
+
+# After (physical_ai.capture)
+devices = discover_all()
+# or: devices = RealSenseCamera.discover()
+```
+
+**camera.py** — format query:
+
+```python
+# Before (FrameSource)
+source = FrameSourceFactory.create(driver, **params)
+formats = source.get_supported_formats()
+
+# After (physical_ai.capture)
+camera = BaslerCamera(serial_number="12345678")
+camera.connect()
+formats = camera.get_supported_formats()  # via FormatDiscoveryMixin
+```
+
+### Migration Plan
+
+1. **Build** `physical_ai.capture` in parallel — no changes to existing application code
+2. **Validate** feature parity against the checklist above
+3. **Swap** in a single PR: replace FrameSource imports with `physical_ai.capture` imports in all 6 backend files
+4. **Remove** FrameSource dependency from `application/backend/pyproject.toml`
+
+The application's existing retry logic (`CameraConnectionManager` with `tenacity`) stays in the application layer — error recovery is not the camera library's responsibility.
+
+---
+
+## Comparison with LeRobot
+
+| Aspect           | physical_ai.capture                                | LeRobot cameras                                   |
+| ---------------- | -------------------------------------------------- | ------------------------------------------------- |
+| Base class       | `Sensor` → `Camera`                                | `Camera` ABC                                      |
+| Read model       | 3-tier: `read()`, `read_latest()`, `async_read()`  | 3-tier: `read()`, `read_latest()`, `async_read()` |
+| Frame type       | `Frame(data, timestamp, sequence)`                 | Raw `ndarray` (no metadata)                       |
+| Lifecycle        | `connect()` / `disconnect()`                       | `connect()` / `disconnect()`                      |
+| Hardware support | OpenCV, RealSense, Basler, GenICam, IP cameras     | OpenCV, RealSense, (fewer industrial)             |
+| Depth            | `DepthMixin` with `read_depth()` → `Frame(uint16)` | Not built-in                                      |
+| PTZ              | `PTZMixin`                                         | Not built-in                                      |
+| Config           | `from_config()` + dataclass configs                | Pydantic `CameraConfig`                           |
+| Discovery        | `Camera.discover()` + `discover_all()`             | Not built-in                                      |
+| Factory          | Optional `create_camera()` convenience             | Not applicable                                    |
+| Sharing          | Explicit (pass instance)                           | Explicit                                          |
+
+We adopted LeRobot's three-tier read model and explicit `connect/disconnect` lifecycle. We add timestamped frames, depth/PTZ mixins, industrial camera support, and device discovery.
 
 ---
 
 ## Open Design Decisions
 
-### 1. Package vs. Subpackage (Critical Decision)
+**1. Buffer Policy**
+What ring buffer size? What happens when the buffer is full — drop oldest or block? This affects `read()` vs `read_latest()` behavior under load. Likely: small ring buffer (2-4 frames), drop oldest.
 
-**Context**: This camera interface will be needed across the Geti ecosystem, not just `getiaction`. Our product portfolio includes:
+**2. Multi-Consumer Access**
+If multiple consumers need the same camera, should the library provide a `CameraPool`? Or is passing the same instance sufficient? Current position: application layer concern. Revisit if multiple teams hit this need.
 
-| Product        | Purpose                                    | Needs Camera? |
-| -------------- | ------------------------------------------ | ------------- |
-| `geti-action`  | Vision-language-action policies (robotics) | Yes           |
-| `geti-prompt`  | Prompt-based tasks (SAM3, etc.)            | Yes           |
-| `geti-inspect` | Anomaly detection                          | Yes           |
-| `geti-tune`    | Classification, detection, segmentation    | Yes           |
-| External users | Third-party integrations                   | Yes           |
+**3. Thread Model**
+One background capture thread per camera, or a shared thread pool? Per-camera threads are simpler but scale poorly with many cameras. Likely: per-camera threads initially, optimize later.
 
-**Options**:
-
-| Option                    | Package Name        | Import                               | Pros                                      | Cons                                         |
-| ------------------------- | ------------------- | ------------------------------------ | ----------------------------------------- | -------------------------------------------- |
-| **A: Subpackage**         | (inside getiaction) | `from getiaction.cameras import ...` | Fast to implement, no new repo            | Tight coupling, can't use elsewhere          |
-| **B: Standalone package** | `geticam` (new)     | `from geticam import ...`            | Reusable across ecosystem, clean branding | New repo, more maintenance                   |
-| **C: Fork + refactor**    | Keep `framesource`  | `from framesource import ...`        | Minimal effort                            | No differentiation, legacy baggage, not ours |
-
-**Branding consideration**: We need a unique identity separate from the original FrameSource codebase.
-
-| Name           | Import                         | Verdict                                             |
-| -------------- | ------------------------------ | --------------------------------------------------- |
-| **`geticam`**  | `from geticam import ...`      | Recommended — short, memorable, clear purpose       |
-| `geti-camera`  | `from geti_camera import ...`  | Good — matches `geti-action` convention, but longer |
-| `geti-capture` | `from geti_capture import ...` | Broader scope, could imply screen recording         |
-
-**Recommendation**: We could start with **Option A** (subpackage in `getiaction.cameras`) for rapid development. We could design the API to be extraction-friendly so we can move to **Option B** later if cross-product usage is confirmed.
-
-**Team alignment needed**: This decision affects repo structure, CI/CD, and versioning strategy.
-
-### 2. Frame Transforms
-
-**Question**: Do we need a transforms system, or are built-in hparams enough?
-
-The existing FrameSource has `FrameProcessor` classes:
-
-- `RealsenseDepthProcessor` - depth colorization
-- `Equirectangular360Processor` - 360° dewarp
-- `HyperspectralProcessor` - band selection
-
-**Options**:
-
-| Option                    | Approach                     | Example                             |
-| ------------------------- | ---------------------------- | ----------------------------------- |
-| **A: Built-in only**      | Transforms via hparams       | `Webcam(width=640, color_mode=RGB)` |
-| **B: Callable hook**      | Accept postprocess function  | `Webcam(postprocess=fn)`            |
-| **C: Transform pipeline** | torchvision-style (no torch) | `Compose([Resize(640), ToRGB()])`   |
-
-**Recommendation**: We could start with **A** (built-in hparams). Add **B** (callable) if needed. Defer **C** unless clear demand.
-
-Specialized processors (360°, depth colorization) would be separate utilities, not part of Camera.
-
-### 3. Additional Opens
-
-1. **Config conflicts**: What if `Webcam(index=0, fps=30)` and `Webcam(index=0, fps=60)` try to share? Options: first config wins, error on mismatch, or warn on mismatch.
-2. **Frame freshness**: Should consumers get "latest frame" (may skip) or queue-based delivery (no skipping)?
+**4. Error Recovery**
+Retry on transient failures (USB disconnect/reconnect) in the library, or leave to the application? The application backend already has `tenacity`-based retry in `CameraConnectionManager`. Current position: library raises, application retries.
 
 ---
 
 ## References
 
-- [Strategy](../strategy.md) - Big-picture architecture
-- [Robot Interface Design](./robot-interface.md) - Robot interface specification
-- [FrameSource Repository](https://github.com/ArendJanKramer/FrameSource)
-- [LeRobot Cameras](https://github.com/huggingface/lerobot/tree/main/src/lerobot/cameras)
+- [Strategy](../strategy.md) — Architecture vision and key decisions
+- [Robot Interface Design](./robot-interface.md) — Robot interface specification
+- [FrameSource Repository](https://github.com/ArendJanKramer/FrameSource) — Original camera library (reference only)
+- [LeRobot Cameras](https://github.com/huggingface/lerobot/tree/main/src/lerobot/cameras) — LeRobot's camera interface (design inspiration)
 
 ---
 
-_Last Updated: 2026-02-13_
+_Last Updated: 2026-02-18_

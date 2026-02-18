@@ -17,12 +17,12 @@ Architecture and design documents for Geti Action — an end-to-end platform for
 
 Components owned by the **library** (`pip install getiaction`) — the building blocks for end-to-end robot AI.
 
-| Component        | Document                                            | Description                                                              |
-| ---------------- | --------------------------------------------------- | ------------------------------------------------------------------------ |
-| Robot Interface  | [Robot Interface](./library/robot-interface.md)     | Robot ABC, leader/follower wrappers, SDK integration (LeRobot, UR, ABB)  |
-| Camera Interface | [Camera Interface](./library/camera-interface.md)   | Camera ABC, invisible sharing, callbacks, capability mixins (PTZ, depth) |
-| Teleoperation    | [Teleoperation API](./library/teleoperation.md)     | Leader/follower semantics, session lifecycle, safety primitives          |
-| Data Collection  | [Data Collection API](./library/data-collection.md) | DatasetWriter, episode management, HF Hub upload                         |
+| Component        | Document                                            | Description                                                                                          |
+| ---------------- | --------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| Robot Interface  | [Robot Interface](./library/robot-interface.md)     | Robot ABC, leader/follower wrappers, SDK integration (LeRobot, UR, ABB)                              |
+| Camera Interface | [Camera Interface](./library/camera-interface.md)   | `physical_ai.capture` — dedicated camera classes, 3-tier reads, timestamped frames, depth/PTZ mixins |
+| Teleoperation    | [Teleoperation API](./library/teleoperation.md)     | Leader/follower semantics, session lifecycle, safety primitives                                      |
+| Data Collection  | [Data Collection API](./library/data-collection.md) | DatasetWriter, episode management, HF Hub upload                                                     |
 
 ## Deployment Stack
 
