@@ -8,37 +8,54 @@
 
 ## Table of Contents
 
-- [Overview](#overview)
-  - [Purpose](#purpose)
-  - [Architecture Position](#architecture-position)
-  - [Design Goals](#design-goals)
-  - [Non-Goals](#non-goals)
-- [Architecture](#architecture)
-  - [Package Structure](#package-structure)
-  - [Design Principles](#design-principles)
-- [Core Components](#core-components)
-  - [InferenceModel](#inferencemodel)
-  - [RuntimeAdapter](#runtimeadapter)
-  - [InferenceRunner](#inferencerunner)
-  - [Callback System](#callback-system)
-  - [Preprocessors and Postprocessors](#preprocessors-and-postprocessors)
-  - [Manifest Format](#manifest-format)
-- [Extension & Plugin System](#extension--plugin-system)
-  - [Registry Architecture](#registry-architecture)
-  - [Entry Points](#entry-points)
-  - [Building a Custom Domain Layer](#building-a-custom-domain-layer)
-  - [Publishing to HuggingFace](#publishing-to-huggingface)
-- [Built-in Runners](#built-in-runners)
-  - [Core Runners](#core-runners)
-  - [Contrib Runners](#contrib-runners)
-- [Supported Backends](#supported-backends)
-- [Domain Layer Examples](#domain-layer-examples)
-  - [Example 1: Vision (model_api)](#example-1-vision-model_api)
-  - [Example 2: Robotics (getiaction)](#example-2-robotics-getiaction)
-  - [Example 3: Custom Domain](#example-3-custom-domain)
-- [Usage Examples](#usage-examples)
-- [API Reference](#api-reference)
-- [Appendix: Design Rationale](#appendix-design-rationale)
+- [Inference Core Design Document](#inference-core-design-document)
+  - [Table of Contents](#table-of-contents)
+  - [Overview](#overview)
+    - [Purpose](#purpose)
+    - [Architecture Position](#architecture-position)
+    - [Design Goals](#design-goals)
+    - [Non-Goals](#non-goals)
+  - [Architecture](#architecture)
+    - [Package Structure](#package-structure)
+    - [Design Principles](#design-principles)
+  - [Core Components](#core-components)
+    - [InferenceModel](#inferencemodel)
+    - [RuntimeAdapter](#runtimeadapter)
+    - [InferenceRunner](#inferencerunner)
+    - [Callback System](#callback-system)
+    - [Preprocessors and Postprocessors](#preprocessors-and-postprocessors)
+    - [Manifest Format](#manifest-format)
+  - [Extension \& Plugin System](#extension--plugin-system)
+    - [Backend Registry](#backend-registry)
+    - [Building a Custom Domain Layer](#building-a-custom-domain-layer)
+    - [Publishing to HuggingFace](#publishing-to-huggingface)
+  - [Runners (Domain-Provided)](#runners-domain-provided)
+    - [Contrib Runners](#contrib-runners)
+  - [Supported Backends](#supported-backends)
+  - [Domain Layer Examples](#domain-layer-examples)
+    - [Example 1: Vision (model_api)](#example-1-vision-model_api)
+    - [Example 2: Physical‑AI Plugins](#example-2-physicalai-plugins)
+    - [Example 3: Custom Domain](#example-3-custom-domain)
+  - [Usage Examples](#usage-examples)
+    - [Basic usage](#basic-usage)
+    - [With explicit backend](#with-explicit-backend)
+    - [With callbacks](#with-callbacks)
+    - [Context manager for resource cleanup](#context-manager-for-resource-cleanup)
+  - [API Reference](#api-reference)
+    - [Main Entry Point](#main-entry-point)
+    - [Runners](#runners)
+    - [Adapters](#adapters)
+    - [Callbacks](#callbacks)
+    - [Plugins](#plugins)
+    - [Extension Points](#extension-points)
+  - [Appendix: Design Rationale](#appendix-design-rationale)
+    - [Why a separate inference package?](#why-a-separate-inference-package)
+    - [Why inferencekit is a base layer, not a model_api replacement](#why-inferencekit-is-a-base-layer-not-a-model_api-replacement)
+    - [Migration path for model_api](#migration-path-for-model_api)
+    - [Why runners are separate from adapters?](#why-runners-are-separate-from-adapters)
+    - [Why callbacks instead of inheritance?](#why-callbacks-instead-of-inheritance)
+    - [Why a plugin system?](#why-a-plugin-system)
+  - [Related Documents](#related-documents)
 
 ---
 
@@ -59,9 +76,9 @@
 inferencekit is the **foundation layer** in a layered architecture. Domain-specific systems build on top of it, each adding their own preprocessing, postprocessing, runners, and model types:
 
 ```
-┌────────────────────────────────────────────────────────────────────┐
-│                       Domain Layers                                │
-│                                                                    │
+┌───────────────────────────────────────────────────────────────────────────────┐
+│                       Domain Layers                                           │
+│                                                                               │
 │  ┌──────────────────┐  ┌──────────────────────────────┐  ┌─────────────────┐  │
 │  │    model_api     │  │  physical‑ai‑framework       │  │  custom-xyz     │  │
 │  │  (vision)        │  │  (physical‑AI)               │  │  (your domain)  │  │
@@ -71,21 +88,21 @@ inferencekit is the **foundation layer** in a layered architecture. Domain-speci
 │  │  Ultralytics,    │  │  custom frameworks           │  │  publishable    │  │
 │  │  Roboflow        │  │                              │  │  on HuggingFace │  │
 │  └────────┬─────────┘  └────────┬─────────────────────┘  └───────┬─────────┘  │
-│           │                     │                     │            │
-│           └─────────────────────┼─────────────────────┘            │
-│                                 │                                  │
-│                          depends on                                │
-│                                 │                                  │
-│                                 ▼                                  │
-│  ┌──────────────────────────────────────────────────────────────┐  │
-│  │                       inferencekit                           │  │
-│  │                    (base framework)                          │  │
-│  │                                                              │  │
-│  │  InferenceModel  │  RuntimeAdapter  │  InferenceRunner       │  │
-│  │  Callbacks       │  Pre/Post ABCs   │  Plugin Registry       │  │
-│  │  OpenVINO, ONNX, TensorRT, Torch backends                   │  │
-│  └──────────────────────────────────────────────────────────────┘  │
-└────────────────────────────────────────────────────────────────────┘
+│           │                     │                     │                       │
+│           └─────────────────────┼─────────────────────┘                       │
+│                                 │                                             │
+│                          depends on                                           │
+│                                 │                                             │
+│                                 ▼                                             │
+│  ┌──────────────────────────────────────────────────────────────┐             │
+│  │                       inferencekit                           │             │
+│  │                    (base framework)                          │             │
+│  │                                                              │             │
+│  │  InferenceModel  │  RuntimeAdapter  │  InferenceRunner       │             │
+│  │  Callbacks       │  Pre/Post ABCs   │  Plugin Registry       │             │
+│  │  OpenVINO, ONNX, TensorRT, Torch backends                    │             │
+│  └──────────────────────────────────────────────────────────────┘             │
+└───────────────────────────────────────────────────────────────────────────────┘
 ```
 
 **Key principle:** Domain layers depend on inferencekit. inferencekit depends on nothing domain-specific. Dependencies flow upward only.
