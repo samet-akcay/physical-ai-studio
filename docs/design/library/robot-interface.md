@@ -2,18 +2,17 @@
 
 ## Executive Summary
 
-This document proposes adding a `Robot` interface to the Geti Action library to enable programmatic robot control for policy deployment. Currently, robot interaction is only available through the Application (Studio) backend. Users wanting to run trained policies on real robots must either run the full Application stack or bypass Geti Action entirely by using LeRobot directly.
+This document proposes adding a `Robot` interface to the physical‑ai‑framework library to enable programmatic robot control for inference and deployment. Today, robot interaction is only available through the Application backend. Users wanting to run trained policies on real robots must either run the full Application stack or build custom glue.
 
 The proposed design:
 
 - Adds a **framework-agnostic** `Robot` abstract base class to the library
 - Uses standard Python types (`dict`, `np.ndarray`) at the core for maximum portability
-- Provides format conversion via `format` parameter (consistent with `data_format` pattern)
-- Wraps existing SDKs (LeRobot, UR, ABB) with thin adapters
-- Follows the same patterns as our policy wrappers (universal + specific)
+- Keeps the core package inference‑first and dependency‑free
+- Wraps vendor SDKs with thin adapters (optional extras)
 - Shares the interface between Library and Application
 
-This enables a simple deployment workflow: `pip install getiaction[robot]`, then run inference on real robots with ~10 lines of Python.
+This enables a simple deployment workflow: `pip install physical-ai-framework[robots]`, then run inference on real robots with ~10 lines of Python.
 
 ---
 
@@ -21,34 +20,27 @@ This enables a simple deployment workflow: `pip install getiaction[robot]`, then
 
 ### Framework Landscape
 
-**LeRobot** dominates robotics learning research with hardware drivers (SO-101, Aloha, Koch), teleoperation, and training. It owns the full pipeline from hardware to trained model.
-
-**OpenPI** from Physical Intelligence provides foundation models (Pi0) with inference serving. It assumes you have your own robot stack—the brain, not the body.
-
-**Isaac GR00T** from NVIDIA targets humanoid deployment with TensorRT optimization and Jetson support.
-
-**Geti Action** provides multi-policy training (ACT, Diffusion, Pi0, SmolVLA, GR00T), Lightning integration, export pipeline (OpenVINO, ONNX), and a GUI Application. What's missing: robot hardware interface in the library.
+Physical‑ai‑framework provides the inference core, export pipeline, and runtime orchestration. What's missing: a library‑level robot hardware interface that can be used without the Application.
 
 ### Current Architecture
 
-Geti Action has two packages:
+The system has two packages:
 
-| Package                                | Purpose                             | Target Users                                                  |
-| -------------------------------------- | ----------------------------------- | ------------------------------------------------------------- |
-| **Library** (`pip install getiaction`) | Training, inference, export         | ML researchers, robotics engineers                            |
-| **Application** (Studio)               | Data collection, teleoperation, GUI | Subject matter experts such as Lab operators, non-programmers |
+| Package                                           | Purpose                             | Target Users                                                  |
+| ------------------------------------------------- | ----------------------------------- | ------------------------------------------------------------- |
+| **Library** (`pip install physical-ai-framework`) | Inference, export, deployment       | ML researchers, robotics engineers                            |
+| **Application** (Studio)                          | Data collection, teleoperation, GUI | Subject matter experts such as Lab operators, non-programmers |
 
-The library handles model development. The application handles human interaction. Robot control currently exists only in the Application, tightly coupled to its backend.
+The library handles inference and deployment. The application handles human interaction. Robot control currently exists only in the Application, tightly coupled to its backend.
 
 ### The Gap
 
-A robotics engineer who trains a policy and exports to ONNX/OpenVINO cannot easily deploy it:
+A robotics engineer who exports a policy to ONNX/OpenVINO cannot easily deploy it:
 
-| Current Options         | Problem                                 |
-| ----------------------- | --------------------------------------- |
-| Run Application backend | Requires web server                     |
-| Use LeRobot directly    | Bypasses Geti Action inference pipeline |
-| Write custom glue code  | Duplicates effort                       |
+| Current Options         | Problem             |
+| ----------------------- | ------------------- |
+| Run Application backend | Requires web server |
+| Write custom glue code  | Duplicates effort   |
 
 ---
 
@@ -56,18 +48,17 @@ A robotics engineer who trains a policy and exports to ONNX/OpenVINO cannot easi
 
 ### Framework Agnosticism
 
-The Robot interface must work seamlessly with:
+The Robot interface must be usable in any inference runtime:
 
-- **getiaction** - Native `Observation` objects
-- **LeRobot** - Flattened dict format with `observation.` prefixes
+- **Core inference loops** - Plain Python dicts and numpy arrays
 - **ROS/ROS2** - Standard message types
 - **Custom pipelines** - Plain Python dicts and numpy arrays
 
 This is achieved through:
 
 1. **Core interface uses standard types** (`dict`, `np.ndarray`) - no framework imports required
-2. **Format parameter** for output conversion - consistent with `data_format` pattern in DataModule
-3. **Lazy imports** - getiaction types only imported when requested
+2. **Optional adapters** live outside the core package (no circular dependencies)
+3. **Lazy imports** for vendor SDKs and adapters
 
 ### Decoupled Camera Handling
 
@@ -77,23 +68,41 @@ The Robot ABC does **not** depend on Camera types. Instead:
 - Robot implementations (e.g., SO101) accept **both** config dicts and Camera objects
 - Internal normalization converts Camera objects to config dicts
 
-This ensures the base interface remains portable while providing convenience for getiaction users.
+This ensures the base interface remains portable while providing convenience for adapter packages.
+
+### Multi-Robot vs Multi-Arm
+
+This design distinguishes **multiple robots** from **multi-arm robots**:
+
+- **Multiple robots**: use **multiple `Robot` instances**. Each robot has its own connection lifecycle and produces its own observation/action space. Coordination happens at the application level (e.g., teleoperation leader/follower or a fleet controller).
+- **Multi-arm robot**: use **one `Robot` subclass** that internally manages multiple hardware connections but exposes a single observation/action interface.
+
+This keeps the API simple while allowing explicit composition where needed.
+
+### Multi-Robot vs Multi-Arm
+
+This design distinguishes **multiple robots** from **multi-arm robots**:
+
+- **Multiple robots**: use **multiple `Robot` instances**. Each robot has its own connection lifecycle and produces its own observation/action space. Coordination happens at the application level (e.g., teleoperation leader/follower or a fleet controller).
+- **Multi-arm robot**: use **one `Robot` subclass** that internally manages multiple hardware connections but exposes a single observation/action interface.
+
+This keeps the API simple while allowing explicit composition where needed.
 
 ---
 
 ## Proposed Design
 
-We design a `Robot` interface in the library, following the same patterns as our policy interface, where we could have both first party robot wrappers and third party robot integrations via LeRobot.
+We design a `Robot` interface in the library, following the same patterns as our policy interface, where we could have both first party robot wrappers and third party robot integrations via vendor SDKs.
 
 ### Target Workflow
 
 ```bash
-pip install getiaction[lerobot]
+pip install physical-ai-framework[robots]
 ```
 
 ```python
-from getiaction.inference import InferenceModel
-from getiaction.robots import SO101
+from physical_ai.inference import InferenceModel
+from physical_ai.robots import SO101
 
 policy = InferenceModel.load("./exports/act_policy")
 robot = SO101.from_config("robot.yaml")
@@ -111,16 +120,12 @@ Library-as-building-blocks. No web server required.
 ### Robot ABC
 
 ```python
-# getiaction/robots/base.py
+# physical_ai/robots/base.py
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Literal, Self
+from typing import Any, Self
 
 import numpy as np
-
-# Type alias for observation format
-ObsFormat = Literal["dict", "getiaction", "lerobot"]
-
 
 class Robot(ABC):
     """Abstract interface for robot hardware.
@@ -129,7 +134,6 @@ class Robot(ABC):
 
     Design Principles:
         - Core methods use standard Python types (dict, np.ndarray)
-        - Format parameter enables framework-specific output
         - Follows hparams-first design with from_config() classmethod
         - Context manager for safe resource management
     """
@@ -146,6 +150,24 @@ class Robot(ABC):
 
         Returns:
             Configured Robot instance (not yet connected).
+        """
+
+    @property
+    @abstractmethod
+    def id(self) -> str:
+        """Stable identifier for this robot instance.
+
+        Used for logging, telemetry, and routing in multi-robot scenarios.
+        Must be unique within an application process.
+        """
+
+    @property
+    @abstractmethod
+    def id(self) -> str:
+        """Stable identifier for this robot instance.
+
+        Used for logging, telemetry, and routing in multi-robot scenarios.
+        Must be unique within an application process.
         """
 
     # === Connection Lifecycle ===
@@ -165,17 +187,8 @@ class Robot(ABC):
 
     # === Observation ===
 
-    def get_observation(
-        self,
-        format: ObsFormat = "dict",  # noqa: A002
-    ) -> dict[str, Any]:
+    def get_observation(self) -> dict[str, Any]:
         """Read current robot state.
-
-        Args:
-            format: Output format.
-                - "dict" (default): Framework-agnostic dict
-                - "getiaction": getiaction.data.Observation object
-                - "lerobot": LeRobot-style flattened dict
 
         Returns:
             Observation in requested format. Default dict structure:
@@ -196,6 +209,27 @@ class Robot(ABC):
         Args:
             action: Joint positions/velocities as numpy array.
         """
+        ...
+
+    # === Timing & Synchronization ===
+
+    def get_timestamp(self) -> float:
+        """Return the last observation timestamp in monotonic seconds.
+
+        Composite robots should return a synchronized timestamp for the
+        aggregated observation (e.g., max of per-arm capture times).
+        """
+        raise NotImplementedError
+
+    # === Timing & Synchronization ===
+
+    def get_timestamp(self) -> float:
+        """Return the last observation timestamp in monotonic seconds.
+
+        Composite robots should return a synchronized timestamp for the
+        aggregated observation (e.g., max of per-arm capture times).
+        """
+        raise NotImplementedError
 
     # === Context Manager ===
 
@@ -207,48 +241,27 @@ class Robot(ABC):
         self.disconnect()
 ```
 
-### Observation Format Conversion
+### Observation Conversion (Adapters)
 
-The `format` parameter follows the same pattern as `data_format` in `LeRobotDataModule`:
-
-| Format         | Output Type                  | Use Case                     |
-| -------------- | ---------------------------- | ---------------------------- |
-| `"dict"`       | `dict[str, Any]`             | Framework-agnostic (default) |
-| `"getiaction"` | `Observation`                | Native getiaction workflows  |
-| `"lerobot"`    | `dict[str, Any]` (flattened) | LeRobot policy compatibility |
-
-```python
-# Framework-agnostic (default)
-obs = robot.get_observation()
-obs["images"]["wrist"]  # np.ndarray
-
-# getiaction native
-obs = robot.get_observation(format="getiaction")
-obs.images["wrist"]  # Works with Observation API
-
-# LeRobot compatible
-obs = robot.get_observation(format="lerobot")
-obs["observation.images.wrist"]  # Flattened keys
-```
+The core API only guarantees a plain dict. Framework-specific formats must be provided by **adapter packages** outside the core to avoid circular dependencies. Adapters can expose helper functions or wrapper classes that convert the dict format into framework-specific types.
 
 ### Wrapper Architecture
 
 The design mirrors our policy wrappers:
 
-| Layer             | Policies           | Robots                      |
-| ----------------- | ------------------ | --------------------------- |
-| Universal wrapper | `LeRobotPolicy`    | `LeRobotRobot`              |
-| Specific wrappers | `ACT`, `Diffusion` | `SO101`, `Aloha`            |
-| External SDKs     | `lerobot.policies` | `lerobot.robots`, `ur_rtde` |
+| Layer             | Policies   | Robots           |
+| ----------------- | ---------- | ---------------- |
+| Universal wrapper | (optional) | `VendorRobot`    |
+| Specific wrappers | (optional) | `SO101`, `Aloha` |
+| External SDKs     | (varies)   | vendor SDKs      |
 
 **Universal wrapper** provides flexibility:
 
 ```python
-# getiaction/robots/lerobot/universal.py
-class LeRobotRobot(Robot):
-    """Universal wrapper for any LeRobot robot.
+class VendorRobot(Robot):
+    """Universal wrapper for a vendor robot family.
 
-    Similar to LeRobotPolicy, accepts robot_type + explicit kwargs.
+    Accepts robot_type + explicit kwargs for a vendor SDK.
     """
 
     def __init__(
@@ -259,10 +272,10 @@ class LeRobotRobot(Robot):
         cameras: dict[str, dict[str, Any]] | None = None,
         **kwargs: Any,
     ) -> None:
-        """Initialize LeRobot robot wrapper.
+        """Initialize vendor robot wrapper.
 
         Args:
-            robot_type: LeRobot robot type (e.g., "so101_follower").
+            robot_type: Vendor-specific robot type.
             id: Robot identifier.
             cameras: Camera configurations as dicts.
             **kwargs: Additional robot-specific parameters.
@@ -290,13 +303,13 @@ class LeRobotRobot(Robot):
 **Specific wrappers** provide IDE autocomplete and accept Camera objects:
 
 ```python
-# getiaction/robots/lerobot/so101.py
+# physical_ai/robots/vendor/so101.py
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from getiaction.cameras import Camera
+    from physical_ai.capture import Camera
 
-class SO101(LeRobotRobot):
+class SO101(VendorRobot):
     """SO-101 robot with explicit parameters for IDE support."""
 
     def __init__(
@@ -336,13 +349,13 @@ robot = SO101(
     }
 )
 
-# Camera objects (getiaction native)
-from getiaction.cameras import Webcam, RealSense
+# Camera objects (native)
+from physical_ai.capture import OpenCVCamera, RealSenseCamera
 
 robot = SO101(
     cameras={
-        "top": Webcam(index=0, width=640),
-        "wrist": RealSense(serial="123456"),
+        "top": OpenCVCamera(index=0, width=640),
+        "wrist": RealSenseCamera(serial_number="123456"),
     }
 )
 
@@ -350,12 +363,14 @@ robot = SO101(
 robot = SO101(
     cameras={
         "top": {"type": "webcam", "index": 0},
-        "wrist": RealSense(serial="123456"),
+        "wrist": RealSenseCamera(serial_number="123456"),
     }
 )
 ```
 
-Internally, Camera objects are normalized to config dicts before passing to the underlying SDK. This maintains framework agnosticism at the base level while providing convenience for getiaction users.
+Internally, Camera objects are normalized to config dicts before passing to the underlying SDK. This maintains framework agnosticism at the base level while providing convenience for adapter packages.
+
+**Camera naming guidance**: Use explicit, collision-free names in multi-arm setups (e.g., `wrist_left`, `wrist_right`, `overhead`). Avoid ambiguous names like `wrist` when multiple arms are present.
 
 See [Camera Interface Design](./camera-interface.md) for the full Camera specification.
 
@@ -363,15 +378,12 @@ See [Camera Interface Design](./camera-interface.md) for the full Camera specifi
 
 All implementations wrap pip-installable SDKs where available:
 
-| Vendor                        | SDK              | Installation                 |
-| ----------------------------- | ---------------- | ---------------------------- |
-| LeRobot (SO-101, Aloha, Koch) | `lerobot`        | `pip install lerobot`        |
-| Universal Robots              | `ur_rtde`        | `pip install ur_rtde`        |
-| ABB                           | `abb_librws`     | `pip install abb-librws`     |
-| Franka (Panda)                | `frankx`         | `pip install frankx`         |
-| KUKA                          | `py-openshowvar` | `pip install py-openshowvar` |
-
-**Note**: Trossen/Interbotix robots (ViperX, WidowX) can be supported via LeRobot, which wraps their Dynamixel-based hardware. As a permanent solution, we collaborate with Trossen to add native SDK support in the future.
+| Vendor           | SDK              | Installation                 |
+| ---------------- | ---------------- | ---------------------------- |
+| Universal Robots | `ur_rtde`        | `pip install ur_rtde`        |
+| ABB              | `abb_librws`     | `pip install abb-librws`     |
+| Franka (Panda)   | `frankx`         | `pip install frankx`         |
+| KUKA             | `py-openshowvar` | `pip install py-openshowvar` |
 
 No vendored code—thin wrappers only.
 
@@ -382,22 +394,22 @@ No vendored code—thin wrappers only.
 ### Pattern 1: Framework-Agnostic (Default)
 
 ```python
-from getiaction.robots import SO101
+from physical_ai.robots import SO101
 
 robot = SO101.from_config("robot.yaml")
 
 with robot:
     # Pure dict/numpy - works with any framework
-    obs = robot.get_observation()  # format="dict" is default
+    obs = robot.get_observation()
     action = my_policy(obs["images"], obs["state"])
     robot.send_action(action)
 ```
 
-### Pattern 2: getiaction Native
+### Pattern 2: Framework Adapter (Optional)
 
 ```python
-from getiaction.inference import InferenceModel
-from getiaction.robots import SO101
+from physical_ai.inference import InferenceModel
+from physical_ai.robots import SO101
 
 policy = InferenceModel.load("./exports/act_policy")
 robot = SO101.from_config("robot.yaml")
@@ -405,29 +417,29 @@ robot = SO101.from_config("robot.yaml")
 with robot:
     policy.reset()
     for _ in range(1000):
-        obs = robot.get_observation(format="getiaction")
+        obs = robot.get_observation()  # dict
         action = policy.select_action(obs)
         robot.send_action(action)
 ```
 
-### Pattern 3: LeRobot Compatible
+### Pattern 3: External Adapter (Optional)
 
 ```python
-from getiaction.robots import SO101
+from physical_ai.robots import SO101
 
 robot = SO101.from_config("robot.yaml")
 
 with robot:
-    # LeRobot-style flattened dict
-    obs = robot.get_observation(format="lerobot")
-    action = lerobot_policy.select_action(obs)
-    robot.send_action(action.numpy())
+    # Adapter-specific conversion handled outside core
+    obs = robot.get_observation()
+    action = external_policy.select_action(obs)
+    robot.send_action(action)
 ```
 
 ### Pattern 4: CLI
 
 ```bash
-getiaction infer \
+physical-ai infer \
     --model ./exports/openvino \
     --robot so101 \
     --robot-config robot.yaml \
@@ -440,8 +452,8 @@ Application imports the same interface:
 
 ```python
 # application/backend/src/workers/inference_worker.py
-from getiaction.inference import InferenceModel
-from getiaction.robots import Robot, SO101
+from physical_ai.inference import InferenceModel
+from physical_ai.robots import Robot, SO101
 
 class InferenceWorker:
     def __init__(self, robot: Robot, model_path: str):
@@ -456,13 +468,13 @@ One interface, multiple usage patterns.
 ## File Structure
 
 ```text
-library/src/getiaction/
+library/src/physical_ai/
 ├── robots/                      # NEW
 │   ├── __init__.py              # Public API exports
 │   ├── base.py                  # Robot ABC
-│   ├── lerobot/                 # LeRobot-wrapped robots
+│   ├── vendor/                  # Vendor-wrapped robots
 │   │   ├── __init__.py
-│   │   ├── universal.py         # LeRobotRobot (universal)
+│   │   ├── universal.py         # VendorRobot (universal)
 │   │   ├── so101.py             # SO101 (explicit args)
 │   │   ├── aloha.py             # Aloha (explicit args)
 │   │   └── koch.py              # Koch (explicit args)
@@ -482,28 +494,26 @@ library/src/getiaction/
 ```toml
 # pyproject.toml
 [project.optional-dependencies]
-lerobot = ["lerobot>=0.1.0"]
 ur = ["ur_rtde>=1.5.0"]
 abb = ["abb-librws>=1.0.0"]
 franka = ["frankx>=0.3.0"]
-robots = ["lerobot", "ur_rtde", "abb-librws", "frankx"]
+robots = ["ur_rtde", "abb-librws", "frankx"]
 ```
 
 ```bash
-pip install getiaction              # Core (no robot support)
-pip install getiaction[lerobot]     # LeRobot robots only
-pip install getiaction[ur]          # Universal Robots only
-pip install getiaction[robots]      # All robots
+pip install physical-ai-framework   # Core (no robot support)
+pip install physical-ai-framework[ur]      # Universal Robots only
+pip install physical-ai-framework[robots]  # All robots
 ```
 
 ---
 
-## Library vs Application
+## physical-ai-framework vs Application
 
 | Component         | Library | Application |
 | ----------------- | :-----: | :---------: |
 | Robot ABC         |    ✓    |   imports   |
-| LeRobot robots    |    ✓    |   imports   |
+| Vendor robots     |    ✓    |   imports   |
 | Industrial robots |    ✓    |   imports   |
 | Inference loop    |    ✓    |    uses     |
 | Teleoperation     |         |      ✓      |
@@ -522,7 +532,7 @@ Industrial robots have additional safety requirements. Vendor SDKs expose these 
 ```python
 class Robot(ABC):
     # Core (required)
-    def get_observation(self, format: ObsFormat = "dict") -> dict[str, Any]: ...
+    def get_observation(self) -> dict[str, Any]: ...
     def send_action(self, action: np.ndarray) -> None: ...
 
     # Safety (optional, default raises NotImplementedError)
@@ -560,7 +570,7 @@ A common question: if you have two robot arms with a shared camera (e.g., Aloha'
 **The `Robot` ABC already supports this.** A concrete implementation like `Aloha` manages multiple hardware connections internally and exposes a unified observation/action interface:
 
 ```python
-class Aloha(LeRobotRobot):
+class Aloha(VendorRobot):
     """Bimanual Aloha robot — two arms, shared cameras, one interface."""
 
     def __init__(
@@ -573,7 +583,7 @@ class Aloha(LeRobotRobot):
     ) -> None:
         ...
 
-    def get_observation(self, format: ObsFormat = "dict") -> dict[str, Any]:
+    def get_observation(self) -> dict[str, Any]:
         # Reads from both arms + shared cameras
         # Returns single observation with combined state vector
         ...
@@ -592,6 +602,54 @@ No `RobotGroup` abstraction is needed. The composite pattern lives inside the co
 
 This keeps the interface simple — upstream code (policies, inference loops, application) always sees one `Robot` with one observation space and one action space.
 
+**Multiple robots** (independent arms or separate cells) should be represented by **multiple `Robot` instances**, each with its own `id`, connection lifecycle, and observation/action space. Coordination is handled by the application or teleoperation layer, not by the `Robot` ABC.
+
+### Multi-Arm Schema Example
+
+Example schema for a bimanual robot with 7‑DoF per arm:
+
+```python
+# Observation (dict format)
+{
+    "images": {
+        "wrist_left": np.ndarray,   # HWC uint8
+        "wrist_right": np.ndarray,  # HWC uint8
+        "overhead": np.ndarray,
+    },
+    "state": np.concatenate([q_left, q_right]),  # length 14
+    "timestamp": t,
+}
+
+# Action
+action = np.concatenate([u_left, u_right])  # length 14
+```
+
+**Ordering rule**: left‑arm first, right‑arm second, unless a robot defines a different explicit order in its documentation.
+
+**Multiple robots** (independent arms or separate cells) should be represented by **multiple `Robot` instances**, each with its own `id`, connection lifecycle, and observation/action space. Coordination is handled by the application or teleoperation layer, not by the `Robot` ABC.
+
+### Multi-Arm Schema Example
+
+Example schema for a bimanual robot with 7‑DoF per arm:
+
+```python
+# Observation (dict format)
+{
+    "images": {
+        "wrist_left": np.ndarray,   # HWC uint8
+        "wrist_right": np.ndarray,  # HWC uint8
+        "overhead": np.ndarray,
+    },
+    "state": np.concatenate([q_left, q_right]),  # length 14
+    "timestamp": t,
+}
+
+# Action
+action = np.concatenate([u_left, u_right])  # length 14
+```
+
+**Ordering rule**: left‑arm first, right‑arm second, unless a robot defines a different explicit order in its documentation.
+
 ---
 
 ## Design Rationale
@@ -605,10 +663,10 @@ This keeps the interface simple — upstream code (policies, inference loops, ap
 
 We chose the `format` parameter because:
 
-1. **Consistency**: Matches existing `data_format` pattern in `LeRobotDataModule`
+1. **Consistency**: Matches existing `data_format` pattern in other modules
 2. **Extensibility**: Easy to add new formats without new methods
 3. **Single source of truth**: One method to document and maintain
-4. **Default is framework-agnostic**: `format="dict"` requires no imports
+4. **Default is framework-agnostic**: plain dict requires no imports
 
 ### Why Config Dicts for Cameras in Base Interface?
 
@@ -621,6 +679,22 @@ The Robot ABC uses `dict[str, dict[str, Any]]` for cameras because:
 Robot implementations (SO101, etc.) accept **both** dicts and Camera objects for convenience, normalizing internally.
 
 Note that camera connection parameters are intentionally camera-type-specific rather than collapsed into a generic `device_key`. Webcams use an integer `index` (device enumeration order), RealSense cameras use a string `serial` (hardware serial number), and IP cameras use a `url`. These are semantically different types serving different purposes — collapsing them into a single string would lose type safety and make the API less self-documenting. The dict-based config (`dict[str, Any]`) already accommodates this flexibility naturally, since each camera type defines its own connection parameters.
+
+### Lifecycle Semantics for Composite Robots
+
+For multi-arm robots, `connect()`/`disconnect()` must manage all hardware links. If any required link fails to connect, the call should raise an error and the robot should be left in a safe, disconnected state. `is_connected` should return `True` only when **all** required links are connected.
+
+### Concurrency and Atomicity
+
+`get_observation()` should return a **synchronized** snapshot across arms and cameras when possible. `send_action()` should apply the full action vector as a single logical step; if the underlying SDK cannot guarantee simultaneity, implementations should document their behavior explicitly.
+
+### Lifecycle Semantics for Composite Robots
+
+For multi-arm robots, `connect()`/`disconnect()` must manage all hardware links. If any required link fails to connect, the call should raise an error and the robot should be left in a safe, disconnected state. `is_connected` should return `True` only when **all** required links are connected.
+
+### Concurrency and Atomicity
+
+`get_observation()` should return a **synchronized** snapshot across arms and cameras when possible. `send_action()` should apply the full action vector as a single logical step; if the underlying SDK cannot guarantee simultaneity, implementations should document their behavior explicitly.
 
 ### Why numpy Instead of torch?
 
@@ -637,7 +711,7 @@ Users can convert to torch at the policy boundary if needed.
 
 ## References
 
-- [Strategy](../strategy.md) - Big-picture architecture (getiaction → physical‑ai‑framework)
+- [Strategy](../strategy.md) - Big-picture architecture
 - [Camera Interface Design](./camera-interface.md) - Detailed camera interface specification
 - [Teleoperation API](./teleoperation.md) - Teleoperation design
 
