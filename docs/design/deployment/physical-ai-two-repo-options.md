@@ -9,8 +9,8 @@ Two repositories. Two PyPI distributions. One namespace.
 
 **PyPI distributions:**
 
-- `physicalai` — lightweight runtime (inference, capture, robot, export)
-- `physicalai-train` — training SDK (policies, data, benchmarks, eval, gyms)
+- `physicalai` — lightweight runtime (inference, capture, robot, export, benchmark runner)
+- `physicalai-train` — training SDK (policies, data, eval, gyms, benchmark presets)
 
 Both distributions share the `physicalai` namespace via PEP 420 implicit namespace packaging.
 
@@ -269,6 +269,39 @@ from physicalai.gyms import LiberoGym
 
 **No `__init__.py` at `src/physicalai/` in either distribution.** This is the PEP 420 namespace mechanism. If either package adds a `physicalai/__init__.py`, the namespace breaks — only one distribution's subpackages will be visible.
 
+### IDE Configuration (PEP 420 Namespace Packages)
+
+**End users** (`pip install` into the same virtualenv): No configuration needed. Pyright/Pylance, PyCharm, and mypy correctly discover both distributions under the `physicalai` namespace. Go-to-definition, autocomplete, and type checking work out of the box.
+
+**Phase 1 & Phase 3 developers** (single repo): No issues. All source files are in one workspace.
+
+**Phase 2 developers** (two repos, editable installs): Requires a one-line IDE config so the type checker sees both source trees.
+
+**VS Code (Pylance)**:
+
+```json
+// .vscode/settings.json
+{
+  "python.analysis.extraPaths": ["../physical-ai/library/src"]
+}
+```
+
+**PyCharm**: Right-click the second repo's `src/` directory → Mark Directory As → Sources Root.
+
+#### Known Issues & Mitigations
+
+| Issue                                                                                                           | Impact                                                      | Status                                                                                         |
+| --------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Pylance 2025.10.1 regression ([pylance-release#7737](https://github.com/microsoft/pylance-release/issues/7737)) | PEP 420 namespace detection broke temporarily               | **Fixed** in 2025.10.2                                                                         |
+| Namespace packages flagged as untyped ([pyright#10203](https://github.com/microsoft/pyright/issues/10203))      | Pyright incorrectly required type stubs                     | **Fixed** April 2025                                                                           |
+| `pkgutil.extend_path()` resolution ([pyright#2882](https://github.com/microsoft/pyright/issues/2882))           | Only first namespace instance resolved                      | **Does not affect us** — we use pure PEP 420, not `pkgutil`                                    |
+| Mixed implicit/explicit namespace ([pyright#3430](https://github.com/microsoft/pyright/issues/3430))            | Mixing `__init__.py` and no-`__init__.py` breaks resolution | **Avoided** by our "no `__init__.py` at namespace root" rule                                   |
+| Legacy editable installs ([pip#7265](https://github.com/pypa/pip/issues/7265))                                  | `setup.py develop` breaks namespace packages                | **Avoided** — use PEP 660 editable installs (`pip install -e .` with hatchling/setuptools ≥64) |
+
+#### Why PEP 420 Over `pkgutil.extend_path()`
+
+Google Cloud (`google.cloud.*`) and Azure SDK (`azure.*`) use `pkgutil.extend_path()` with explicit `__init__.py` files. Pyright only resolves the first namespace instance with this approach ([pyright#2882](https://github.com/microsoft/pyright/issues/2882) — closed "as designed"). Pure PEP 420 (no `__init__.py`) is explicitly supported by Pyright and avoids this limitation entirely.
+
 ---
 
 ## PoC Validation
@@ -387,6 +420,7 @@ Current `getiaction` modules → target distribution assignment.
 | Phase 3 blocked by stakeholders            | Phase 2 is a stable long-term fallback                                            |
 | Version coordination between two dists     | Pin `physicalai>=X.Y.Z` in `physicalai-train`; release runtime first              |
 | `transforms/` ownership ambiguity          | Assign to `physicalai`; training dist uses it as a dependency                     |
+| IDE support for Phase 2 multi-repo dev     | One-line `extraPaths` config for VS Code; Sources Root for PyCharm (documented)   |
 
 ---
 
