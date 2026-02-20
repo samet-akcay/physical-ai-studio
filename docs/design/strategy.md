@@ -342,13 +342,13 @@ phyai serve --model ./exports/act_policy --robot robot.yaml
 
 ## Package Naming
 
-| Package           | Name                    | Status                                                                               |
-| ----------------- | ----------------------- | ------------------------------------------------------------------------------------ |
-| Vision Layer      | `model_api`             | Vision inference layer; can share framework's inference core                         |
-| Robotics Stack    | `getiaction`            | Robotics inference layer + library + application                                     |
-| Deployment Engine | `physical‑ai‑framework` | Universal physical‑AI inference engine with inference core as internal modular layer |
+| Package             | PyPI name          | Status                                                                                    |
+| ------------------- | ------------------ | ----------------------------------------------------------------------------------------- |
+| Runtime / Inference | `physicalai`       | Lightweight runtime — inference, camera, robot, export. Published from `physical-ai` repo |
+| Training SDK        | `physicalai-train` | Training, policies, data, benchmarks, eval. Published from `physical-ai-studio` repo      |
+| Vision Layer        | `model_api`        | Vision inference layer; can share framework's inference core                              |
 
-_Names are subject to marketing/branding review._
+Both `physicalai` and `physicalai-train` share the `physicalai` namespace via PEP 420 implicit namespace packaging. See [Packaging Strategy](./deployment/physical-ai-two-repo-options.md) for the full rollout plan.
 
 ---
 
@@ -375,12 +375,13 @@ _Names are subject to marketing/branding review._
 
 ### Deployment Stack
 
-| Component           | Document                                              | Description                                                    |
-| ------------------- | ----------------------------------------------------- | -------------------------------------------------------------- |
-| Inference Core      | [Inference Core](./deployment/inferencekit.md)        | Domain-agnostic inference layer design (internal to framework) |
-| Deployment Engine   | [Deployment Engine](./deployment/deployment-shell.md) | physical‑ai‑framework universal engine, CLI, format loaders    |
-| LeRobot Integration | [LeRobot Integration](./deployment/lerobot.md)        | LeRobot integration via unified manifest.json format           |
+| Component           | Document                                                           | Description                                                    |
+| ------------------- | ------------------------------------------------------------------ | -------------------------------------------------------------- |
+| Packaging Strategy  | [Packaging Strategy](./deployment/physical-ai-two-repo-options.md) | Two-repo, two-distribution packaging with PEP 420 namespace    |
+| Inference Core      | [Inference Core](./deployment/inferencekit.md)                     | Domain-agnostic inference layer design (internal to framework) |
+| Deployment Engine   | [Deployment Engine](./deployment/deployment-shell.md)              | physical‑ai‑framework universal engine, CLI, format loaders    |
+| LeRobot Integration | [LeRobot Integration](./deployment/lerobot.md)                     | LeRobot integration via unified manifest.json format           |
 
 ---
 
-_Last Updated: 2026-02-16_
+_Last Updated: 2026-02-20_
