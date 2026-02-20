@@ -21,6 +21,7 @@ Components owned by the **library** (`pip install getiaction`) — the building 
 | ---------------- | --------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
 | Robot Interface  | [Robot Interface](./library/robot-interface.md)     | Robot ABC, leader/follower wrappers, SDK integration (LeRobot, UR, ABB)                              |
 | Camera Interface | [Camera Interface](./library/camera-interface.md)   | `physical_ai.capture` — dedicated camera classes, 3-tier reads, timestamped frames, depth/PTZ mixins |
+| Benchmarking     | [Benchmarking API](./library/benchmarking.md)       | NumPy-only benchmark protocols, runner, latency metrics; torch adapters in physicalai-train          |
 | Teleoperation    | [Teleoperation API](./library/teleoperation.md)     | Leader/follower semantics, session lifecycle, safety primitives                                      |
 | Data Collection  | [Data Collection API](./library/data-collection.md) | DatasetWriter, episode management, HF Hub upload                                                     |
 
@@ -28,11 +29,12 @@ Components owned by the **library** (`pip install getiaction`) — the building 
 
 The inference and deployment architecture: **physical‑ai‑framework** (universal physical‑AI engine with inference core as internal modular layer, unified `manifest.json` format, and built‑in runners) → **external plugins** (only for exotic execution patterns). Vision remains a separate domain layer (**model_api**) that can share the inference core.
 
-| Component           | Document                                             | Description                                                        |
-| ------------------- | ---------------------------------------------------- | ------------------------------------------------------------------ |
-| Inference Core      | [Inference Core](./deployment/inferencekit.md)       | Domain-agnostic inference layer design (internal to framework)     |
-| Deployment Engine   | [Deployment Shell](./deployment/deployment-shell.md) | physical‑ai‑framework universal engine, CLI, manifest loading      |
-| LeRobot Integration | [LeRobot Integration](./deployment/lerobot.md)       | Built‑in format loader for LeRobot manifest.json (proposed format) |
+| Component           | Document                                                           | Description                                                        |
+| ------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------ |
+| Packaging Strategy  | [Packaging Strategy](./deployment/physical-ai-two-repo-options.md) | Two-repo, two-distribution packaging with PEP 420 namespace split  |
+| Inference Core      | [Inference Core](./deployment/inferencekit.md)                     | Domain-agnostic inference layer design (internal to framework)     |
+| Deployment Engine   | [Deployment Shell](./deployment/deployment-shell.md)               | physical‑ai‑framework universal engine, CLI, manifest loading      |
+| LeRobot Integration | [LeRobot Integration](./deployment/lerobot.md)                     | Built‑in format loader for LeRobot manifest.json (proposed format) |
 
 ## Internal Notes
 
@@ -52,10 +54,12 @@ docs/design/
 ├── library/                               # Library-owned components
 │   ├── robot-interface.md                 # Robot ABC & SDK wrappers
 │   ├── camera-interface.md                # Camera ABC & sharing
+│   ├── benchmarking.md                    # Benchmarking API (split across distributions)
 │   ├── teleoperation.md                   # Teleoperation API
 │   └── data-collection.md                 # Data collection API
 │
 ├── deployment/                            # Deployment stack
+│   ├── physical-ai-two-repo-options.md    # Packaging strategy (two repos, PEP 420)
 │   ├── inferencekit.md                    # Inference core layer design
 │   ├── deployment-shell.md                # physical-ai-framework (CLI)
 │   └── lerobot.md                         # LeRobot format loader integration
@@ -80,14 +84,16 @@ docs/design/
 2. Component design for the area you're working on:
    - [Robot Interface](./library/robot-interface.md)
    - [Camera Interface](./library/camera-interface.md)
+   - [Benchmarking API](./library/benchmarking.md)
    - [Teleoperation](./library/teleoperation.md)
    - [Data Collection](./library/data-collection.md)
 
 ### For Deployment
 
 1. **[Strategy § Part 2](./strategy.md#part-2-deployment-stack)** — layered architecture
-2. **[Inference Core](./deployment/inferencekit.md)** — domain-agnostic inference layer design
-3. **[Deployment Shell](./deployment/deployment-shell.md)** — CLI and configuration
+2. **[Packaging Strategy](./deployment/physical-ai-two-repo-options.md)** — two-repo split, phased rollout
+3. **[Inference Core](./deployment/inferencekit.md)** — domain-agnostic inference layer design
+4. **[Deployment Shell](./deployment/deployment-shell.md)** — CLI and configuration
 
 ---
 
@@ -105,16 +111,18 @@ When updating these documents:
 
 ## Version History
 
-| Version | Date       | Changes                                                                       |
-| ------- | ---------- | ----------------------------------------------------------------------------- |
-| 7.0     | 2026-02-16 | Unified manifest.json format across all packages; removed format loader model |
-| 6.0     | 2026-02-11 | Updated to two-tier model: built‑in format loaders/runners + external plugins |
-| 5.1     | 2026-02-09 | Updated deployment stack to physical‑ai‑framework as universal engine         |
-| 4.0     | 2026-02-06 | Reorganized into library/ + deployment/ to reflect ownership boundaries       |
-| 3.0     | 2026-02-06 | Reorganized into strategy + components/integrations/internal                  |
-| 2.0     | 2026-02-05 | Restructured with physical‑ai‑framework codename                              |
-| 1.0     | 2026-01-28 | Initial split from combined document                                          |
+| Version | Date       | Changes                                                                        |
+| ------- | ---------- | ------------------------------------------------------------------------------ |
+| 9.0     | 2026-02-20 | Added benchmarking API design doc (split across physicalai + physicalai-train) |
+| 8.0     | 2026-02-20 | Added packaging strategy doc (two-repo PEP 420 namespace split)                |
+| 7.0     | 2026-02-16 | Unified manifest.json format across all packages; removed format loader model  |
+| 6.0     | 2026-02-11 | Updated to two-tier model: built‑in format loaders/runners + external plugins  |
+| 5.1     | 2026-02-09 | Updated deployment stack to physical‑ai‑framework as universal engine          |
+| 4.0     | 2026-02-06 | Reorganized into library/ + deployment/ to reflect ownership boundaries        |
+| 3.0     | 2026-02-06 | Reorganized into strategy + components/integrations/internal                   |
+| 2.0     | 2026-02-05 | Restructured with physical‑ai‑framework codename                               |
+| 1.0     | 2026-01-28 | Initial split from combined document                                           |
 
 ---
 
-_Last Updated: 2026-02-16_
+_Last Updated: 2026-02-20_
