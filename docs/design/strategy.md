@@ -342,11 +342,11 @@ phyai serve --model ./exports/act_policy --robot robot.yaml
 
 ## Package Naming
 
-| Package             | PyPI name          | Status                                                                                    |
-| ------------------- | ------------------ | ----------------------------------------------------------------------------------------- |
-| Runtime / Inference | `physicalai`       | Lightweight runtime — inference, camera, robot, export. Published from `physical-ai` repo |
-| Training SDK        | `physicalai-train` | Training, policies, data, benchmarks, eval. Published from `physical-ai-studio` repo      |
-| Vision Layer        | `model_api`        | Vision inference layer; can share framework's inference core                              |
+| Package             | PyPI name          | Status                                                                                                      |
+| ------------------- | ------------------ | ----------------------------------------------------------------------------------------------------------- |
+| Runtime / Inference | `physicalai`       | Lightweight runtime — inference, camera, robot, export, benchmark runner. Published from `physical-ai` repo |
+| Training SDK        | `physicalai-train` | Training, policies, data, eval, gyms, benchmark presets. Published from `physical-ai-studio` repo           |
+| Vision Layer        | `model_api`        | Vision inference layer; can share framework's inference core                                                |
 
 Both `physicalai` and `physicalai-train` share the `physicalai` namespace via PEP 420 implicit namespace packaging. See [Packaging Strategy](./deployment/physical-ai-two-repo-options.md) for the full rollout plan.
 
