@@ -45,13 +45,13 @@ physical-ai-studio/                    # goes public
         ├── train/                     # Trainer, Lightning integration
         ├── policies/                  # ACT, Pi0, SmolVLA, GR00T
         ├── data/                      # DataModule, Observation
-        ├── benchmark/                 # LiberoBenchmark
+        ├── benchmark/                 # Benchmarking
         ├── eval/                      # Rollout evaluation
         ├── gyms/                      # Sim environments
         ├── inference/                 # InferenceModel (temporary)
         ├── export/                    # ONNX, OpenVINO export
         ├── transforms/                # Shared transforms
-        ├── cli/                       # getiaction CLI
+        ├── cli/                       # CLI
         ├── config/                    # Configuration
         └── devices/                   # Device utilities
         # NO physicalai/__init__.py
@@ -88,6 +88,7 @@ physical-ai/                           # now public
     ├── inference/                     # InferenceModel
     ├── capture/                       # Camera interfaces
     ├── robot/                         # Robot ABC
+    ├── benchmark/                     # BenchmarkRunner, protocols (numpy-only)
     ├── export/                        # Model export
     └── transforms/                    # Shared transforms
     # NO physicalai/__init__.py
@@ -101,7 +102,6 @@ physical-ai-studio/                    # training stays here
         ├── train/
         ├── policies/
         ├── data/
-        ├── benchmark/
         ├── eval/
         ├── gyms/
         ├── cli/
@@ -133,6 +133,7 @@ from physicalai.policies import ACT
 | `inference/`  | `physical-ai-studio` | `physical-ai` |
 | `capture/`    | `physical-ai-studio` | `physical-ai` |
 | `robot/`      | `physical-ai-studio` | `physical-ai` |
+| `benchmark/`  | `physical-ai-studio` | `physical-ai` |
 | `export/`     | `physical-ai-studio` | `physical-ai` |
 | `transforms/` | `physical-ai-studio` | `physical-ai` |
 
@@ -155,6 +156,7 @@ physical-ai/                           # owns all Python code
 │   │       ├── inference/
 │   │       ├── capture/
 │   │       ├── robot/
+│   │       ├── benchmark/
 │   │       ├── export/
 │   │       └── transforms/
 │   │       # NO physicalai/__init__.py
@@ -164,7 +166,6 @@ physical-ai/                           # owns all Python code
 │           ├── train/
 │           ├── policies/
 │           ├── data/
-│           ├── benchmark/
 │           ├── eval/
 │           ├── gyms/
 │           ├── cli/
@@ -208,27 +209,6 @@ physicalai/                            # PEP 420 namespace — no __init__.py
 ```
 
 Training subpackages (`train/`, `policies/`, `data/`, etc.) are siblings under `physicalai`, not nested under `physicalai.train.*`. This keeps imports flat and natural.
-
-### Benchmark Split
-
-Benchmarking spans both distributions. The **evaluation mechanism** belongs in the runtime dist. The **benchmark suites and simulation environments** belong in the training dist.
-
-**`physicalai.benchmark`** (runtime dist, numpy-only):
-
-- Environment protocol: `reset() → dict[str, np.ndarray]`, `step(action) → (obs, reward, done, info)`
-- Policy protocol: `select_action(obs) → np.ndarray`, `reset()`
-- `BenchmarkRunner` — the evaluation loop + timing + metrics aggregation
-- `BenchmarkResults` — success rate, latency stats, episode data
-- No torch. No gym. No simulation deps.
-
-**Benchmark content in `physicalai-train`** (training dist, heavy deps):
-
-- `LiberoBenchmark`, `PushTBenchmark` — specific benchmark presets that build on `physicalai.benchmark`
-- Gym adapters wrapping simulation envs (LIBERO, PushT) into the runtime protocol
-- Policy adapters wrapping Lightning modules into the runtime protocol
-- Video recording, visualization
-
-**Why this split:** The runtime dist owns `InferenceModel` — it should also own the ability to evaluate one. A deployer validating an exported model on edge hardware shouldn't need torch installed to measure success rate and latency. This mirrors OpenVINO (`benchmark_app` ships in the runtime, not in a training package) and Hugging Face (`evaluate` is a separate package from `transformers`).
 
 ### Dependency Direction
 
@@ -306,125 +286,27 @@ Google Cloud (`google.cloud.*`) and Azure SDK (`azure.*`) use `pkgutil.extend_pa
 
 ## PoC Validation
 
-A proof-of-concept validates PEP 420 namespace packaging across both deployment scenarios. Location: `poc/` directory.
-
-### Results: 22/22 passed
-
-**Case 1 — Single repo, two distributions (11/11)**
-
-Validates Phase 3 layout: both dists publish from one repo.
-
-| Test                                                            | Result |
-| --------------------------------------------------------------- | ------ |
-| `pip install physicalai` → inference works                      | ✅     |
-| `pip install physicalai` → `physicalai.train` does not exist    | ✅     |
-| `pip install physicalai` → `physicalai.policies` does not exist | ✅     |
-| `pip install physicalai-train` → auto-pulls `physicalai`        | ✅     |
-| `physicalai.train` works after installing training dist         | ✅     |
-| `physicalai.policies` works after installing training dist      | ✅     |
-| Inference + train + policies work together in same process      | ✅     |
-| Uninstall `physicalai-train` → inference survives               | ✅     |
-| Uninstall `physicalai-train` → train is gone                    | ✅     |
-| Editable install (`-e`) for both packages simultaneously        | ✅     |
-| Editable: inference + train + policies all work together        | ✅     |
-
-**Case 2 — Two repos, namespace split across repos (11/11)**
-
-Validates Phase 2 layout: dists publish from separate repos.
-
-| Test                                                                        | Result |
-| --------------------------------------------------------------------------- | ------ |
-| `pip install physicalai` (from physical-ai repo) → inference works          | ✅     |
-| `pip install physicalai` → `physicalai.train` does not exist                | ✅     |
-| `pip install physicalai` → `physicalai.policies` does not exist             | ✅     |
-| `pip install physicalai-train` (from studio repo) → auto-pulls `physicalai` | ✅     |
-| `physicalai.train` works after installing training dist                     | ✅     |
-| `physicalai.policies` works after installing training dist                  | ✅     |
-| Inference + train + policies work together (cross-repo)                     | ✅     |
-| Uninstall `physicalai-train` → inference survives                           | ✅     |
-| Uninstall `physicalai-train` → train is gone                                | ✅     |
-| Editable install (`-e`) from two separate repos simultaneously              | ✅     |
-| Editable: inference + train + policies all work together                    | ✅     |
-
-### PoC Structure
-
-```
-poc/
-├── validate.sh                            # runs both cases
-├── case-1-single-repo/                    # Phase 3: two dists from one repo
-│   ├── validate.sh
-│   └── packages/
-│       ├── physicalai/                    # runtime dist
-│       │   ├── pyproject.toml
-│       │   └── src/physicalai/inference/
-│       └── physicalai-train/              # training dist
-│           ├── pyproject.toml
-│           └── src/physicalai/{train,policies}/
-└── case-2-two-repos/                      # Phase 2: split across repos
-    ├── validate.sh
-    ├── physical-ai/                       # simulates physical-ai repo
-    │   ├── pyproject.toml
-    │   └── src/physicalai/inference/
-    └── physical-ai-studio/                # simulates studio repo
-        └── library/
-            ├── pyproject.toml
-            └── src/physicalai/{train,policies}/
-```
-
-### Reproduce
-
-```bash
-cd poc && bash validate.sh               # both cases
-bash poc/case-1-single-repo/validate.sh  # Phase 3 layout
-bash poc/case-2-two-repos/validate.sh    # Phase 2 layout
-```
-
----
-
-## Module Migration Map
-
-Current `getiaction` modules → target distribution assignment.
-
-| Current module | Target distribution | Target module        | Notes                                                                                                     |
-| -------------- | ------------------- | -------------------- | --------------------------------------------------------------------------------------------------------- |
-| `inference/`   | `physicalai`        | `inference/`         | Needs import cleanup first                                                                                |
-| `devices/`     | `physicalai`        | `capture/`, `robot/` | Split into dedicated modules                                                                              |
-| `export/`      | `physicalai`        | `export/`            | Remove torch module-level imports                                                                         |
-| `transforms/`  | `physicalai`        | `transforms/`        | Shared — both dists may reference                                                                         |
-| `benchmark/`   | Split across both   | `benchmark/`         | Runner + results + protocols → `physicalai`; LiberoBenchmark, PushTBenchmark presets → `physicalai-train` |
-| `eval/`        | Split across both   | `eval/`              | Rollout protocol → `physicalai`; torch rollout, video recording → `physicalai-train`                      |
-| `gyms/`        | `physicalai-train`  | `gyms/`              | Simulation environments (heavy deps)                                                                      |
-| `train/`       | `physicalai-train`  | `train/`             | —                                                                                                         |
-| `policies/`    | `physicalai-train`  | `policies/`          | —                                                                                                         |
-| `data/`        | `physicalai-train`  | `data/`              | Remove torch module-level imports for runtime usage                                                       |
-| `cli/`         | `physicalai-train`  | `cli/`               | —                                                                                                         |
-| `config/`      | TBD                 | `config/`            | Depends on whether runtime needs it                                                                       |
-
-### Import Cleanup Required Before Phase 2
-
-- `inference/` imports from `data/`, `export/`, `policies/` — break these
-- `export/mixin_export.py` imports `lightning`, `openvino`, `torch` at module level — defer or guard
-- `data/observation.py` imports `torch` at module level — defer or guard
-- `__init__.py` eagerly imports `Trainer` and XPU utilities — remove eager imports
+A proof-of-concept validates PEP 420 namespace packaging across both single-repo and two-repo scenarios (22/22 tests pass). See `poc/` directory to reproduce.
 
 ---
 
 ## Risks
 
-| Risk                                       | Mitigation                                                                        |
-| ------------------------------------------ | --------------------------------------------------------------------------------- |
-| PEP 420 unfamiliarity                      | PoC validates both scenarios; document the critical `__init__.py` rule            |
-| Accidental `__init__.py` at namespace root | CI lint rule: fail if `src/physicalai/__init__.py` exists                         |
-| Cross-distribution import leaks            | CI import boundary check: `physicalai` dist must not import from training modules |
-| Runtime benchmark scope creep              | Keep `physicalai.benchmark` tiny (protocols + runner + results); no torch/gym     |
-| Phase 3 blocked by stakeholders            | Phase 2 is a stable long-term fallback                                            |
-| Version coordination between two dists     | Pin `physicalai>=X.Y.Z` in `physicalai-train`; release runtime first              |
-| `transforms/` ownership ambiguity          | Assign to `physicalai`; training dist uses it as a dependency                     |
-| IDE support for Phase 2 multi-repo dev     | One-line `extraPaths` config for VS Code; Sources Root for PyCharm (documented)   |
+| Risk                                       | Mitigation                                                                          |
+| ------------------------------------------ | ----------------------------------------------------------------------------------- |
+| PEP 420 unfamiliarity                      | PoC validates both scenarios (see `poc/`); document the critical `__init__.py` rule |
+| Accidental `__init__.py` at namespace root | CI lint rule: fail if `src/physicalai/__init__.py` exists                           |
+| Cross-distribution import leaks            | CI import boundary check: `physicalai` dist must not import from training modules   |
+| Phase 3 blocked by stakeholders            | Phase 2 is a stable long-term fallback                                              |
+| Version coordination between two dists     | Pin `physicalai>=X.Y.Z` in `physicalai-train`; release runtime first                |
+| `transforms/` ownership ambiguity          | Assign to `physicalai`; training dist uses it as a dependency                       |
+| IDE support for Phase 2 multi-repo dev     | One-line `extraPaths` config for VS Code; Sources Root for PyCharm (documented)     |
 
 ---
 
 ## Alternatives Considered
+
+The chosen approach (two separate distributions with PEP 420 namespace) is documented above. Two alternatives were evaluated and rejected:
 
 ### Option A — Single Package With Extras
 
