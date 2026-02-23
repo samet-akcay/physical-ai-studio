@@ -47,12 +47,12 @@
 
 ## Executive Summary
 
-This document defines the camera/capture interface for the physical-AI ecosystem, packaged as `physical_ai.capture` inside `physical-ai-framework`.
+This document defines the camera/capture interface for the physical-AI ecosystem, packaged as `physicalai.capture` inside `physicalai`.
 
 **Key decisions:**
 
-- **Package**: `physical_ai.capture` — lives in `physical-ai-framework`, zero coupling to other subpackages, designed for future extraction as a standalone repo
-- **Backends**: Low-level capture code absorbed selectively from our team's FrameSource fork, rewritten under `physical_ai.capture` naming — no FrameSource branding
+- **Package**: `physicalai.capture` — lives in `physicalai`, zero coupling to other subpackages, designed for future extraction as a standalone repo
+- **Backends**: Low-level capture code absorbed selectively from our team's FrameSource fork, rewritten under `physicalai.capture` naming — no FrameSource branding
 - **Primary API**: Dedicated camera classes (`OpenCVCamera`, `RealSenseCamera`, etc.) with explicit constructor parameters
 - **Convenience API**: Thin `create_camera()` factory for config-driven workflows
 - **Read model**: Three-tier — `read()` (blocking sequential), `read_latest()` (non-blocking latest), `async_read()` (async/await)
@@ -82,11 +82,11 @@ This document defines the camera/capture interface for the physical-AI ecosystem
 
 ## Packaging Strategy
 
-`physical_ai.capture` lives inside the `physical-ai-framework` monorepo as a subpackage with **zero coupling** to other subpackages. It is designed as if it were standalone — no internal cross-imports — so it can be extracted into its own repository once mature.
+`physicalai.capture` lives inside the `physical-ai` repo as a subpackage with **zero coupling** to other subpackages. It is designed as if it were standalone — no internal cross-imports — so it can be extracted into its own repository once mature.
 
 ```text
-physical-ai-framework/
-└── physical_ai/
+physical-ai/
+└── src/physicalai/
     └── capture/
         ├── __init__.py          # Public API: re-exports cameras, Frame, discover_all
         ├── _frame.py            # Frame dataclass
@@ -112,8 +112,8 @@ physical-ai-framework/
 ```
 
 ```python
-from physical_ai.capture import OpenCVCamera, RealSenseCamera, Frame
-from physical_ai.capture import create_camera, discover_all
+from physicalai.capture import OpenCVCamera, RealSenseCamera, Frame
+from physicalai.capture import create_camera, discover_all
 ```
 
 **Why subpackage now, standalone later?**
@@ -145,18 +145,18 @@ Sensor (ABC)                       # Base: connect/disconnect/read/read_latest/a
 
 ### Package Structure
 
-Internal modules use underscore prefix (`_frame.py`, `_sensor.py`) to signal they are not public API. Users import from `physical_ai.capture` directly.
+Internal modules use underscore prefix (`_frame.py`, `_sensor.py`) to signal they are not public API. Users import from `physicalai.capture` directly.
 
 Each camera backend is a separate module under `cameras/`. This keeps dependencies isolated — importing `OpenCVCamera` doesn't pull in `pypylon` or `pyrealsense2`.
 
-Optional SDK imports must be **lazy**: camera modules should import their SDKs only when instantiated or when `connect()` is called, and raise `MissingDependencyError` with an install hint if the extra is not installed. `physical_ai.capture.__init__` should avoid eager imports that force optional dependencies.
+Optional SDK imports must be **lazy**: camera modules should import their SDKs only when instantiated or when `connect()` is called, and raise `MissingDependencyError` with an install hint if the extra is not installed. `physicalai.capture.__init__` should avoid eager imports that force optional dependencies.
 
 ### Backend Strategy
 
 We selectively absorb low-level capture code from our team's FrameSource fork. The fork is maintained by our team, but the FrameSource brand belongs to the original author. We:
 
 1. **Cherry-pick** proven capture logic (device enumeration, buffer management, format negotiation)
-2. **Rewrite** under `physical_ai.capture` naming and conventions
+2. **Rewrite** under `physicalai.capture` naming and conventions
 3. **Improve** with typed APIs, proper error handling, and timestamped frames
 4. **Own** the code — no external dependency on FrameSource at runtime
 
@@ -169,11 +169,11 @@ The fork maintainer continues adding features. We absorb selectively as needed, 
 OpenCV is the only required dependency. Hardware-specific SDKs are optional extras:
 
 ```bash
-pip install physical-ai-framework                    # Core + OpenCVCamera only
-pip install physical-ai-framework[realsense]         # + Intel RealSense (pyrealsense2)
-pip install physical-ai-framework[basler]            # + Basler (pypylon)
-pip install physical-ai-framework[genicam]           # + GenICam (harvesters)
-pip install physical-ai-framework[capture]           # All camera dependencies
+pip install physicalai                    # Core + OpenCVCamera only
+pip install physicalai[realsense]         # + Intel RealSense (pyrealsense2)
+pip install physicalai[basler]            # + Basler (pypylon)
+pip install physicalai[genicam]           # + GenICam (harvesters)
+pip install physicalai[capture]           # All camera dependencies
 ```
 
 | Camera            | Required Package | Optional Extra |
@@ -359,7 +359,7 @@ class Camera(Sensor):
 
 ### Errors
 
-`physical_ai.capture` defines explicit error types for predictable handling:
+`physicalai.capture` defines explicit error types for predictable handling:
 
 ```python
 class CaptureError(RuntimeError):
@@ -652,7 +652,7 @@ class IPCamera(Camera):
 
 ## Recorded Sources (Future)
 
-Non-live sources for replaying recorded data. Useful when the package is separated from `physical-ai-framework` and used for offline development and testing.
+Non-live sources for replaying recorded data. Useful when the package is separated from `physicalai` and used for offline development and testing.
 
 **These are future work — not part of the initial implementation.**
 
@@ -762,7 +762,7 @@ record_thread = Thread(target=record_loop, args=(cam,))
 ### Basic
 
 ```python
-from physical_ai.capture import OpenCVCamera, RealSenseCamera
+from physicalai.capture import OpenCVCamera, RealSenseCamera
 
 # Single camera, context manager
 with OpenCVCamera(index=0, fps=30, width=640, height=480) as cam:
@@ -778,7 +778,7 @@ with RealSenseCamera(serial_number="12345678") as cam:
 ### Multi-Camera Setup
 
 ```python
-from physical_ai.capture import OpenCVCamera, RealSenseCamera
+from physicalai.capture import OpenCVCamera, RealSenseCamera
 
 cameras = {
     "wrist": OpenCVCamera(index=0, fps=30),
@@ -798,7 +798,7 @@ finally:
 ### Device Discovery
 
 ```python
-from physical_ai.capture import OpenCVCamera, RealSenseCamera, discover_all
+from physicalai.capture import OpenCVCamera, RealSenseCamera, discover_all
 
 # Discover specific type
 realsense_devices = RealSenseCamera.discover()
@@ -814,7 +814,7 @@ for driver, devices in all_devices.items():
 ### Config-Driven
 
 ```python
-from physical_ai.capture import create_camera, OpenCVCamera
+from physicalai.capture import create_camera, OpenCVCamera
 
 # From dict (e.g., loaded from YAML or database)
 config = {"index": 0, "fps": 30, "width": 640}
@@ -827,7 +827,7 @@ cam = create_camera("realsense", serial_number="12345678", fps=30)
 ### Robot Integration
 
 ```python
-from physical_ai.capture import RealSenseCamera
+from physicalai.capture import RealSenseCamera
 
 camera = RealSenseCamera(fps=30)
 robot = SO101.from_config("robot.yaml")
@@ -846,7 +846,7 @@ with robot, camera:
 ### Async (FastAPI)
 
 ```python
-from physical_ai.capture import OpenCVCamera
+from physicalai.capture import OpenCVCamera
 
 camera = OpenCVCamera(index=0, fps=30)
 camera.connect()
@@ -865,11 +865,11 @@ async def shutdown():
 
 ## Migration from FrameSource
 
-The application backend currently uses FrameSource in 6 files. Migration swaps FrameSource for `physical_ai.capture` in a single PR once feature parity is reached.
+The application backend currently uses FrameSource in 6 files. Migration swaps FrameSource for `physicalai.capture` in a single PR once feature parity is reached.
 
 ### Feature Parity Checklist
 
-| FrameSource API                               | physical_ai.capture Equivalent                      | Status                                   |
+| FrameSource API                               | physicalai.capture Equivalent                       | Status                                   |
 | --------------------------------------------- | --------------------------------------------------- | ---------------------------------------- |
 | `FrameSourceFactory.create(driver, **params)` | `OpenCVCamera(...)` or `create_camera(driver, ...)` | Direct replacement                       |
 | `.connect()`                                  | `.connect()`                                        | Same                                     |
@@ -892,7 +892,7 @@ source.connect()
 success, frame = source.read()
 source.disconnect()
 
-# After (physical_ai.capture)
+# After (physicalai.capture)
 camera = create_camera(driver, **params)
 camera.connect()
 frame = camera.read()  # frame.data for the image
@@ -910,7 +910,7 @@ frame = source.get_latest_frame()
 source.stop()
 source.disconnect()
 
-# After (physical_ai.capture)
+# After (physicalai.capture)
 camera = create_camera(driver, **params)
 camera.connect()
 frame = camera.read_latest()  # frame.data for the image
@@ -923,7 +923,7 @@ camera.disconnect()
 # Before (FrameSource)
 devices = FrameSourceFactory.discover_devices(driver)
 
-# After (physical_ai.capture)
+# After (physicalai.capture)
 devices = discover_all()
 # or: devices = RealSenseCamera.discover()
 ```
@@ -935,7 +935,7 @@ devices = discover_all()
 source = FrameSourceFactory.create(driver, **params)
 formats = source.get_supported_formats()
 
-# After (physical_ai.capture)
+# After (physicalai.capture)
 camera = BaslerCamera(serial_number="12345678")
 camera.connect()
 formats = camera.get_supported_formats()  # via FormatDiscoveryMixin
@@ -943,9 +943,9 @@ formats = camera.get_supported_formats()  # via FormatDiscoveryMixin
 
 ### Migration Plan
 
-1. **Build** `physical_ai.capture` in parallel — no changes to existing application code
+1. **Build** `physicalai.capture` in parallel — no changes to existing application code
 2. **Validate** feature parity against the checklist above
-3. **Swap** in a single PR: replace FrameSource imports with `physical_ai.capture` imports in all 6 backend files
+3. **Swap** in a single PR: replace FrameSource imports with `physicalai.capture` imports in all 6 backend files
 4. **Remove** FrameSource dependency from `application/backend/pyproject.toml`
 
 The application's existing retry logic (`CameraConnectionManager` with `tenacity`) stays in the application layer — error recovery is not the camera library's responsibility.
@@ -954,7 +954,7 @@ The application's existing retry logic (`CameraConnectionManager` with `tenacity
 
 ## Comparison with LeRobot
 
-| Aspect           | physical_ai.capture                                | LeRobot cameras                                   |
+| Aspect           | physicalai.capture                                 | LeRobot cameras                                   |
 | ---------------- | -------------------------------------------------- | ------------------------------------------------- |
 | Base class       | `Sensor` → `Camera`                                | `Camera` ABC                                      |
 | Read model       | 3-tier: `read()`, `read_latest()`, `async_read()`  | 3-tier: `read()`, `read_latest()`, `async_read()` |

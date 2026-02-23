@@ -1,6 +1,6 @@
 # Inference Core Design Document
 
-> **Scope note:** This document describes the design of the **domain‑agnostic inference core** — the layer that provides backend execution, metadata IO, and the base `InferenceModel`. In our proposed architecture, this layer lives **inside physical‑ai‑framework** as `physical_ai.inference`, not as a separate package. References to "inferencekit" in this document describe the module's design; the module path is `physical_ai.inference.*`. This layer can be silently extracted as a standalone package later if other domains (e.g., vision via model_api) need it independently.
+> **Scope note:** This document describes the design of the **domain‑agnostic inference core** — the layer that provides backend execution, metadata IO, and the base `InferenceModel`. In our proposed architecture, this layer lives **inside physicalai** as `physicalai.inference`, not as a separate package. References to "inferencekit" in this document describe the module's design; the module path is `physicalai.inference.*`. This layer can be silently extracted as a standalone package later if other domains (e.g., vision via model_api) need it independently.
 
 **Base inference framework providing unified model loading, prediction, and extensibility across backends and domains.**
 
@@ -84,7 +84,7 @@ inferencekit is the **foundation layer** in a layered architecture. Domain-speci
 │  │  (vision)        │  │  (physical‑AI)               │  │  (your domain)  │  │
 │  │                  │  │                              │  │                 │  │
 │  │  YOLO, SAM,      │  │  Policy plugins:             │  │  Your models,   │  │
-│  │  Anomaly, OTX,   │  │  getiaction, LeRobot,        │  │  your runners,  │  │
+│  │  Anomaly, OTX,   │  │  physicalai-train, LeRobot,  │  │  your runners,  │  │
 │  │  Ultralytics,    │  │  custom frameworks           │  │  publishable    │  │
 │  │  Roboflow        │  │                              │  │  on HuggingFace │  │
 │  └────────┬─────────┘  └────────┬─────────────────────┘  └───────┬─────────┘  │
@@ -416,7 +416,7 @@ class Preprocessor(ABC):
 
     Domain layers implement concrete preprocessors:
     - model_api: ImageResize, ImageNormalize, LayoutTransform
-    - getiaction: ObservationNormalizer, ActionUnnormalizer
+    - physicalai-train: ObservationNormalizer, ActionUnnormalizer
     """
 
     @abstractmethod
@@ -428,7 +428,7 @@ class Postprocessor(ABC):
 
     Domain layers implement concrete postprocessors:
     - model_api: NMS, BoxDecoder, MaskDecoder
-    - getiaction: ActionChunker, ActionClamp
+    - physicalai-train: ActionChunker, ActionClamp
     """
 
     @abstractmethod
@@ -484,7 +484,7 @@ All exported models use a unified `manifest.json` format. The manifest uses `cla
 
 The framework reads `manifest.json` and resolves the model configuration:
 
-1. **Built‑in models** (getiaction, LeRobot): `policy.kind` maps to a built‑in runner. No `class_path` needed for the runner — the `kind` field is sufficient.
+1. **Built‑in models** (physicalai-train, LeRobot): `policy.kind` maps to a built‑in runner. No `class_path` needed for the runner — the `kind` field is sufficient.
 2. **Custom/exotic models**: `runner.class_path` points to the user's runner class. The framework instantiates it dynamically.
 
 The `class_path` + `init_args` pattern allows domain layers to specify their own components in the manifest without inferencekit needing to know about them.
@@ -814,7 +814,7 @@ print(detections["boxes"], detections["scores"])
 
 ### Example 2: Physical‑AI Plugins
 
-physical‑ai‑framework hosts policy plugins for getiaction, LeRobot, and custom frameworks. Each plugin supplies preprocessors, runners, and optional wrappers.
+physicalai hosts policy plugins for physicalai-train, LeRobot, and custom frameworks. Each plugin supplies preprocessors, runners, and optional wrappers.
 
 ```python
 # physical‑ai‑framework plugin example (policy-specific)
@@ -1039,7 +1039,7 @@ adapter = registry.backends.get("onnx", device="cuda")
 
 ### Why a separate inference package?
 
-1. **Reusability**: Same core across vision (model_api), robotics (getiaction), audio, NLP, and custom domains
+1. **Reusability**: Same core across vision (model_api), robotics (physicalai-train), audio, NLP, and custom domains
 2. **Clear boundaries**: Generic concerns (backends, metadata, plugins) separated from domain concerns (images, robots, audio)
 3. **Easier testing**: Domain-agnostic package has fewer dependencies
 4. **Ecosystem growth**: Anyone can build and publish domain layers without modifying inferencekit
@@ -1090,7 +1090,7 @@ Instead of replacing model_api, inferencekit provides the **foundation** that mo
 ## Related Documents
 
 - **[Strategy](../strategy.md)** — Big-picture architecture and layering decisions
-- **[Deployment Engine](./deployment-shell.md)** — physical-ai-framework CLI and packaging
+- **[Deployment Engine](./deployment-shell.md)** — physicalai runtime CLI and packaging
 - **[LeRobot Integration](./lerobot.md)** — LeRobot integration for physical‑ai‑framework (built‑in, reads manifest.json)
 
 ---

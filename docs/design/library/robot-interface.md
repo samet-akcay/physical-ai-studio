@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-This document proposes adding a `Robot` interface to the physical‑ai‑framework library to enable programmatic robot control for inference and deployment. Today, robot interaction is only available through the Application backend. Users wanting to run trained policies on real robots must either run the full Application stack or build custom glue.
+This document proposes adding a `Robot` interface to the physicalai runtime to enable programmatic robot control for inference and deployment. Today, robot interaction is only available through the Application backend. Users wanting to run trained policies on real robots must either run the full Application stack or build custom glue.
 
 The proposed design:
 
@@ -12,7 +12,7 @@ The proposed design:
 - Wraps vendor SDKs with thin adapters (optional extras)
 - Shares the interface between Library and Application
 
-This enables a simple deployment workflow: `pip install physical-ai-framework[robots]`, then run inference on real robots with ~10 lines of Python.
+This enables a simple deployment workflow: `pip install physicalai[robots]`, then run inference on real robots with ~10 lines of Python.
 
 ---
 
@@ -20,16 +20,16 @@ This enables a simple deployment workflow: `pip install physical-ai-framework[ro
 
 ### Framework Landscape
 
-Physical‑ai‑framework provides the inference core, export pipeline, and runtime orchestration. What's missing: a library‑level robot hardware interface that can be used without the Application.
+physicalai provides the inference core, export pipeline, and runtime orchestration. What's missing: a library‑level robot hardware interface that can be used without the Application.
 
 ### Current Architecture
 
 The system has two packages:
 
-| Package                                           | Purpose                             | Target Users                                                  |
-| ------------------------------------------------- | ----------------------------------- | ------------------------------------------------------------- |
-| **Library** (`pip install physical-ai-framework`) | Inference, export, deployment       | ML researchers, robotics engineers                            |
-| **Application** (Studio)                          | Data collection, teleoperation, GUI | Subject matter experts such as Lab operators, non-programmers |
+| Package                                | Purpose                             | Target Users                                                  |
+| -------------------------------------- | ----------------------------------- | ------------------------------------------------------------- |
+| **Library** (`pip install physicalai`) | Inference, export, deployment       | ML researchers, robotics engineers                            |
+| **Application** (Studio)               | Data collection, teleoperation, GUI | Subject matter experts such as Lab operators, non-programmers |
 
 The library handles inference and deployment. The application handles human interaction. Robot control currently exists only in the Application, tightly coupled to its backend.
 
@@ -97,12 +97,12 @@ We design a `Robot` interface in the library, following the same patterns as our
 ### Target Workflow
 
 ```bash
-pip install physical-ai-framework[robots]
+pip install physicalai[robots]
 ```
 
 ```python
-from physical_ai.inference import InferenceModel
-from physical_ai.robots import SO101
+from physicalai.inference import InferenceModel
+from physicalai.robot import SO101
 
 policy = InferenceModel.load("./exports/act_policy")
 robot = SO101.from_config("robot.yaml")
@@ -307,7 +307,7 @@ class VendorRobot(Robot):
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from physical_ai.capture import Camera
+    from physicalai.capture import Camera
 
 class SO101(VendorRobot):
     """SO-101 robot with explicit parameters for IDE support."""
@@ -350,7 +350,7 @@ robot = SO101(
 )
 
 # Camera objects (native)
-from physical_ai.capture import OpenCVCamera, RealSenseCamera
+from physicalai.capture import OpenCVCamera, RealSenseCamera
 
 robot = SO101(
     cameras={
@@ -394,7 +394,7 @@ No vendored code—thin wrappers only.
 ### Pattern 1: Framework-Agnostic (Default)
 
 ```python
-from physical_ai.robots import SO101
+from physicalai.robot import SO101
 
 robot = SO101.from_config("robot.yaml")
 
@@ -408,8 +408,8 @@ with robot:
 ### Pattern 2: Framework Adapter (Optional)
 
 ```python
-from physical_ai.inference import InferenceModel
-from physical_ai.robots import SO101
+from physicalai.inference import InferenceModel
+from physicalai.robot import SO101
 
 policy = InferenceModel.load("./exports/act_policy")
 robot = SO101.from_config("robot.yaml")
@@ -425,7 +425,7 @@ with robot:
 ### Pattern 3: External Adapter (Optional)
 
 ```python
-from physical_ai.robots import SO101
+from physicalai.robot import SO101
 
 robot = SO101.from_config("robot.yaml")
 
@@ -452,8 +452,8 @@ Application imports the same interface:
 
 ```python
 # application/backend/src/workers/inference_worker.py
-from physical_ai.inference import InferenceModel
-from physical_ai.robots import Robot, SO101
+from physicalai.inference import InferenceModel
+from physicalai.robot import Robot, SO101
 
 class InferenceWorker:
     def __init__(self, robot: Robot, model_path: str):
@@ -501,14 +501,14 @@ robots = ["ur_rtde", "abb-librws", "frankx"]
 ```
 
 ```bash
-pip install physical-ai-framework   # Core (no robot support)
-pip install physical-ai-framework[ur]      # Universal Robots only
-pip install physical-ai-framework[robots]  # All robots
+pip install physicalai                    # Core (no robot support)
+pip install physicalai[ur]                # Universal Robots only
+pip install physicalai[robots]            # All robots
 ```
 
 ---
 
-## physical-ai-framework vs Application
+## physicalai vs Application
 
 | Component         | Library | Application |
 | ----------------- | :-----: | :---------: |

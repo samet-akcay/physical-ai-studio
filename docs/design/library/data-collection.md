@@ -6,7 +6,7 @@ High-level API for collecting robot demonstration data, with support for multipl
 
 ## Overview
 
-The Data Collection API provides a unified interface for recording robot episodes and saving them in standard formats. It is part of the **getiaction** library and integrates with the broader physical‑ai‑framework architecture.
+The Data Collection API provides a unified interface for recording robot episodes and saving them in standard formats. It is part of the **physicalai-train** library and integrates with the broader physicalai runtime architecture.
 
 **Key Features:**
 
@@ -21,8 +21,8 @@ The Data Collection API provides a unified interface for recording robot episode
 ## Quick Start
 
 ```python
-from getiaction.robots import SO101
-from getiaction.data import DatasetWriter
+from physicalai.robot import SO101
+from physicalai.data import DatasetWriter
 
 robot = SO101.from_config("robot.yaml")
 
@@ -162,7 +162,7 @@ writer.save_episode(
 ### Upload to Hub
 
 ```python
-from getiaction.data import DatasetWriter
+from physicalai.data import DatasetWriter
 
 writer = DatasetWriter(path="./dataset", format="lerobot")
 
@@ -181,7 +181,7 @@ writer.push_to_hub(
 ### Download from Hub
 
 ```python
-from getiaction.data import load_dataset
+from physicalai.data import load_dataset
 
 dataset = load_dataset("username/my-robot-dataset")
 ```
@@ -255,7 +255,7 @@ hub:
 ### Loading from Config
 
 ```python
-from getiaction.data import DatasetWriter
+from physicalai.data import DatasetWriter
 
 writer = DatasetWriter.from_config("data_collection.yaml")
 ```
@@ -265,8 +265,8 @@ writer = DatasetWriter.from_config("data_collection.yaml")
 ## Integration with Teleoperation
 
 ```python
-from getiaction.teleop import TeleopSession
-from getiaction.data import DatasetWriter
+from physicalai.teleop import TeleopSession
+from physicalai.data import DatasetWriter
 
 with TeleopSession(leader=leader, follower=follower) as session:
     with DatasetWriter(path="./dataset", format="lerobot") as writer:

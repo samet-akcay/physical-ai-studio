@@ -15,15 +15,15 @@ Architecture and design documents for Geti Action — an end-to-end platform for
 
 ## Library Components
 
-Components owned by the **library** (`pip install getiaction`) — the building blocks for end-to-end robot AI.
+Components owned by the **library** (`physicalai` + `physicalai-train`) — the building blocks for end-to-end robot AI.
 
-| Component        | Document                                            | Description                                                                                          |
-| ---------------- | --------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| Robot Interface  | [Robot Interface](./library/robot-interface.md)     | Robot ABC, leader/follower wrappers, SDK integration (LeRobot, UR, ABB)                              |
-| Camera Interface | [Camera Interface](./library/camera-interface.md)   | `physical_ai.capture` — dedicated camera classes, 3-tier reads, timestamped frames, depth/PTZ mixins |
-| Benchmarking     | [Benchmarking API](./library/benchmarking.md)       | NumPy-only benchmark protocols, runner, latency metrics; torch adapters in physicalai-train          |
-| Teleoperation    | [Teleoperation API](./library/teleoperation.md)     | Leader/follower semantics, session lifecycle, safety primitives                                      |
-| Data Collection  | [Data Collection API](./library/data-collection.md) | DatasetWriter, episode management, HF Hub upload                                                     |
+| Component        | Document                                            | Description                                                                                         |
+| ---------------- | --------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Robot Interface  | [Robot Interface](./library/robot-interface.md)     | Robot ABC, leader/follower wrappers, SDK integration (LeRobot, UR, ABB)                             |
+| Camera Interface | [Camera Interface](./library/camera-interface.md)   | `physicalai.capture` — dedicated camera classes, 3-tier reads, timestamped frames, depth/PTZ mixins |
+| Benchmarking     | [Benchmarking API](./library/benchmarking.md)       | NumPy-only benchmark protocols, runner, latency metrics; torch adapters in physicalai-train         |
+| Teleoperation    | [Teleoperation API](./library/teleoperation.md)     | Leader/follower semantics, session lifecycle, safety primitives                                     |
+| Data Collection  | [Data Collection API](./library/data-collection.md) | DatasetWriter, episode management, HF Hub upload                                                    |
 
 ## Deployment Stack
 
@@ -44,6 +44,39 @@ The inference and deployment architecture: **physical‑ai‑framework** (univer
 
 ---
 
+## Repository Ownership (Split Plan)
+
+The design set is split across two repos. Use this as the source of truth when copying docs into `physical-ai` and `physical-ai-studio`.
+
+**Physical-AI runtime repo (`physical-ai`):**
+
+| Document                                                           | Purpose                                         |
+| ------------------------------------------------------------------ | ----------------------------------------------- |
+| [Strategy](./strategy.md)                                          | Architecture principles, runtime/training split |
+| [Packaging Strategy](./deployment/physical-ai-two-repo-options.md) | Two-repo, two-distribution plan                 |
+| [Inference Core](./deployment/inferencekit.md)                     | Domain-agnostic inference core design           |
+| [Deployment Shell](./deployment/deployment-shell.md)               | Runtime engine + CLI                            |
+| [Robot Interface](./library/robot-interface.md)                    | Runtime robot API                               |
+| [Camera Interface](./library/camera-interface.md)                  | Runtime capture API                             |
+| [Benchmarking API](./library/benchmarking.md)                      | Runtime benchmark protocols + runner            |
+| [LeRobot Integration](./deployment/lerobot.md)                     | Runtime loader integration                      |
+
+**Studio repo (`physical-ai-studio` / `physicalai-train`):**
+
+| Document                                            | Purpose                        |
+| --------------------------------------------------- | ------------------------------ |
+| [Teleoperation API](./library/teleoperation.md)     | Training-side teleop workflows |
+| [Data Collection API](./library/data-collection.md) | Dataset recording and upload   |
+
+**Archive / legacy context:**
+
+| Document                                                                     | Purpose                               |
+| ---------------------------------------------------------------------------- | ------------------------------------- |
+| [Architecture Pitch](./architecture-pitch.md)                                | Historical proposal context           |
+| [Framework Presentation](./deployment/physical-ai-framework-presentation.md) | Legacy framing before packaging split |
+
+---
+
 ## Document Structure
 
 ```
@@ -61,7 +94,7 @@ docs/design/
 ├── deployment/                            # Deployment stack
 │   ├── physical-ai-two-repo-options.md    # Packaging strategy (two repos, PEP 420)
 │   ├── inferencekit.md                    # Inference core layer design
-│   ├── deployment-shell.md                # physical-ai-framework (CLI)
+│   ├── deployment-shell.md                # physicalai runtime (CLI)
 │   └── lerobot.md                         # LeRobot format loader integration
 │
 └── internal/

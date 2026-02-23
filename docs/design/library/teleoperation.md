@@ -6,7 +6,7 @@ High-level API for robot teleoperation, enabling leader/follower control pattern
 
 ## Overview
 
-The Teleoperation API provides a unified interface for controlling robots through leader/follower semantics. It is part of the **getiaction** library and integrates with the broader physical‑ai‑framework architecture.
+The Teleoperation API provides a unified interface for controlling robots through leader/follower semantics. It is part of the **physicalai-train** library and integrates with the broader physicalai runtime architecture.
 
 **Key Features:**
 
@@ -20,8 +20,8 @@ The Teleoperation API provides a unified interface for controlling robots throug
 ## Quick Start
 
 ```python
-from getiaction.robots import SO101
-from getiaction.teleop import TeleopSession
+from physicalai.robot import SO101
+from physicalai.teleop import TeleopSession
 
 # Configure leader/follower robots
 leader = SO101.from_config("leader.yaml")
@@ -149,8 +149,8 @@ with TeleopSession(leader=leader, follower=follower) as session:
 Teleoperation integrates seamlessly with the Data Collection API:
 
 ```python
-from getiaction.teleop import TeleopSession
-from getiaction.data import DatasetWriter
+from physicalai.teleop import TeleopSession
+from physicalai.data import DatasetWriter
 
 with TeleopSession(leader=leader, follower=follower) as session:
     with DatasetWriter(path="./dataset", format="lerobot") as writer:
@@ -188,7 +188,7 @@ session:
 ### Loading from Config
 
 ```python
-from getiaction.teleop import TeleopSession
+from physicalai.teleop import TeleopSession
 
 session = TeleopSession.from_config("teleop.yaml")
 with session:
