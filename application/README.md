@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="../docs/assets/banner_application.png" alt="Geti Action Application" width="100%">
+  <img src="../docs/assets/physical_ai_studio.png" alt="Physical AI Studio Application" width="100%">
 </p>
 
-# Geti Action Application
+# Physical AI Studio Application
 
 Studio application for collecting demonstration data and managing VLA model training.
 
@@ -10,7 +10,7 @@ The application provides a graphical interface to:
 
 - **Collect** demonstration data from robotic systems
 - **Manage** datasets and training configurations
-- **Train** policies using the Geti Action library
+- **Train** policies using the PhysicalAI library
 - **Deploy** trained models to production
 
 <!-- markdownlint-disable MD033 -->
@@ -25,6 +25,7 @@ The application provides a graphical interface to:
 | ------------------------- | ------------------------------------------------------------- | ------------------------------------- |
 | **[Backend](./backend/)** | FastAPI server for data management and training orchestration | [Backend README](./backend/README.md) |
 | **[UI](./ui/)**           | React web application                                         | [UI README](./ui/README.md)           |
+| **[Docker](./docker/)**   | All-in-one containerized deployment                           | [Docker README](./docker/readme.md)   |
 
 ## Quick Start
 
@@ -50,6 +51,19 @@ npm run start
 ```
 
 UI runs at http://localhost:3000
+
+### Docker (recommended)
+
+Run the full application (backend + UI) in a single container:
+
+```bash
+cd docker
+cp .env.example .env
+docker compose up
+```
+
+Application runs at http://localhost:7860. See the [Docker README](./docker/readme.md) for
+hardware configuration (Intel XPU, NVIDIA CUDA) and device setup.
 
 ## See Also
 
