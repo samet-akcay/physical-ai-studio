@@ -108,6 +108,7 @@ def mock_adapter():
     adapter.input_names = ["observation.state", "observation.image"]
     adapter.output_names = ["actions"]
     adapter.predict.return_value = {"actions": np.random.randn(1, 10, 2)}
+    adapter.default_device.return_value = "cpu"
     return adapter
 
 
@@ -302,6 +303,9 @@ class TestAutoDetection:
             expected_device = "CPU"
         else:
             expected_device = "cuda" if cuda_available else "cpu"
+
+        # Configure mock to return the expected device
+        mock_adapter.default_device.return_value = expected_device
 
         with patch("torch.cuda.is_available", return_value=cuda_available):
             with patch("physicalai.inference.model.get_adapter", return_value=mock_adapter):

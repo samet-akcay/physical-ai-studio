@@ -431,6 +431,7 @@ class InferenceModel:
         extension_map = {
             ".xml": "openvino",  # OpenVINO IR
             ".onnx": "onnx",  # ONNX
+            ".pte": "executorch",  # ExecuTorch
             ".pt2": "torch_export_ir",  # Torch Export IR (PyTorch 2.x)
             ".ptir": "torch_export_ir",  # Torch Export IR (alternative extension)
             ".ckpt": "torch",  # Torch
@@ -445,22 +446,14 @@ class InferenceModel:
         raise ValueError(msg)
 
     def _detect_device(self) -> str:
-        """Auto-detect best available device.
+        """Auto-detect best available device using adapter-native detection.
 
         Returns:
             Device name
         """
-        # For OpenVINO, prefer CPU as default (most compatible)
-        if self.backend == ExportBackend.OPENVINO:
-            return "CPU"
-
-        # For ONNX/Torch Export IR, check CUDA availability
-        import torch  # noqa: PLC0415
-
-        if torch.cuda.is_available():
-            return "cuda"
-
-        return "cpu"
+        # Create a lightweight adapter instance to query its preferred device
+        adapter = get_adapter(self.backend, device="cpu")
+        return adapter.default_device()
 
     def _get_model_path(self) -> Path:
         """Get path to model file based on backend.
@@ -473,6 +466,7 @@ class InferenceModel:
         """
         # Map backend to file extension(s)
         extension_map = {
+            ExportBackend.EXECUTORCH: [".pte"],
             ExportBackend.OPENVINO: [".xml"],
             ExportBackend.ONNX: [".onnx"],
             ExportBackend.TORCH_EXPORT_IR: [".pt2", ".ptir"],
