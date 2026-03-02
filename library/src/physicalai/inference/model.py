@@ -190,15 +190,23 @@ class InferenceModel:
         """
         self._action_queue.clear()
 
-    def _prepare_inputs(self, observation: dict[str, np.ndarray]) -> dict[str, np.ndarray]:  # noqa: PLR6301
-        """Validate and return observation dict for model input.
+    def _prepare_inputs(self, observation: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+        """Filter observation dict to only include adapter's expected input names.
+
+        This ensures that extra keys in the observation (e.g., metadata fields
+        like action, episode_index, task, etc.) are stripped before passing to
+        the adapter, which may error on unexpected keys.
 
         Args:
-            observation: Robot observation as a dict mapping input names to numpy arrays.
+            observation: Robot observation as a dict mapping names to numpy arrays.
 
         Returns:
-            The observation dict passed through unchanged.
+            Filtered observation dict containing only the adapter's expected inputs.
+            If adapter has no input names (e.g., not yet loaded), returns observation unchanged.
         """
+        expected = self.adapter.input_names
+        if expected:
+            return {k: v for k, v in observation.items() if k in expected}
         return observation
 
     @staticmethod

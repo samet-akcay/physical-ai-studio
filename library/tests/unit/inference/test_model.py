@@ -434,26 +434,74 @@ class TestSelectAction:
 
 
 class TestInputPreparation:
-    """Test observation-to-input conversion."""
+    """Test observation-to-input filtering."""
 
-    def test_prepare_inputs_numpy_passthrough(
+    def test_prepare_inputs_filters_to_adapter_input_names(
         self,
         mock_export_dir: Path,
         mock_adapter: MagicMock,
     ) -> None:
-        """Test _prepare_inputs returns dict unchanged (identity passthrough)."""
+        """Test _prepare_inputs filters observation to adapter's expected input names."""
+        mock_adapter.input_names = ["state", "images"]
         with patch("physicalai.inference.model.get_adapter", return_value=mock_adapter):
             model = InferenceModel(mock_export_dir)
 
             inputs = {
                 "state": np.random.randn(1, 4).astype(np.float32),
                 "images": np.random.randn(1, 3, 224, 224).astype(np.float32),
+                "action": np.random.randn(1, 2).astype(np.float32),
+                "episode_index": np.array([0]),
+                "task": np.array([1]),
+            }
+
+            result = model._prepare_inputs(inputs)
+
+            assert set(result.keys()) == {"state", "images"}
+            np.testing.assert_array_equal(result["state"], inputs["state"])
+            np.testing.assert_array_equal(result["images"], inputs["images"])
+            assert "action" not in result
+            assert "episode_index" not in result
+            assert "task" not in result
+
+    def test_prepare_inputs_passthrough_when_no_input_names(
+        self,
+        mock_export_dir: Path,
+        mock_adapter: MagicMock,
+    ) -> None:
+        """Test _prepare_inputs passes through when adapter has no input names."""
+        mock_adapter.input_names = []
+        with patch("physicalai.inference.model.get_adapter", return_value=mock_adapter):
+            model = InferenceModel(mock_export_dir)
+
+            inputs = {
+                "state": np.random.randn(1, 4).astype(np.float32),
+                "extra": np.random.randn(1, 2).astype(np.float32),
             }
 
             result = model._prepare_inputs(inputs)
 
             assert result is inputs
 
+    def test_prepare_inputs_only_matching_keys(
+        self,
+        mock_export_dir: Path,
+        mock_adapter: MagicMock,
+    ) -> None:
+        """Test _prepare_inputs returns only keys that exist in both observation and input_names."""
+        mock_adapter.input_names = ["state", "images", "extra_input"]
+        with patch("physicalai.inference.model.get_adapter", return_value=mock_adapter):
+            model = InferenceModel(mock_export_dir)
+
+            inputs = {
+                "state": np.random.randn(1, 4).astype(np.float32),
+                "unrelated": np.random.randn(1, 2).astype(np.float32),
+            }
+
+            result = model._prepare_inputs(inputs)
+
+            # Only 'state' is in both observation and input_names
+            assert set(result.keys()) == {"state"}
+            assert "unrelated" not in result
 
 class TestActionOutputKey:
     """Test action output key detection."""
