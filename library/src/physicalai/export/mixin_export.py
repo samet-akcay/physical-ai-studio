@@ -125,7 +125,7 @@ class Export:
         checkpoint = {}
         checkpoint["state_dict"] = self.state_dict() if hasattr(self, "state_dict") else {}
 
-        if hasattr(self.model, "config"):
+        if hasattr(self, "model_config_type") and hasattr(self.model, "config"):
             config_dict = self.model.config.to_dict()
             checkpoint[CONFIG_KEY] = config_dict
         elif hasattr(self, "hparams"):
@@ -394,6 +394,15 @@ class Export:
         ]
 
         return next(iter(positional_args))
+
+    @property
+    def supported_export_backends(self) -> list[str | ExportBackend]:
+        """Get a list of export backends supported by policy.
+
+        Returns:
+            list[str | ExportBackend]: A list of supported export backends.
+        """
+        return [ExportBackend.TORCH]
 
 
 def _postprocess_openvino_model(ov_model: openvino.Model, output_names: list[str] | None) -> None:

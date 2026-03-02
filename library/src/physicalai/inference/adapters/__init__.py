@@ -91,4 +91,4 @@ def get_adapter(backend: ExportBackend | str, **kwargs: Any) -> RuntimeAdapter: 
         msg = f"No adapter available for backend: {backend}"
         raise ValueError(msg)
 
-    return adapter_map[backend]()
+    return adapter_map[backend](**kwargs)
