@@ -48,7 +48,7 @@ def __getattr__(name: str) -> Any:  # noqa: ANN401
     raise AttributeError(msg)
 
 
-def get_adapter(backend: ExportBackend | str, **kwargs: Any) -> RuntimeAdapter:  # noqa: ARG001, ANN401
+def get_adapter(backend: ExportBackend | str, **kwargs: Any) -> RuntimeAdapter:  # noqa: ANN401
     """Get the appropriate adapter for a given backend.
 
     Args:
