@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, Mock, patch
 import numpy as np
 import pytest
 import torch
+
 from physicalai.data.observation import Observation
 from physicalai.export.mixin_export import ExportBackend
 from physicalai.inference.adapters import (
@@ -386,4 +387,3 @@ class TestDefaultDevice:
         adapter = OpenVINOAdapter()
         result = adapter.default_device()
         assert isinstance(result, str)
-

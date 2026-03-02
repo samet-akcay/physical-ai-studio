@@ -79,7 +79,6 @@ def get_adapter(backend: ExportBackend | str, **kwargs: Any) -> RuntimeAdapter: 
         ExportBackend.ONNX: ONNXAdapter,
     }
 
-
     # Lazy-import torch adapters only when needed
     if backend in {ExportBackend.TORCH, ExportBackend.TORCH_EXPORT_IR}:
         from physicalai.inference.adapters.torch import TorchAdapter  # noqa: PLC0415

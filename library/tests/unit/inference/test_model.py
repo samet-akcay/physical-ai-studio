@@ -9,9 +9,10 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 import torch
+
 from physicalai.export.mixin_export import ExportBackend
-from physicalai.inference.model import InferenceModel
 from physicalai.inference.adapters import RuntimeAdapter
+from physicalai.inference.model import InferenceModel
 
 
 class TestAdapter(RuntimeAdapter):
@@ -26,7 +27,6 @@ class TestAdapter(RuntimeAdapter):
 
     def predict(self, inputs: dict[str, np.ndarray]):
         pass
-
 
     @property
     def input_names(self) -> list[str]:
@@ -431,6 +431,7 @@ class TestSelectAction:
             assert isinstance(action, np.ndarray)
             assert action.shape == (1, 2)  # (batch, action_dim)
             mock_adapter.predict.assert_called_once()
+
 
 class TestInputPreparation:
     """Test observation-to-input conversion."""
