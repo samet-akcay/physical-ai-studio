@@ -29,8 +29,14 @@ class TorchExportAdapter(RuntimeAdapter):
         >>> outputs = adapter.predict({"image": image_array, "state": state_array})
     """
 
-    def __init__(self) -> None:
-        """Initialize the Torch Export adapter."""
+    def __init__(self, device: str = "cpu", **kwargs) -> None:  # noqa: ANN003
+        """Initialize the Torch Export adapter.
+
+        Args:
+            device: Device for inference (currently unused, export IR runs on CPU).
+            **kwargs: Additional configuration options.
+        """
+        super().__init__(device, **kwargs)
         self._program = None
         self._module = None
         self._input_names: list[str] = []
