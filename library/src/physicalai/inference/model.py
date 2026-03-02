@@ -10,6 +10,7 @@ from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
 import yaml
 
 from physicalai.data.constants import ACTION, IMAGES, STATE
@@ -17,7 +18,6 @@ from physicalai.export.backends import ExportBackend
 from physicalai.inference.adapters import get_adapter
 
 if TYPE_CHECKING:
-    import numpy as np
     import torch
 
     from physicalai.data import Observation
@@ -98,7 +98,7 @@ class InferenceModel:
         self.adapter.load(model_path)
 
         # State management for stateful policies
-        self._action_queue: deque[torch.Tensor] = deque()
+        self._action_queue: deque[np.ndarray] = deque()
         self.use_action_queue = self.metadata.get("use_action_queue", False)
         self.chunk_size = self.metadata.get("chunk_size", 1)
 
@@ -126,7 +126,7 @@ class InferenceModel:
         """
         return cls(export_dir=export_dir, **kwargs)
 
-    def select_action(self, observation: Observation) -> torch.Tensor:
+    def select_action(self, observation: Observation | dict[str, np.ndarray]) -> np.ndarray:
         """Select action for given observation.
 
         Matches PyTorch policy API for seamless transition from
@@ -136,10 +136,11 @@ class InferenceModel:
         automatically and returns one action at a time.
 
         Args:
-            observation: Robot observation (images, states, etc.)
+            observation: Robot observation (images, states, etc.). Can be an Observation
+                instance or a dict of numpy arrays.
 
         Returns:
-            Action tensor to execute. Shape: (batch_size, action_dim)
+            Action array to execute. Shape: (batch_size, action_dim)
                 or (action_dim,) for single observation
 
         Examples:
@@ -149,7 +150,7 @@ class InferenceModel:
         """
         # For chunked policies, use action queue
         if self.use_action_queue and len(self._action_queue) > 0:
-            return self._action_queue.popleft()
+            return self._backward_compat_wrap(observation, self._action_queue.popleft())
 
         # Convert observation to model inputs
         inputs = self._prepare_inputs(observation)
@@ -159,25 +160,23 @@ class InferenceModel:
 
         # Extract actions from outputs
         action_key = self._get_action_output_key(outputs)
-        import torch  # noqa: PLC0415
-
-        actions = torch.from_numpy(outputs[action_key])
+        actions: np.ndarray = outputs[action_key]
 
         # Manage action queue for chunked policies
         if self.use_action_queue and self.chunk_size > 1:
             # actions shape: (batch, chunk_size, action_dim)
             # Queue shape: (chunk_size, batch, action_dim)
-            batch_actions = actions.transpose(0, 1)
+            batch_actions = np.transpose(actions, (1, 0, 2))
             self._action_queue.extend(batch_actions)
-            return self._action_queue.popleft()
+            return self._backward_compat_wrap(observation, self._action_queue.popleft())
 
         # For non-chunked policies, return directly
         # Remove temporal dimension if present: (batch, 1, action_dim) -> (batch, action_dim)
         temporal_dim = 3
-        if actions.dim() == temporal_dim and actions.shape[1] == 1:
-            actions = actions.squeeze(1)
+        if actions.ndim == temporal_dim and actions.shape[1] == 1:
+            actions = np.squeeze(actions, axis=1)
 
-        return actions
+        return self._backward_compat_wrap(observation, actions)
 
     def reset(self) -> None:
         """Reset policy state for new episode.
@@ -196,7 +195,21 @@ class InferenceModel:
         """
         self._action_queue.clear()
 
-    def _prepare_inputs(self, observation: Observation) -> dict[str, np.ndarray | Observation]:
+    def _backward_compat_wrap(
+        self, observation: Observation | dict[str, np.ndarray], actions: np.ndarray
+    ) -> np.ndarray:
+        """Wrap numpy actions as torch.Tensor for backward compat when caller passes Observation.
+
+        Studio callers that pass an Observation instance expect torch.Tensor back.
+        Future callers passing dict[str, np.ndarray] get np.ndarray.
+        """
+        if not isinstance(observation, dict):
+            import torch  # noqa: PLC0415
+
+            return torch.from_numpy(actions)
+        return actions
+
+    def _prepare_inputs(self, observation: Observation | dict[str, np.ndarray]) -> dict[str, np.ndarray]:
         """Convert observation to model input format.
 
         Handles both first-party (state, images) and LeRobot (observation.*, action)
@@ -213,7 +226,8 @@ class InferenceModel:
         Raises:
             ValueError: If required model inputs are missing from observation
         """
-        import numpy as np  # noqa: PLC0415
+        if isinstance(observation, dict):
+            return observation
 
         # Convert observation to numpy arrays using unified .to() API
         obs_numpy = observation.to_numpy()
