@@ -100,6 +100,7 @@ class OpenVINOAdapter(RuntimeAdapter):
             'CPU'
         """
         return "CPU"
+
     @property
     def input_names(self) -> list[str]:
         """Get input tensor names.

@@ -18,8 +18,6 @@ from physicalai.export.backends import ExportBackend
 from physicalai.inference.adapters import get_adapter
 
 if TYPE_CHECKING:
-    import torch
-
     from physicalai.data import Observation
     from physicalai.inference.adapters.base import RuntimeAdapter
 
@@ -196,7 +194,7 @@ class InferenceModel:
         self._action_queue.clear()
 
     def _backward_compat_wrap(
-        self, observation: Observation | dict[str, np.ndarray], actions: np.ndarray
+        self, observation: Observation | dict[str, np.ndarray], actions: np.ndarray,
     ) -> np.ndarray:
         """Wrap numpy actions as torch.Tensor for backward compat when caller passes Observation.
 
