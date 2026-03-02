@@ -1,2 +1,0 @@
-434:            ".pte": "executorch",  # ExecuTorch
-469:            ExportBackend.EXECUTORCH: [".pte"],

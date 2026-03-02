@@ -1,3 +1,0 @@
-PASS: model.py has no runtime torch imports (torch only in TYPE_CHECKING and lazy imports)
-torch in sys.modules (transitive via physicalai.data): True
-PASS: model.py itself is decoupled from torch runtime
