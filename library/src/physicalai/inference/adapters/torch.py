@@ -6,9 +6,8 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import numpy as np
 import torch
 import yaml
 
@@ -17,15 +16,15 @@ from physicalai.policies import get_physicalai_policy_class as get_policy_class
 
 from .base import RuntimeAdapter
 
+if TYPE_CHECKING:
+    import numpy as np
+
 
 class TorchAdapter(RuntimeAdapter):
     """Runtime adapter for Torch models.
 
-    This adapter loads and runs models exported via ``to_torch()``
-    using PyTorch's API.  It accepts the same ``dict[str, np.ndarray]``
-    input contract as every other adapter.  Internally it converts
-    numpy arrays to torch tensors, wraps them in an ``Observation``
-    dataclass and forwards them to the policy.
+    This adapter loads and runs models exported via `to_torch()`
+    using PyTorch's API.
 
     Example:
         >>> adapter = TorchAdapter()
@@ -91,12 +90,6 @@ class TorchAdapter(RuntimeAdapter):
 
     def predict(self, inputs: dict[str, Any]) -> dict[str, np.ndarray]:
         """Run inference using Torch.
-
-        Accepts ``dict[str, np.ndarray]`` (same contract as all other
-        adapters).  Values may be plain numpy arrays *or* dicts of numpy
-        arrays (e.g. multi-camera images).  The method converts them to
-        torch tensors, wraps them in an :class:`Observation` and passes
-        the result to the loaded policy.
 
         Args:
             inputs: Dictionary mapping input names to numpy arrays
