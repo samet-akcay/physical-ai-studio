@@ -309,14 +309,15 @@ class InferenceModel:
         msg = f"Cannot detect backend from files in {self.export_dir}"
         raise ValueError(msg)
 
-    @staticmethod
-    def _detect_device() -> str:
-        """Auto-detect best available device.
+    def _detect_device(self) -> str:
+        """Auto-detect best available device using adapter-native detection.
 
         Returns:
             Device name
         """
-        return "cpu"
+        # Create a lightweight adapter instance to query its preferred device
+        adapter = get_adapter(self.backend, device="cpu")
+        return adapter.default_device()
 
     def _get_model_path(self) -> Path:
         """Get path to model file based on backend.

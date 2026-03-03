@@ -400,3 +400,38 @@ class TestRuntimeAdapter:
             RuntimeAdapter()  # type: ignore[abstract]
 
 
+class TestDefaultDevice:
+    """Test default_device() method for all adapters."""
+
+    def test_runtime_adapter_default_device(self) -> None:
+        """Test RuntimeAdapter base class default_device returns 'cpu'."""
+
+        class ConcreteAdapter(RuntimeAdapter):
+            def load(self, model_path: Path) -> None:
+                pass
+
+            def predict(self, inputs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+                return {"output": np.array([1.0])}
+
+            @property
+            def input_names(self) -> list[str]:
+                return ["input"]
+
+            @property
+            def output_names(self) -> list[str]:
+                return ["output"]
+
+        adapter = ConcreteAdapter()
+        assert adapter.default_device() == "cpu"
+
+    def test_onnx_adapter_default_device(self) -> None:
+        """Test ONNXAdapter default_device returns a string."""
+        adapter = ONNXAdapter()
+        result = adapter.default_device()
+        assert isinstance(result, str)
+
+    def test_openvino_adapter_default_device(self) -> None:
+        """Test OpenVINOAdapter default_device returns 'CPU'."""
+        adapter = OpenVINOAdapter()
+        assert adapter.default_device() == "CPU"
+

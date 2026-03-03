@@ -109,6 +109,22 @@ class ONNXAdapter(RuntimeAdapter):
 
         return ["CPUExecutionProvider"]
 
+    def default_device(self) -> str:
+        """Get default ONNX Runtime provider based on available hardware.
+
+        Returns:
+            'cuda' if CUDAExecutionProvider is available, else 'cpu'
+        """
+        try:
+            import onnxruntime as ort  # noqa: PLC0415
+        except ImportError:
+            return "cpu"
+
+        available = ort.get_available_providers()
+        if "CUDAExecutionProvider" in available:
+            return "cuda"
+        return "cpu"
+
     @property
     def input_names(self) -> list[str]:
         """Get input tensor names.

@@ -273,18 +273,40 @@ class TestAutoDetection:
         with patch("physicalai.inference.model.get_adapter", return_value=mock_adapter):
             assert InferenceModel(export_dir).backend == expected_backend
 
-    def test_device_detection_defaults_to_cpu(
+    @pytest.mark.parametrize("cuda_available", [True, False])
+    @pytest.mark.parametrize(
+        ("backend_file", "backend_type"),
+        [
+            ("model.xml", "openvino"),
+            ("model.onnx", "onnx"),
+            ("model.pt2", "torch_export_ir"),
+        ],
+    )
+    def test_device_detection(
         self,
         tmp_path: Path,
         mock_adapter: MagicMock,
+        backend_file: str,
+        backend_type: str,
+        cuda_available: bool,
     ) -> None:
-        """Test that device='auto' defaults to 'cpu'."""
+        """Test device detection based on backend and CUDA availability."""
         export_dir = tmp_path / "exports"
         export_dir.mkdir()
-        (export_dir / "model.onnx").touch()
+        (export_dir / backend_file).touch()
 
-        with patch("physicalai.inference.model.get_adapter", return_value=mock_adapter):
-            assert InferenceModel(export_dir, device="auto").device == "cpu"
+        # OpenVINO always uses CPU, others use cuda/cpu based on availability
+        if backend_type == "openvino":
+            expected_device = "CPU"
+        else:
+            expected_device = "cuda" if cuda_available else "cpu"
+
+        # Configure mock to return the expected device
+        mock_adapter.default_device.return_value = expected_device
+
+        with patch("torch.cuda.is_available", return_value=cuda_available):
+            with patch("physicalai.inference.model.get_adapter", return_value=mock_adapter):
+                assert InferenceModel(export_dir, device="auto").device == expected_device
 
     def test_device_setting(
         self,
