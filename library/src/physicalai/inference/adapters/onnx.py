@@ -110,19 +110,11 @@ class ONNXAdapter(RuntimeAdapter):
         return ["CPUExecutionProvider"]
 
     def default_device(self) -> str:  # noqa: PLR6301
-        """Get default ONNX Runtime provider based on available hardware.
+        """Get default ONNX Runtime device.
 
         Returns:
-            'cuda' if CUDAExecutionProvider is available, else 'cpu'
+            'cpu' (consistent with other adapters' default behavior)
         """
-        try:
-            import onnxruntime as ort  # noqa: PLC0415
-        except ImportError:
-            return "cpu"
-
-        available = ort.get_available_providers()
-        if "CUDAExecutionProvider" in available:
-            return "cuda"
         return "cpu"
 
     @property
