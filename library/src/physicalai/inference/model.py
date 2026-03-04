@@ -206,23 +206,14 @@ class InferenceModel:
         """
         expected = self.adapter.input_names
 
-        # Some pipelines provide nested observations under "observation"
-        # (e.g. from dataclass serialization with flatten=False). Promote nested
-        # keys so adapters expecting top-level keys like "state" / "images"
-        # can still receive them.
-        input_source: dict[str, np.ndarray] = observation
-        nested_observation = observation.get("observation")
-        if isinstance(nested_observation, dict):
-            input_source = {**nested_observation, **observation}
-
         # Torch adapter consumes Observation payloads and is tolerant to extra
         # keys. Do not over-filter for torch exports.
         if self.backend == ExportBackend.TORCH:
-            return input_source
+            return observation
 
         if expected:
             filtered: dict[str, np.ndarray] = {}
-            for key, value in input_source.items():
+            for key, value in observation.items():
                 if key in expected:
                     filtered[key] = value
                     continue
