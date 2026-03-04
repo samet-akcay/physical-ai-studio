@@ -78,11 +78,26 @@ class TorchAdapter(RuntimeAdapter):
 
             self._policy = policy_class.load_from_checkpoint(model_path, map_location="cpu").to(self.device).eval()
 
-            # Derive granular input names from the policy's sample_input.
-            # sample_input returns e.g. {"state": tensor, "images": tensor}
-            # which are the real observation keys the model consumes.
-            self._input_names = list(self._policy.model.sample_input.keys())
-            self._output_names = self._policy.model.extra_export_args["torch"]["output_names"]
+            policy_model: Any = self._policy.model
+            torch_export_args = policy_model.extra_export_args["torch"]
+            self._output_names = list(torch_export_args["output_names"])
+
+            sample_input = getattr(policy_model, "sample_input", None)
+            if isinstance(sample_input, dict):
+                # Normalize to top-level observation keys.
+                # e.g. "images.top" -> "images".
+                top_level_keys: list[str] = []
+                for key in sample_input:
+                    base_key = key.split(".", maxsplit=1)[0]
+                    if base_key not in top_level_keys:
+                        top_level_keys.append(base_key)
+                self._input_names = top_level_keys
+            else:
+                # Fallback for policies that do not expose sample_input.
+                # "observation" indicates wrapped policy input; keep passthrough
+                # behavior so InferenceModel does not strip useful keys.
+                input_names = torch_export_args.get("input_names", [])
+                self._input_names = [] if input_names == ["observation"] else list(input_names)
 
         except Exception as e:
             msg = f"Failed to load Torch model from {model_path}: {e}"

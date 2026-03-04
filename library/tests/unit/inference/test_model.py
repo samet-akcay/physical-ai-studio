@@ -503,6 +503,73 @@ class TestInputPreparation:
             assert set(result.keys()) == {"state"}
             assert "unrelated" not in result
 
+    @pytest.mark.parametrize("input_mode", ["dotted_children", "nested_observation"])
+    def test_prepare_inputs_nested_payload_handling(
+        self,
+        mock_export_dir: Path,
+        mock_adapter: MagicMock,
+        input_mode: str,
+    ) -> None:
+        """Test nested key handling for dotted inputs and nested observation payloads."""
+        with patch("physicalai.inference.model.get_adapter", return_value=mock_adapter):
+            model = InferenceModel(mock_export_dir)
+
+            if input_mode == "dotted_children":
+                mock_adapter.input_names = ["state", "images.top"]
+                inputs = {
+                    "state": np.random.randn(1, 4).astype(np.float32),
+                    "images": {
+                        "top": np.random.randn(1, 3, 224, 224).astype(np.float32),
+                    },
+                    "action": np.random.randn(1, 2).astype(np.float32),
+                }
+                result = model._prepare_inputs(inputs)
+                assert set(result.keys()) == {"state", "images"}
+                assert "action" not in result
+                return
+
+            mock_adapter.input_names = ["state", "images", "task"]
+            nested_state = np.random.randn(1, 4).astype(np.float32)
+            nested_images = {"top": np.random.randn(1, 3, 224, 224).astype(np.float32)}
+            nested_task = ["pick and place"]
+            inputs = {
+                "observation": {
+                    "state": nested_state,
+                    "images": nested_images,
+                    "task": nested_task,
+                },
+                "episode_index": np.array([0]),
+            }
+
+            result = model._prepare_inputs(inputs)
+            assert set(result.keys()) == {"state", "images", "task"}
+            np.testing.assert_array_equal(result["state"], nested_state)
+            assert result["images"] == nested_images
+            assert result["task"] == nested_task
+
+    def test_prepare_inputs_torch_backend_returns_full_payload(
+        self,
+        mock_export_dir: Path,
+        mock_adapter: MagicMock,
+    ) -> None:
+        """Test torch backend keeps full observation payload (no strict filtering)."""
+        mock_adapter.input_names = ["state", "images"]
+        with patch("physicalai.inference.model.get_adapter", return_value=mock_adapter):
+            (mock_export_dir / "act.pt").touch()
+            model = InferenceModel(mock_export_dir, backend="torch")
+
+            inputs = {
+                "state": np.random.randn(1, 4).astype(np.float32),
+                "images": {"top": np.random.randn(1, 3, 224, 224).astype(np.float32)},
+                "task": ["pick and place"],
+                "extra": {"next.done": np.array([False])},
+            }
+
+            result = model._prepare_inputs(inputs)
+
+            assert result == inputs
+
+
 class TestActionOutputKey:
     """Test action output key detection."""
 

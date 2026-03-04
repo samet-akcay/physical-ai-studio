@@ -173,7 +173,6 @@ class TestTorchAdapter:
         mock_model.return_value = torch.tensor([[1.0, 2.0]])
         mock_model.eval.return_value = mock_model
         mock_model.to.return_value = mock_model
-        # Granular input names from sample_input (not ["observation"])
         mock_model.model.sample_input = {"state": torch.tensor([[0.0]]), "images": torch.randn(1, 3, 96, 96)}
         mock_model.model.extra_export_args = {"torch": {"output_names": ["action"], "input_names": ["observation"]}}
 
@@ -183,7 +182,7 @@ class TestTorchAdapter:
             assert "cpu" in repr(adapter)
 
             adapter.load(model_path)
-            # input_names should reflect sample_input keys, not extra_export_args
+            # input_names should reflect sample_input top-level keys.
             assert adapter.input_names == ["state", "images"]
             assert adapter.output_names == ["action"]
 
@@ -226,6 +225,31 @@ class TestTorchAdapter:
             })
             assert "action" in outputs
             assert isinstance(outputs["action"], np.ndarray)
+
+    def test_load_falls_back_to_export_input_names_when_sample_input_missing(self, tmp_path: Path) -> None:
+        """Test fallback input name behavior when model has no sample_input."""
+        model_path = tmp_path / "model.pt"
+        metadata_path = tmp_path / "metadata.yaml"
+        model_path.touch()
+
+        with metadata_path.open("w") as f:
+            f.write("policy_class: physicalai.policies.act.ACT\n")
+
+        mock_model = MagicMock()
+        mock_model.return_value = torch.tensor([[0.1, 0.2]])
+        mock_model.eval.return_value = mock_model
+        mock_model.to.return_value = mock_model
+        if hasattr(mock_model.model, "sample_input"):
+            del mock_model.model.sample_input
+        mock_model.model.extra_export_args = {"torch": {"output_names": ["action"], "input_names": ["observation"]}}
+
+        with patch("physicalai.policies.act.ACT.load_from_checkpoint", return_value=mock_model):
+            adapter = TorchAdapter(device="cpu")
+            adapter.load(model_path)
+
+            # ["observation"] indicates wrapped input; adapter should avoid over-filtering.
+            assert adapter.input_names == []
+            assert adapter.output_names == ["action"]
 
     def test_observation_from_numpy_inputs(self) -> None:
         """Test that numpy dict inputs are correctly converted to an Observation with torch tensors."""
@@ -281,6 +305,7 @@ class TestTorchAdapter:
 
         assert adapter.input_names == []
         assert adapter.output_names == []
+
 
 class TestTorchExportAdapter:
     """Test Torch Export IR adapter."""
@@ -434,4 +459,3 @@ class TestDefaultDevice:
         """Test OpenVINOAdapter default_device returns 'CPU'."""
         adapter = OpenVINOAdapter()
         assert adapter.default_device() == "CPU"
-
