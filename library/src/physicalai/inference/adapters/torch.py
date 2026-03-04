@@ -81,23 +81,10 @@ class TorchAdapter(RuntimeAdapter):
             policy_model: Any = self._policy.model
             torch_export_args = policy_model.extra_export_args["torch"]
             self._output_names = list(torch_export_args["output_names"])
-
-            sample_input = getattr(policy_model, "sample_input", None)
-            if isinstance(sample_input, dict):
-                # Normalize to top-level observation keys.
-                # e.g. "images.top" -> "images".
-                top_level_keys: list[str] = []
-                for key in sample_input:
-                    base_key = key.split(".", maxsplit=1)[0]
-                    if base_key not in top_level_keys:
-                        top_level_keys.append(base_key)
-                self._input_names = top_level_keys
-            else:
-                # Fallback for policies that do not expose sample_input.
-                # "observation" indicates wrapped policy input; keep passthrough
-                # behavior so InferenceModel does not strip useful keys.
-                input_names = torch_export_args.get("input_names", [])
-                self._input_names = [] if input_names == ["observation"] else list(input_names)
+            # Torch policies consume structured Observation payloads via
+            # Observation.from_dict(...) in predict(). Keep input_names empty
+            # so InferenceModel does not attempt adapter-level key filtering.
+            self._input_names = []
 
         except Exception as e:
             msg = f"Failed to load Torch model from {model_path}: {e}"

@@ -185,8 +185,9 @@ class TestTorchAdapter:
             assert "cpu" in repr(adapter)
 
             adapter.load(model_path)
-            # input_names should reflect sample_input top-level keys.
-            assert adapter.input_names == ["state", "images"]
+            # Torch adapter intentionally keeps input_names empty and parses
+            # structured payloads in predict() via Observation.from_dict(...).
+            assert adapter.input_names == []
             assert adapter.output_names == ["action"]
 
             # Predict with dict[str, np.ndarray] — same contract as all adapters
@@ -224,8 +225,8 @@ class TestTorchAdapter:
             assert "action" in outputs
             assert isinstance(outputs["action"], np.ndarray)
 
-    def test_load_falls_back_to_export_input_names_when_sample_input_missing(self, tmp_path: Path) -> None:
-        """Test fallback input name behavior when model has no sample_input."""
+    def test_load_with_missing_sample_input_keeps_empty_input_names(self, tmp_path: Path) -> None:
+        """Test missing sample_input still keeps empty input_names for torch adapter."""
         model_path = self._write_policy_metadata(tmp_path)
 
         mock_model = MagicMock()
@@ -240,7 +241,6 @@ class TestTorchAdapter:
             adapter = TorchAdapter(device="cpu")
             adapter.load(model_path)
 
-            # ["observation"] indicates wrapped input; adapter should avoid over-filtering.
             assert adapter.input_names == []
             assert adapter.output_names == ["action"]
 
