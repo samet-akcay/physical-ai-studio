@@ -323,7 +323,7 @@ class Export:
         output_path: PathLike | str,
         input_sample: dict[str, torch.Tensor] | None = None,
         *,
-        delegate: str | None = "openvino",
+        delegate: str | None = None,
         delegate_config: dict[str, Any] | None = None,
         **export_kwargs: Any,
     ) -> Path:
@@ -334,8 +334,9 @@ class Export:
                 If directory, creates ``{policy_name}.pte``. If file, uses as-is.
             input_sample: A sample input tensor dictionary used to trace/export the model.
                 If ``None``, attempts to use the model's ``sample_input`` property.
-            delegate: ExecuTorch delegate backend to use. Supported values are
-                ``"openvino"`` for OpenVINO delegation and ``None`` to disable delegation.
+            delegate: ExecuTorch delegate backend to use. Defaults to ``None``
+                (portable mode, no delegation). Supported values are ``"openvino"``
+                for OpenVINO delegation (requires ``nncf``) and ``None`` for portable mode.
             delegate_config: Optional delegate-specific configuration. For ``"openvino"``,
                 supports ``{"device": "CPU"}`` (or other supported target device).
             **export_kwargs: Additional keyword arguments passed to ``torch.export.export``.
