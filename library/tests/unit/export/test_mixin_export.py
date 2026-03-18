@@ -620,7 +620,7 @@ class TestToExecutorch:
         with patch.dict("sys.modules", mocks["modules"]), patch("torch.export.export") as mock_torch_export:
             mock_torch_export.return_value = MagicMock()
 
-            wrapper.to_executorch(tmp_path / "model.pte", delegate_config={"device": "GPU"})
+            wrapper.to_executorch(tmp_path / "model.pte", delegate="openvino", delegate_config={"device": "GPU"})
 
             # Assert CompileSpec was called with ("device", b"GPU")
             mock_compile_spec.assert_called_once_with("device", b"GPU")
