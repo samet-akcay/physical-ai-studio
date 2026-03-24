@@ -144,6 +144,75 @@ def sample_observation() -> dict[str, np.ndarray]:
     }
 
 
+@pytest.fixture
+def mock_export_dir_manifest(tmp_path: Path) -> Path:
+    """Export dir with manifest.json (new format) instead of metadata.yaml."""
+    import json
+
+    export_dir = tmp_path / "exports_manifest"
+    export_dir.mkdir()
+
+    manifest = {
+        "format": "policy_package",
+        "version": "1.0",
+        "policy": {
+            "name": "act",
+            "kind": "action_chunking",
+            "class_path": "physicalai.policies.act.ACT",
+        },
+        "artifacts": {"openvino": "act.xml"},
+        "runner": {
+            "class_path": "physicalai.inference.runners.ActionChunking",
+            "init_args": {
+                "runner": {
+                    "class_path": "physicalai.inference.runners.SinglePass",
+                    "init_args": {},
+                },
+                "chunk_size": 10,
+            },
+        },
+    }
+
+    with (export_dir / "manifest.json").open("w") as f:
+        json.dump(manifest, f)
+
+    (export_dir / "act.xml").touch()
+    (export_dir / "act.bin").touch()
+
+    return export_dir
+
+
+@pytest.fixture
+def mock_export_dir_manifest_single_pass(tmp_path: Path) -> Path:
+    """Export dir with manifest.json for a single-pass (no chunking) policy."""
+    import json
+
+    export_dir = tmp_path / "exports_manifest_sp"
+    export_dir.mkdir()
+
+    manifest = {
+        "format": "policy_package",
+        "version": "1.0",
+        "policy": {
+            "name": "act",
+            "kind": "single_pass",
+            "class_path": "physicalai.policies.act.ACT",
+        },
+        "artifacts": {"onnx": "act.onnx"},
+        "runner": {
+            "class_path": "physicalai.inference.runners.SinglePass",
+            "init_args": {},
+        },
+    }
+
+    with (export_dir / "manifest.json").open("w") as f:
+        json.dump(manifest, f)
+
+    (export_dir / "act.onnx").touch()
+
+    return export_dir
+
+
 class TestInferenceModelInit:
     def test_init_with_valid_directory(self, mock_export_dir: Path, mock_adapter: MagicMock) -> None:
         with patch("physicalai.inference.model.get_adapter", return_value=mock_adapter):
@@ -223,6 +292,119 @@ class TestInferenceModelInit:
         with patch("physicalai.inference.model.get_adapter", return_value=mock_adapter):
             model = InferenceModel(mock_export_dir, runner=explicit_runner)
             assert model.runner is explicit_runner
+
+
+class TestManifestModelInit:
+    def test_init_from_manifest_json(
+        self,
+        mock_export_dir_manifest: Path,
+        mock_adapter: MagicMock,
+    ) -> None:
+        with patch("physicalai.inference.model.get_adapter", return_value=mock_adapter):
+            model = InferenceModel(mock_export_dir_manifest)
+
+            assert model.export_dir == mock_export_dir_manifest
+            assert model.policy_name == "act"
+            assert model.backend == ExportBackend.OPENVINO
+            assert model.use_action_queue is True
+            assert model.chunk_size == 10
+            assert isinstance(model.runner, ActionChunking)
+            assert model.runner.chunk_size == 10
+            assert isinstance(model.runner.runner, SinglePass)
+
+    def test_init_from_manifest_single_pass(
+        self,
+        mock_export_dir_manifest_single_pass: Path,
+        mock_adapter: MagicMock,
+    ) -> None:
+        with patch("physicalai.inference.model.get_adapter", return_value=mock_adapter):
+            model = InferenceModel(mock_export_dir_manifest_single_pass)
+
+            assert model.policy_name == "act"
+            assert model.backend == ExportBackend.ONNX
+            assert model.use_action_queue is False
+            assert isinstance(model.runner, SinglePass)
+
+    def test_manifest_takes_priority_over_metadata_yaml(
+        self,
+        tmp_path: Path,
+        mock_adapter: MagicMock,
+    ) -> None:
+        import json
+
+        import yaml
+
+        export_dir = tmp_path / "exports_dual"
+        export_dir.mkdir()
+
+        with (export_dir / "metadata.yaml").open("w") as f:
+            yaml.dump({"policy_class": "physicalai.policies.old.Old", "backend": "onnx"}, f)
+
+        manifest = {
+            "format": "policy_package",
+            "version": "1.0",
+            "policy": {"name": "new_policy", "kind": "single_pass"},
+            "artifacts": {"openvino": "model.xml"},
+            "runner": {
+                "class_path": "physicalai.inference.runners.SinglePass",
+                "init_args": {},
+            },
+        }
+        with (export_dir / "manifest.json").open("w") as f:
+            json.dump(manifest, f)
+
+        (export_dir / "model.xml").touch()
+        (export_dir / "model.bin").touch()
+
+        with patch("physicalai.inference.model.get_adapter", return_value=mock_adapter):
+            model = InferenceModel(export_dir)
+
+            assert model.policy_name == "new_policy"
+            assert model.backend == ExportBackend.OPENVINO
+
+    def test_select_action_with_manifest(
+        self,
+        mock_export_dir_manifest: Path,
+        mock_adapter: MagicMock,
+        sample_observation: dict[str, np.ndarray],
+    ) -> None:
+        with patch("physicalai.inference.model.get_adapter", return_value=mock_adapter):
+            model = InferenceModel(mock_export_dir_manifest)
+            assert isinstance(model.runner, ActionChunking)
+
+            mock_adapter.predict.return_value = {"actions": np.random.randn(1, 10, 2)}
+
+            action1 = model.select_action(sample_observation)
+            action2 = model.select_action(sample_observation)
+
+            assert action1.shape == (1, 2)
+            assert action2.shape == (1, 2)
+            mock_adapter.predict.assert_called_once()
+
+    def test_backend_detected_from_manifest_artifacts(
+        self,
+        tmp_path: Path,
+        mock_adapter: MagicMock,
+    ) -> None:
+        import json
+
+        export_dir = tmp_path / "exports_artifacts"
+        export_dir.mkdir()
+
+        manifest = {
+            "format": "policy_package",
+            "version": "1.0",
+            "policy": {"name": "act"},
+            "artifacts": {"onnx": "act.onnx"},
+        }
+        with (export_dir / "manifest.json").open("w") as f:
+            json.dump(manifest, f)
+
+        (export_dir / "act.onnx").touch()
+
+        with patch("physicalai.inference.model.get_adapter", return_value=mock_adapter):
+            model = InferenceModel(export_dir)
+            assert model.backend == ExportBackend.ONNX
 
 
 class TestMetadataLoading:
@@ -690,6 +872,46 @@ class TestGetRunnerFactory:
         runner = get_runner({"use_action_queue": True, "chunk_size": 5})
         assert isinstance(runner, ActionChunking)
         assert isinstance(runner.runner, SinglePass)
+
+    def test_manifest_runner_spec_single_pass(self) -> None:
+        metadata = {
+            "runner": {
+                "class_path": "physicalai.inference.runners.SinglePass",
+                "init_args": {},
+            },
+        }
+        runner = get_runner(metadata)
+        assert isinstance(runner, SinglePass)
+
+    def test_manifest_runner_spec_action_chunking(self) -> None:
+        metadata = {
+            "runner": {
+                "class_path": "physicalai.inference.runners.ActionChunking",
+                "init_args": {
+                    "runner": {
+                        "class_path": "physicalai.inference.runners.SinglePass",
+                        "init_args": {},
+                    },
+                    "chunk_size": 8,
+                },
+            },
+        }
+        runner = get_runner(metadata)
+        assert isinstance(runner, ActionChunking)
+        assert runner.chunk_size == 8
+        assert isinstance(runner.runner, SinglePass)
+
+    def test_manifest_runner_spec_takes_priority_over_legacy(self) -> None:
+        metadata = {
+            "use_action_queue": True,
+            "chunk_size": 99,
+            "runner": {
+                "class_path": "physicalai.inference.runners.SinglePass",
+                "init_args": {},
+            },
+        }
+        runner = get_runner(metadata)
+        assert isinstance(runner, SinglePass)
 
 
 class TestSinglePass:
