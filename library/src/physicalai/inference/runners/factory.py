@@ -34,9 +34,10 @@ def get_runner(metadata: dict[str, Any]) -> InferenceRunner:
     """
     runner_spec = metadata.get("runner")
     if isinstance(runner_spec, dict) and "class_path" in runner_spec:
+        from physicalai.inference.component_factory import instantiate_component  # noqa: PLC0415
         from physicalai.inference.manifest import ComponentSpec  # noqa: PLC0415
 
-        return ComponentSpec.from_dict(runner_spec).instantiate()
+        return instantiate_component(ComponentSpec.model_validate(runner_spec))
 
     if metadata.get("use_action_queue"):
         chunk_size = metadata.get("chunk_size", 1)

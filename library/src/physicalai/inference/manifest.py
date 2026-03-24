@@ -20,11 +20,11 @@ Backward compatibility
 
 from __future__ import annotations
 
-import importlib
 import json
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # ---------------------------------------------------------------------------- #
 # Schema version
@@ -36,30 +36,36 @@ MANIFEST_FORMAT = "policy_package"
 # ---------------------------------------------------------------------------- #
 # Leaf dataclasses — one per manifest section
 # ---------------------------------------------------------------------------- #
-@dataclass(frozen=True, slots=True)
-class TensorSpec:
-    """Shape and dtype descriptor for a single tensor (state, action, image …).
+class TensorSpec(BaseModel):
+    """Shape and dtype descriptor for one tensor.
 
     Attributes:
         shape: Tensor shape (no batch dimension).
         dtype: Numpy-compatible dtype string, e.g. ``"float32"``, ``"uint8"``.
     """
 
+    model_config = ConfigDict(frozen=True)
     shape: list[int]
     dtype: str = "float32"
 
+    @field_validator("shape")
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> TensorSpec:
-        """Create a TensorSpec from a plain dict.
+    def _shape_must_be_positive(cls, v: list[int]) -> list[int]:
+        if not all(dim > 0 for dim in v):
+            msg = "All shape dimensions must be positive integers"
+            raise ValueError(msg)
+        return v
 
-        Returns:
-            Parsed TensorSpec.
-        """
-        return cls(shape=list(data["shape"]), dtype=data.get("dtype", "float32"))
+    @field_validator("dtype")
+    @classmethod
+    def _dtype_must_be_nonempty(cls, v: str) -> str:
+        if not v:
+            msg = "dtype must be a non-empty string"
+            raise ValueError(msg)
+        return v
 
 
-@dataclass(frozen=True, slots=True)
-class RobotSpec:
+class RobotSpec(BaseModel):
     """Robot hardware descriptor — state and action spaces.
 
     Attributes:
@@ -69,28 +75,14 @@ class RobotSpec:
         action: Expected action tensor spec.
     """
 
+    model_config = ConfigDict(frozen=True)
     name: str
     type: str = ""
     state: TensorSpec | None = None
     action: TensorSpec | None = None
 
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> RobotSpec:
-        """Create a RobotSpec from a plain dict.
 
-        Returns:
-            Parsed RobotSpec.
-        """
-        return cls(
-            name=data["name"],
-            type=data.get("type", ""),
-            state=TensorSpec.from_dict(data["state"]) if "state" in data else None,
-            action=TensorSpec.from_dict(data["action"]) if "action" in data else None,
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class CameraSpec:
+class CameraSpec(BaseModel):
     """Camera descriptor — image shape and dtype.
 
     Attributes:
@@ -99,26 +91,22 @@ class CameraSpec:
         dtype: Numpy-compatible dtype string.
     """
 
+    model_config = ConfigDict(frozen=True)
     name: str
-    shape: list[int] = field(default_factory=list)
+    shape: list[int] = Field(default_factory=list)
     dtype: str = "uint8"
 
+    @field_validator("shape")
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> CameraSpec:
-        """Create a CameraSpec from a plain dict.
-
-        Returns:
-            Parsed CameraSpec.
-        """
-        return cls(
-            name=data["name"],
-            shape=list(data.get("shape", [])),
-            dtype=data.get("dtype", "uint8"),
-        )
+    def _shape_must_have_three_elements(cls, v: list[int]) -> list[int]:
+        expected_dims = 3
+        if v and len(v) != expected_dims:
+            msg = f"CameraSpec shape must have exactly 3 elements (C, H, W), got {len(v)}"
+            raise ValueError(msg)
+        return v
 
 
-@dataclass(frozen=True, slots=True)
-class PolicySpec:
+class PolicySpec(BaseModel):
     """Policy identity section.
 
     Attributes:
@@ -131,77 +119,41 @@ class PolicySpec:
             inference runtime does not import this.
     """
 
+    model_config = ConfigDict(frozen=True)
     name: str = ""
     kind: str = "single_pass"
     class_path: str = ""
 
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> PolicySpec:
-        """Create a PolicySpec from a plain dict.
 
-        Returns:
-            Parsed PolicySpec.
-        """
-        return cls(
-            name=data.get("name", ""),
-            kind=data.get("kind", "single_pass"),
-            class_path=data.get("class_path", ""),
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class ComponentSpec:
+class ComponentSpec(BaseModel):
     """A ``class_path`` + ``init_args`` pair for dynamic instantiation.
 
     Used for runners, adapters, preprocessors, and postprocessors.
 
     Attributes:
         class_path: Fully-qualified class path, e.g.
-            ``"physicalai.inference.runners.SinglePass"``.
+            ``"physicalai.inference.runners.SinglePass"``, or a
+            registered short name like ``"single_pass"``.
         init_args: Keyword arguments forwarded to the class constructor.
     """
 
+    model_config = ConfigDict(frozen=True)
     class_path: str
-    init_args: dict[str, Any] = field(default_factory=dict)
+    init_args: dict[str, Any] = Field(default_factory=dict)
 
+    @field_validator("class_path")
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> ComponentSpec:
-        """Create a ComponentSpec from a plain dict.
-
-        Returns:
-            Parsed ComponentSpec.
-        """
-        return cls(
-            class_path=data["class_path"],
-            init_args=dict(data.get("init_args", {})),
-        )
-
-    def instantiate(self) -> Any:  # noqa: ANN401
-        """Import the class and instantiate with ``init_args``.
-
-        Returns:
-            An instance of the class specified by ``class_path``.
-        """
-        module_path, class_name = self.class_path.rsplit(".", maxsplit=1)
-        module = importlib.import_module(module_path)
-        cls_obj = getattr(module, class_name)
-
-        # Handle nested ComponentSpec in init_args (e.g. ActionChunking wrapping SinglePass)
-        resolved_args: dict[str, Any] = {}
-        for key, value in self.init_args.items():
-            if isinstance(value, dict) and "class_path" in value:
-                resolved_args[key] = ComponentSpec.from_dict(value).instantiate()
-            else:
-                resolved_args[key] = value
-
-        return cls_obj(**resolved_args)
+    def _class_path_must_be_nonempty(cls, v: str) -> str:
+        if not v:
+            msg = "class_path must be a non-empty string"
+            raise ValueError(msg)
+        return v
 
 
 # ---------------------------------------------------------------------------- #
 # Top-level Manifest
 # ---------------------------------------------------------------------------- #
-@dataclass(frozen=True, slots=True)
-class Manifest:
+class Manifest(BaseModel):
     """Parsed manifest for an exported model package.
 
     Attributes:
@@ -214,56 +166,24 @@ class Manifest:
         adapter: Optional dynamic adapter specification.
         robots: Hardware descriptors for robot state/action.
         cameras: Hardware descriptors for camera inputs.
-        extra: Catch-all for domain-specific keys not covered above.
+
+    Unknown top-level keys are preserved in ``model_extra`` so that
+    domain layers can store additional data without schema changes.
     """
 
+    model_config = ConfigDict(frozen=True, extra="allow")
     format: str = MANIFEST_FORMAT
     version: str = MANIFEST_VERSION
-    policy: PolicySpec = field(default_factory=PolicySpec)
-    artifacts: dict[str, str] = field(default_factory=dict)
+    policy: PolicySpec = Field(default_factory=PolicySpec)
+    artifacts: dict[str, str] = Field(default_factory=dict)
     runner: ComponentSpec | None = None
     adapter: ComponentSpec | None = None
-    robots: list[RobotSpec] = field(default_factory=list)
-    cameras: list[CameraSpec] = field(default_factory=list)
-    extra: dict[str, Any] = field(default_factory=dict)
+    robots: list[RobotSpec] = Field(default_factory=list)
+    cameras: list[CameraSpec] = Field(default_factory=list)
 
     # ------------------------------------------------------------------
     # Construction helpers
     # ------------------------------------------------------------------
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Manifest:
-        """Build a ``Manifest`` from a raw JSON dict.
-
-        Unknown top-level keys are collected into ``extra`` so that
-        domain layers can store additional data without schema changes.
-
-        Returns:
-            Parsed Manifest.
-        """
-        known_keys = {
-            "format",
-            "version",
-            "policy",
-            "artifacts",
-            "runner",
-            "adapter",
-            "robots",
-            "cameras",
-        }
-        extra = {k: v for k, v in data.items() if k not in known_keys}
-
-        return cls(
-            format=data.get("format", MANIFEST_FORMAT),
-            version=data.get("version", MANIFEST_VERSION),
-            policy=PolicySpec.from_dict(data["policy"]) if "policy" in data else PolicySpec(),
-            artifacts=dict(data.get("artifacts", {})),
-            runner=ComponentSpec.from_dict(data["runner"]) if "runner" in data else None,
-            adapter=ComponentSpec.from_dict(data["adapter"]) if "adapter" in data else None,
-            robots=[RobotSpec.from_dict(r) for r in data.get("robots", [])],
-            cameras=[CameraSpec.from_dict(c) for c in data.get("cameras", [])],
-            extra=extra,
-        )
 
     @classmethod
     def load(cls, path: str | Path) -> Manifest:
@@ -287,7 +207,7 @@ class Manifest:
             msg = f"Manifest not found: {p}"
             raise FileNotFoundError(msg)
         with p.open(encoding="utf-8") as fh:
-            return cls.from_dict(json.load(fh))
+            return cls.model_validate(json.load(fh))
 
     @classmethod
     def from_legacy_metadata(cls, metadata: dict[str, Any]) -> Manifest:
@@ -320,58 +240,21 @@ class Manifest:
         if backend:
             artifacts[backend] = ""  # filename unknown from legacy metadata
 
-        # Preserve everything in extra for backward compat
-        extra = dict(metadata)
-
-        return cls(
-            policy=PolicySpec(name=policy_name, kind=kind, class_path=policy_class),
-            artifacts=artifacts,
-            runner=runner,
-            robots=[],
-            cameras=[],
-            extra=extra,
-        )
+        # Build a dict and validate — extra keys from metadata are
+        # preserved automatically via ``extra="allow"``.
+        data: dict[str, Any] = {
+            "policy": {"name": policy_name, "kind": kind, "class_path": policy_class},
+            "artifacts": artifacts,
+            "runner": {"class_path": runner.class_path, "init_args": runner.init_args},
+            "robots": [],
+            "cameras": [],
+            **metadata,
+        }
+        return cls.model_validate(data)
 
     # ------------------------------------------------------------------
     # Serialisation
     # ------------------------------------------------------------------
-
-    def to_dict(self) -> dict[str, Any]:
-        """Serialize the manifest to a plain dict suitable for ``json.dump``.
-
-        Returns:
-            JSON-serialisable dict.
-        """
-        data: dict[str, Any] = {
-            "format": self.format,
-            "version": self.version,
-            "policy": {
-                "name": self.policy.name,
-                "kind": self.policy.kind,
-                "class_path": self.policy.class_path,
-            },
-            "artifacts": self.artifacts,
-        }
-
-        if self.runner is not None:
-            data["runner"] = {
-                "class_path": self.runner.class_path,
-                "init_args": self.runner.init_args,
-            }
-
-        if self.adapter is not None:
-            data["adapter"] = {
-                "class_path": self.adapter.class_path,
-                "init_args": self.adapter.init_args,
-            }
-
-        if self.robots:
-            data["robots"] = [_robot_to_dict(r) for r in self.robots]
-
-        if self.cameras:
-            data["cameras"] = [_camera_to_dict(c) for c in self.cameras]
-
-        return data
 
     def save(self, path: str | Path) -> None:
         """Write the manifest as ``manifest.json``.
@@ -379,8 +262,14 @@ class Manifest:
         Args:
             path: File path (typically ``export_dir / "manifest.json"``).
         """
+        data = self.model_dump(exclude_defaults=True)
+        # Ensure required top-level keys are always present
+        data.setdefault("format", self.format)
+        data.setdefault("version", self.version)
+        if "policy" not in data:
+            data["policy"] = self.policy.model_dump()
         with Path(path).open("w", encoding="utf-8") as fh:
-            json.dump(self.to_dict(), fh, indent=2)
+            json.dump(data, fh, indent=2)
             fh.write("\n")
 
 
@@ -388,9 +277,10 @@ class Manifest:
 # Private helpers
 # ---------------------------------------------------------------------------
 
+from physicalai.inference.component_factory import default_registry  # noqa: E402
+
 RUNNER_CLASS_PATHS: dict[str, str] = {
-    "single_pass": "physicalai.inference.runners.SinglePass",
-    "action_chunking": "physicalai.inference.runners.ActionChunking",
+    k: default_registry.resolve(k) for k in ("single_pass", "action_chunking") if k in default_registry
 }
 
 
@@ -404,14 +294,16 @@ def _build_runner_spec(kind: str, chunk_size: int = 1) -> ComponentSpec:
     Returns:
         A ``ComponentSpec`` that can be instantiated later.
     """
-    class_path = RUNNER_CLASS_PATHS.get(kind, RUNNER_CLASS_PATHS["single_pass"])
+    class_path = default_registry.resolve(kind)
+    if class_path == kind:
+        class_path = default_registry.resolve("single_pass")
 
     if kind == "action_chunking":
         return ComponentSpec(
             class_path=class_path,
             init_args={
                 "runner": {
-                    "class_path": RUNNER_CLASS_PATHS["single_pass"],
+                    "class_path": default_registry.resolve("single_pass"),
                     "init_args": {},
                 },
                 "chunk_size": chunk_size,
@@ -436,33 +328,3 @@ def _policy_name_from_class_path(class_path: str) -> str:
     if len(parts) >= min_parts:
         return parts[-2]
     return ""
-
-
-def _robot_to_dict(robot: RobotSpec) -> dict[str, Any]:
-    """Serialize a RobotSpec to a plain dict.
-
-    Returns:
-        JSON-serialisable dict.
-    """
-    data: dict[str, Any] = {"name": robot.name}
-    if robot.type:
-        data["type"] = robot.type
-    if robot.state is not None:
-        data["state"] = {"shape": robot.state.shape, "dtype": robot.state.dtype}
-    if robot.action is not None:
-        data["action"] = {"shape": robot.action.shape, "dtype": robot.action.dtype}
-    return data
-
-
-def _camera_to_dict(camera: CameraSpec) -> dict[str, Any]:
-    """Serialize a CameraSpec to a plain dict.
-
-    Returns:
-        JSON-serialisable dict.
-    """
-    data: dict[str, Any] = {"name": camera.name}
-    if camera.shape:
-        data["shape"] = camera.shape
-    if camera.dtype != "uint8":
-        data["dtype"] = camera.dtype
-    return data

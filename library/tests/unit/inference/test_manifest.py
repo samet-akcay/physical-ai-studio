@@ -8,7 +8,13 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
+from physicalai.inference.component_factory import (
+    ComponentRegistry,
+    default_registry,
+    instantiate_component,
+)
 from physicalai.inference.manifest import (
     RUNNER_CLASS_PATHS,
     CameraSpec,
@@ -25,26 +31,26 @@ from physicalai.inference.runners import ActionChunking, SinglePass
 
 class TestTensorSpec:
     def test_from_dict_defaults(self) -> None:
-        spec = TensorSpec.from_dict({"shape": [14]})
+        spec = TensorSpec.model_validate({"shape": [14]})
         assert spec.shape == [14]
         assert spec.dtype == "float32"
 
     def test_from_dict_explicit_dtype(self) -> None:
-        spec = TensorSpec.from_dict({"shape": [3, 480, 640], "dtype": "uint8"})
+        spec = TensorSpec.model_validate({"shape": [3, 480, 640], "dtype": "uint8"})
         assert spec.shape == [3, 480, 640]
         assert spec.dtype == "uint8"
 
 
 class TestRobotSpec:
     def test_from_dict_minimal(self) -> None:
-        spec = RobotSpec.from_dict({"name": "main"})
+        spec = RobotSpec.model_validate({"name": "main"})
         assert spec.name == "main"
         assert spec.type == ""
         assert spec.state is None
         assert spec.action is None
 
     def test_from_dict_full(self) -> None:
-        spec = RobotSpec.from_dict({
+        spec = RobotSpec.model_validate({
             "name": "main",
             "type": "Koch v1.1",
             "state": {"shape": [14], "dtype": "float32"},
@@ -60,26 +66,26 @@ class TestRobotSpec:
 
 class TestCameraSpec:
     def test_from_dict_minimal(self) -> None:
-        spec = CameraSpec.from_dict({"name": "top"})
+        spec = CameraSpec.model_validate({"name": "top"})
         assert spec.name == "top"
         assert spec.shape == []
         assert spec.dtype == "uint8"
 
     def test_from_dict_full(self) -> None:
-        spec = CameraSpec.from_dict({"name": "wrist", "shape": [3, 480, 640], "dtype": "uint8"})
+        spec = CameraSpec.model_validate({"name": "wrist", "shape": [3, 480, 640], "dtype": "uint8"})
         assert spec.name == "wrist"
         assert spec.shape == [3, 480, 640]
 
 
 class TestPolicySpec:
     def test_from_dict_defaults(self) -> None:
-        spec = PolicySpec.from_dict({})
+        spec = PolicySpec.model_validate({})
         assert spec.name == ""
         assert spec.kind == "single_pass"
         assert spec.class_path == ""
 
     def test_from_dict_full(self) -> None:
-        spec = PolicySpec.from_dict({
+        spec = PolicySpec.model_validate({
             "name": "act",
             "kind": "action_chunking",
             "class_path": "physicalai.policies.act.ACT",
@@ -91,7 +97,7 @@ class TestPolicySpec:
 
 class TestComponentSpec:
     def test_from_dict(self) -> None:
-        spec = ComponentSpec.from_dict({
+        spec = ComponentSpec.model_validate({
             "class_path": "physicalai.inference.runners.SinglePass",
             "init_args": {},
         })
@@ -99,21 +105,23 @@ class TestComponentSpec:
         assert spec.init_args == {}
 
     def test_from_dict_with_init_args(self) -> None:
-        spec = ComponentSpec.from_dict({
+        spec = ComponentSpec.model_validate({
             "class_path": "physicalai.inference.runners.ActionChunking",
             "init_args": {"chunk_size": 10},
         })
         assert spec.init_args == {"chunk_size": 10}
 
+
+class TestInstantiateComponent:
     def test_instantiate_single_pass(self) -> None:
         spec = ComponentSpec(
             class_path="physicalai.inference.runners.SinglePass",
             init_args={},
         )
-        runner = spec.instantiate()
+        runner = instantiate_component(spec)
         assert isinstance(runner, SinglePass)
 
-    def test_instantiate_action_chunking_with_nested_runner(self) -> None:
+    def test_instantiate_nested(self) -> None:
         spec = ComponentSpec(
             class_path="physicalai.inference.runners.ActionChunking",
             init_args={
@@ -124,7 +132,7 @@ class TestComponentSpec:
                 "chunk_size": 5,
             },
         )
-        runner = spec.instantiate()
+        runner = instantiate_component(spec)
         assert isinstance(runner, ActionChunking)
         assert runner.chunk_size == 5
         assert isinstance(runner.runner, SinglePass)
@@ -166,7 +174,7 @@ class TestManifestFromDict:
         }
 
     def test_full_manifest(self, full_manifest_data: dict[str, Any]) -> None:
-        manifest = Manifest.from_dict(full_manifest_data)
+        manifest = Manifest.model_validate(full_manifest_data)
 
         assert manifest.format == "policy_package"
         assert manifest.version == "1.0"
@@ -181,7 +189,7 @@ class TestManifestFromDict:
         assert manifest.cameras[0].name == "top"
 
     def test_minimal_manifest(self) -> None:
-        manifest = Manifest.from_dict({})
+        manifest = Manifest.model_validate({})
 
         assert manifest.format == "policy_package"
         assert manifest.version == "1.0"
@@ -191,16 +199,16 @@ class TestManifestFromDict:
         assert manifest.cameras == []
 
     def test_unknown_keys_go_to_extra(self) -> None:
-        manifest = Manifest.from_dict({
+        manifest = Manifest.model_validate({
             "custom_domain_key": "value",
             "another_key": 42,
         })
-        assert manifest.extra == {"custom_domain_key": "value", "another_key": 42}
+        assert manifest.model_extra == {"custom_domain_key": "value", "another_key": 42}
 
     def test_runner_instantiation_from_manifest(self, full_manifest_data: dict[str, Any]) -> None:
-        manifest = Manifest.from_dict(full_manifest_data)
+        manifest = Manifest.model_validate(full_manifest_data)
         assert manifest.runner is not None
-        runner = manifest.runner.instantiate()
+        runner = instantiate_component(manifest.runner)
         assert isinstance(runner, ActionChunking)
         assert runner.chunk_size == 10
         assert isinstance(runner.runner, SinglePass)
@@ -282,7 +290,8 @@ class TestManifestFromLegacyMetadata:
             "physicalai_train_version": "1.2.3",
         }
         manifest = Manifest.from_legacy_metadata(metadata)
-        assert manifest.extra["physicalai_train_version"] == "1.2.3"
+        assert manifest.model_extra is not None
+        assert manifest.model_extra["physicalai_train_version"] == "1.2.3"
 
     def test_empty_metadata(self) -> None:
         manifest = Manifest.from_legacy_metadata({})
@@ -318,7 +327,7 @@ class TestManifestSerialization:
 
     def test_to_dict_omits_empty_optional_sections(self) -> None:
         manifest = Manifest(policy=PolicySpec(name="test"))
-        data = manifest.to_dict()
+        data = manifest.model_dump(exclude_defaults=True)
 
         assert "robots" not in data
         assert "cameras" not in data
@@ -366,3 +375,63 @@ class TestRunnerClassPaths:
 
     def test_action_chunking_path(self) -> None:
         assert RUNNER_CLASS_PATHS["action_chunking"] == "physicalai.inference.runners.ActionChunking"
+
+
+class TestPydanticValidation:
+    def test_tensor_spec_negative_shape(self) -> None:
+        with pytest.raises(ValidationError):
+            TensorSpec(shape=[-1, 3])
+
+    def test_tensor_spec_empty_dtype(self) -> None:
+        with pytest.raises(ValidationError):
+            TensorSpec(shape=[3], dtype="")
+
+    def test_component_spec_empty_class_path(self) -> None:
+        with pytest.raises(ValidationError):
+            ComponentSpec(class_path="")
+
+    def test_component_spec_no_dot_class_path_is_valid(self) -> None:
+        spec = ComponentSpec(class_path="single_pass")
+        assert spec.class_path == "single_pass"
+
+    def test_camera_spec_wrong_shape_length(self) -> None:
+        with pytest.raises(ValidationError):
+            CameraSpec(name="top", shape=[3, 480])
+
+    def test_camera_spec_empty_shape_is_valid(self) -> None:
+        spec = CameraSpec(name="top")
+        assert spec.shape == []
+
+
+class TestComponentRegistry:
+    def test_register_and_resolve(self) -> None:
+        reg = ComponentRegistry()
+        reg.register("my_comp", "mypackage.module.MyClass")
+        assert reg.resolve("my_comp") == "mypackage.module.MyClass"
+
+    def test_resolve_passthrough_for_unregistered(self) -> None:
+        reg = ComponentRegistry()
+        assert reg.resolve("some.full.ClassPath") == "some.full.ClassPath"
+
+    def test_contains(self) -> None:
+        reg = ComponentRegistry()
+        reg.register("x", "a.B")
+        assert "x" in reg
+        assert "y" not in reg
+
+    def test_entries_returns_copy(self) -> None:
+        reg = ComponentRegistry()
+        reg.register("a", "x.Y")
+        entries = reg.entries()
+        entries["b"] = "z.W"
+        assert "b" not in reg
+
+    def test_default_registry_has_runners(self) -> None:
+        assert "single_pass" in default_registry
+        assert "action_chunking" in default_registry
+        assert default_registry.resolve("single_pass") == "physicalai.inference.runners.SinglePass"
+        assert default_registry.resolve("action_chunking") == "physicalai.inference.runners.ActionChunking"
+
+    def test_runner_class_paths_matches_registry(self) -> None:
+        assert RUNNER_CLASS_PATHS["single_pass"] == default_registry.resolve("single_pass")
+        assert RUNNER_CLASS_PATHS["action_chunking"] == default_registry.resolve("action_chunking")
