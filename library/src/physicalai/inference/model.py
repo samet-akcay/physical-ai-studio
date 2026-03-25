@@ -14,6 +14,7 @@ import yaml
 
 from physicalai.export.backends import ExportBackend
 from physicalai.inference.adapters import get_adapter
+from physicalai.inference.component_factory import instantiate_component
 from physicalai.inference.manifest import ComponentSpec
 from physicalai.inference.runners import get_runner
 
@@ -70,8 +71,6 @@ class InferenceModel:
         backend: str | ExportBackend = "auto",
         device: str = "auto",
         runner: InferenceRunner | None = None,
-        preprocessors: list[Preprocessor] | None = None,
-        postprocessors: list[Postprocessor] | None = None,
         **adapter_kwargs: Any,  # noqa: ANN401
     ) -> None:
         """Initialize InferenceModel with optional auto-detection.
@@ -82,11 +81,6 @@ class InferenceModel:
             backend: Backend to use, or 'auto' to detect from metadata/files
             device: Device for inference ('auto', 'cpu', 'cuda', 'CPU', 'GPU', etc.)
             runner: Execution runner override. If None, auto-selected from metadata.
-            preprocessors: Pipeline stages applied to observations before the
-                runner.  If ``None``, loaded from manifest (empty if not
-                declared).
-            postprocessors: Pipeline stages applied to runner output.  If
-                ``None``, loaded from manifest (empty if not declared).
             **adapter_kwargs: Backend-specific configuration options
 
         Raises:
@@ -117,12 +111,8 @@ class InferenceModel:
 
         self.runner: InferenceRunner = runner if runner is not None else get_runner(self.metadata)
 
-        self.preprocessors: list[Preprocessor] = (
-            preprocessors if preprocessors is not None else self._load_processors("preprocessors")
-        )
-        self.postprocessors: list[Postprocessor] = (
-            postprocessors if postprocessors is not None else self._load_processors("postprocessors")
-        )
+        self.preprocessors: list[Preprocessor] = self._load_processors("preprocessors")
+        self.postprocessors: list[Postprocessor] = self._load_processors("postprocessors")
 
     @property
     def use_action_queue(self) -> bool:
@@ -320,7 +310,7 @@ class InferenceModel:
         specs = self.metadata.get(key, [])
         if not specs:
             return []
-        return [ComponentSpec.from_dict(s).instantiate() for s in specs]
+        return [instantiate_component(ComponentSpec.model_validate(s)) for s in specs]
 
     def _detect_policy_name(self) -> str:
         """Auto-detect policy name from files or metadata.

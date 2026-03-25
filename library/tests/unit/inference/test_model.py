@@ -762,10 +762,8 @@ class TestPipelineWiring:
         mock_adapter.predict.return_value = {"actions": np.array([[1.0, 2.0]])}
 
         with patch("physicalai.inference.model.get_adapter", return_value=mock_adapter):
-            model = InferenceModel(
-                mock_export_dir_no_queue,
-                preprocessors=[_AddKeyPreprocessor()],
-            )
+            model = InferenceModel(mock_export_dir_no_queue)
+            model.preprocessors = [_AddKeyPreprocessor()]
 
             obs = {"state": np.array([1.0]), "images": np.array([2.0])}
             model(obs)
@@ -783,13 +781,11 @@ class TestPipelineWiring:
         mock_adapter.predict.return_value = {"actions": np.array([[1.0]])}
 
         with patch("physicalai.inference.model.get_adapter", return_value=mock_adapter):
-            model = InferenceModel(
-                mock_export_dir_no_queue,
-                preprocessors=[
-                    _ScalePreprocessor(factor=3.0),
-                    _ScalePreprocessor(factor=2.0),
-                ],
-            )
+            model = InferenceModel(mock_export_dir_no_queue)
+            model.preprocessors = [
+                _ScalePreprocessor(factor=3.0),
+                _ScalePreprocessor(factor=2.0),
+            ]
 
             obs = {"state": np.array([1.0])}
             model(obs)
@@ -806,10 +802,8 @@ class TestPipelineWiring:
         mock_adapter.predict.return_value = {"actions": np.array([[10.0, -10.0]])}
 
         with patch("physicalai.inference.model.get_adapter", return_value=mock_adapter):
-            model = InferenceModel(
-                mock_export_dir_no_queue,
-                postprocessors=[_ClampPostprocessor()],
-            )
+            model = InferenceModel(mock_export_dir_no_queue)
+            model.postprocessors = [_ClampPostprocessor()]
 
             obs = {"state": np.array([1.0])}
             action = model(obs)
@@ -825,13 +819,11 @@ class TestPipelineWiring:
         mock_adapter.predict.return_value = {"actions": np.array([[10.0]])}
 
         with patch("physicalai.inference.model.get_adapter", return_value=mock_adapter):
-            model = InferenceModel(
-                mock_export_dir_no_queue,
-                postprocessors=[
-                    _ScalePostprocessor(factor=0.5),
-                    _ClampPostprocessor(),
-                ],
-            )
+            model = InferenceModel(mock_export_dir_no_queue)
+            model.postprocessors = [
+                _ScalePostprocessor(factor=0.5),
+                _ClampPostprocessor(),
+            ]
 
             obs = {"state": np.array([1.0])}
             action = model(obs)
@@ -848,11 +840,9 @@ class TestPipelineWiring:
         mock_adapter.predict.return_value = {"actions": np.array([[4.0]])}
 
         with patch("physicalai.inference.model.get_adapter", return_value=mock_adapter):
-            model = InferenceModel(
-                mock_export_dir_no_queue,
-                preprocessors=[_ScalePreprocessor(factor=2.0)],
-                postprocessors=[_ScalePostprocessor(factor=0.25)],
-            )
+            model = InferenceModel(mock_export_dir_no_queue)
+            model.preprocessors = [_ScalePreprocessor(factor=2.0)]
+            model.postprocessors = [_ScalePostprocessor(factor=0.25)]
 
             obs = {"state": np.array([5.0])}
             action = model(obs)
@@ -860,44 +850,3 @@ class TestPipelineWiring:
             call_args = mock_adapter.predict.call_args[0][0]
             np.testing.assert_array_almost_equal(call_args["state"], np.array([10.0]))
             np.testing.assert_array_almost_equal(action, np.array([[1.0]]))
-
-    def test_explicit_processors_override_manifest(
-        self,
-        tmp_path: Path,
-        mock_adapter: MagicMock,
-    ) -> None:
-        import json
-
-        export_dir = tmp_path / "exports_proc"
-        export_dir.mkdir()
-
-        manifest = {
-            "format": "policy_package",
-            "version": "1.0",
-            "policy": {"name": "act", "kind": "single_pass"},
-            "artifacts": {"onnx": "act.onnx"},
-            "runner": {
-                "class_path": "physicalai.inference.runners.SinglePass",
-                "init_args": {},
-            },
-            "preprocessors": [
-                {"class_path": "should.not.Be.Loaded", "init_args": {}},
-            ],
-        }
-        with (export_dir / "manifest.json").open("w") as f:
-            json.dump(manifest, f)
-        (export_dir / "act.onnx").touch()
-
-        mock_adapter.predict.return_value = {"actions": np.array([[1.0]])}
-
-        explicit_pre = _ScalePreprocessor(factor=3.0)
-        with patch("physicalai.inference.model.get_adapter", return_value=mock_adapter):
-            model = InferenceModel(
-                export_dir,
-                preprocessors=[explicit_pre],
-                postprocessors=[],
-            )
-
-            assert len(model.preprocessors) == 1
-            assert model.preprocessors[0] is explicit_pre
-            assert model.postprocessors == []
