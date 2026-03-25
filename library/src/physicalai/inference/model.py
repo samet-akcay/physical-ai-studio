@@ -164,17 +164,16 @@ class InferenceModel:
         Returns:
             Action array to execute.
         """
-        data = observation
-        for pre in self.preprocessors:
-            data = pre(data)
+        for preprocessor in self.preprocessors:
+            observation = preprocessor(observation)
 
-        inputs = self._prepare_inputs(data)
+        inputs = self._prepare_inputs(observation)
         result = self.runner.run(self.adapter, inputs)
 
         if self.postprocessors:
             wrapped: dict[str, np.ndarray] = {"action": result}
-            for post in self.postprocessors:
-                wrapped = post(wrapped)
+            for postprocessor in self.postprocessors:
+                wrapped = postprocessor(wrapped)
             result = wrapped["action"]
 
         return result
