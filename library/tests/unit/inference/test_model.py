@@ -135,6 +135,11 @@ def _patch_adapter(mock_adapter: MagicMock):
         yield
 
 
+@pytest.fixture
+def mock_export_dir_no_queue(tmp_path: Path) -> Path:
+    return _make_legacy_export_dir(tmp_path, use_action_queue=False, chunk_size=1)
+
+
 @pytest.mark.usefixtures("_patch_adapter")
 class TestInferenceModelInit:
     def test_init_with_valid_directory(self, tmp_path: Path) -> None:
