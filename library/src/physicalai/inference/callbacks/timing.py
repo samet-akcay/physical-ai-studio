@@ -1,7 +1,7 @@
 # Copyright (C) 2026 Intel Corporation
 # SPDX-License-Identifier: Apache-2.0
 
-"""Timing callback for inference performance profiling.
+"""Timer callback for inference performance profiling.
 
 Records wall-clock latency of each ``select_action`` / ``__call__``
 invocation.  Useful for benchmarking and detecting latency regressions.
@@ -15,7 +15,7 @@ from typing import Any, override
 from physicalai.inference.callbacks.base import Callback
 
 
-class TimingCallback(Callback):
+class Timer(Callback):
     """Record prediction latency in milliseconds.
 
     Attributes:
@@ -23,7 +23,7 @@ class TimingCallback(Callback):
         history: List of all recorded durations (ms).
 
     Examples:
-        >>> timer = TimingCallback()
+        >>> timer = Timer()
         >>> model = InferenceModel.load("./exports/act", callbacks=[timer])
         >>> action = model.select_action(obs)
         >>> print(f"Took {timer.last_duration_ms:.1f} ms")
@@ -50,4 +50,4 @@ class TimingCallback(Callback):
     @override
     def __repr__(self) -> str:
         """Return string representation with latest timing."""
-        return f"TimingCallback(last={self.last_duration_ms:.1f}ms, calls={len(self.history)})"
+        return f"Timer(last={self.last_duration_ms:.1f}ms, calls={len(self.history)})"

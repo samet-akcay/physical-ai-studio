@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 from typing import Any, override
 from unittest.mock import MagicMock, patch
@@ -13,7 +12,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from physicalai.inference.callbacks import Callback, LoggingCallback, TimingCallback
+from physicalai.inference.callbacks import Callback, ThroughputMonitor, Timer
 from physicalai.inference.model import InferenceModel
 
 
@@ -127,14 +126,14 @@ class TestCallbackBase:
         assert repr(cb) == "_RecordingCallback()"
 
 
-class TestTimingCallback:
+class TestTimer:
     def test_initial_state(self) -> None:
-        timer = TimingCallback()
+        timer = Timer()
         assert timer.last_duration_ms == 0.0
         assert timer.history == []
 
     def test_records_duration(self) -> None:
-        timer = TimingCallback()
+        timer = Timer()
         timer.on_predict_start({"x": np.array([1.0])})
         timer.on_predict_end({"action": np.array([1.0])})
         assert timer.last_duration_ms > 0.0
@@ -142,60 +141,58 @@ class TestTimingCallback:
         assert timer.history[0] == timer.last_duration_ms
 
     def test_accumulates_history(self) -> None:
-        timer = TimingCallback()
+        timer = Timer()
         for _ in range(3):
             timer.on_predict_start({"x": np.array([1.0])})
             timer.on_predict_end({"action": np.array([1.0])})
         assert len(timer.history) == 3
 
     def test_repr(self) -> None:
-        timer = TimingCallback()
-        assert "TimingCallback" in repr(timer)
+        timer = Timer()
+        assert "Timer" in repr(timer)
         assert "last=0.0ms" in repr(timer)
         assert "calls=0" in repr(timer)
 
 
-class TestLoggingCallback:
-    def test_logs_predict_start(self, caplog: pytest.LogCaptureFixture) -> None:
-        cb = LoggingCallback(level=logging.DEBUG)
-        with caplog.at_level(logging.DEBUG, logger="physicalai.inference"):
-            cb.on_predict_start({"state": np.array([1.0]), "images": np.array([2.0])})
-        assert "predict_start" in caplog.text
-        assert "state" in caplog.text
+class TestThroughputMonitor:
+    def test_initial_state(self) -> None:
+        monitor = ThroughputMonitor()
+        assert monitor.throughput == 0.0
+        assert monitor.total_predictions == 0
 
-    def test_logs_predict_end(self, caplog: pytest.LogCaptureFixture) -> None:
-        cb = LoggingCallback(level=logging.DEBUG)
-        with caplog.at_level(logging.DEBUG, logger="physicalai.inference"):
-            cb.on_predict_end({"action": np.array([1.0])})
-        assert "predict_end" in caplog.text
+    def test_records_predictions(self) -> None:
+        monitor = ThroughputMonitor()
+        for _ in range(5):
+            monitor.on_predict_end({"action": np.array([1.0])})
+        assert monitor.total_predictions == 5
+        assert monitor.throughput > 0.0
 
-    def test_logs_reset(self, caplog: pytest.LogCaptureFixture) -> None:
-        cb = LoggingCallback(level=logging.DEBUG)
-        with caplog.at_level(logging.DEBUG, logger="physicalai.inference"):
-            cb.on_reset()
-        assert "reset" in caplog.text
+    def test_single_prediction_no_throughput(self) -> None:
+        monitor = ThroughputMonitor()
+        monitor.on_predict_end({"action": np.array([1.0])})
+        assert monitor.total_predictions == 1
+        assert monitor.throughput == 0.0
 
-    def test_logs_model_load(self, caplog: pytest.LogCaptureFixture) -> None:
-        cb = LoggingCallback(level=logging.DEBUG)
-        model = MagicMock(spec=InferenceModel)
-        with caplog.at_level(logging.DEBUG, logger="physicalai.inference"):
-            cb.on_load(model)
-        assert "model_loaded" in caplog.text
-
-    def test_custom_log_level(self, caplog: pytest.LogCaptureFixture) -> None:
-        cb = LoggingCallback(level=logging.WARNING)
-        with caplog.at_level(logging.WARNING, logger="physicalai.inference"):
-            cb.on_predict_start({"x": np.array([1.0])})
-        assert "predict_start" in caplog.text
-
-    def test_custom_logger(self) -> None:
-        custom = logging.getLogger("test.custom")
-        cb = LoggingCallback(logger=custom)
-        assert cb._logger is custom
+    def test_custom_window_size(self) -> None:
+        monitor = ThroughputMonitor(window_size=3)
+        for _ in range(10):
+            monitor.on_predict_end({"action": np.array([1.0])})
+        assert monitor.total_predictions == 10
+        assert monitor._window_size == 3
 
     def test_repr(self) -> None:
-        cb = LoggingCallback(level=logging.INFO)
-        assert repr(cb) == "LoggingCallback(level=INFO)"
+        monitor = ThroughputMonitor(window_size=50)
+        assert "ThroughputMonitor" in repr(monitor)
+        assert "throughput=0.0/s" in repr(monitor)
+        assert "total=0" in repr(monitor)
+        assert "window=50" in repr(monitor)
+
+    def test_throughput_updates_after_predictions(self) -> None:
+        monitor = ThroughputMonitor(window_size=10)
+        for _ in range(3):
+            monitor.on_predict_end({"action": np.array([1.0])})
+        assert monitor.throughput > 0.0
+        assert monitor.total_predictions == 3
 
 
 class TestCallbackWiring:
@@ -314,18 +311,32 @@ class TestCallbackWiring:
         # 2.0 * 3.0 = 6.0, then 6.0 * 2.0 = 12.0
         np.testing.assert_array_equal(action, np.array([[12.0]]))
 
-    def test_timing_callback_integration(
+    def test_timer_integration(
         self,
         mock_export_dir: Path,
         mock_adapter: MagicMock,
     ) -> None:
-        timer = TimingCallback()
+        timer = Timer()
         model = _make_model(mock_export_dir, mock_adapter, callbacks=[timer])
 
         model({"state": np.array([1.0])})
 
         assert timer.last_duration_ms > 0.0
         assert len(timer.history) == 1
+
+    def test_throughput_monitor_integration(
+        self,
+        mock_export_dir: Path,
+        mock_adapter: MagicMock,
+    ) -> None:
+        monitor = ThroughputMonitor()
+        model = _make_model(mock_export_dir, mock_adapter, callbacks=[monitor])
+
+        for _ in range(5):
+            model({"state": np.array([1.0])})
+
+        assert monitor.total_predictions == 5
+        assert monitor.throughput > 0.0
 
 
 class TestContextManager:
