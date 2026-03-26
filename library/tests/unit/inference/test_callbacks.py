@@ -53,15 +53,14 @@ class _InputModifyingCallback(Callback):
 
 
 class _OutputModifyingCallback(Callback):
-    """Test callback that scales the action output."""
+    """Test callback that scales all output arrays."""
 
     def __init__(self, factor: float = 2.0) -> None:
         self.factor = factor
 
     @override
     def on_predict_end(self, outputs: dict[str, Any]) -> dict[str, Any]:
-        outputs["action"] = outputs["action"] * self.factor
-        return outputs
+        return {key: value * self.factor for key, value in outputs.items()}
 
 
 @pytest.fixture
@@ -336,8 +335,8 @@ class TestCallbackWiring:
             callbacks=[_OutputModifyingCallback(factor=3.0)],
         )
 
-        action = model({"state": np.array([1.0])})
-        np.testing.assert_array_equal(action, np.array([[15.0]]))
+        outputs = model({"state": np.array([1.0])})
+        np.testing.assert_array_equal(outputs["actions"], np.array([[15.0]]))
 
     def test_chained_output_modifications(
         self,
@@ -354,9 +353,9 @@ class TestCallbackWiring:
             ],
         )
 
-        action = model({"state": np.array([1.0])})
+        outputs = model({"state": np.array([1.0])})
         # 2.0 * 3.0 = 6.0, then 6.0 * 2.0 = 12.0
-        np.testing.assert_array_equal(action, np.array([[12.0]]))
+        np.testing.assert_array_equal(outputs["actions"], np.array([[12.0]]))
 
     def test_latency_monitor_integration(
         self,
@@ -403,8 +402,8 @@ class TestContextManager:
         mock_adapter: MagicMock,
     ) -> None:
         with _make_model(mock_export_dir, mock_adapter) as model:
-            action = model({"state": np.array([1.0])})
-            assert isinstance(action, np.ndarray)
+            outputs = model({"state": np.array([1.0])})
+            assert isinstance(outputs, dict)
 
     def test_callbacks_work_inside_context(
         self,
