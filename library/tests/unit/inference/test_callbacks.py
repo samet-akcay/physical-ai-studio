@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Any, override
 from unittest.mock import MagicMock, patch
@@ -12,7 +13,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from physicalai.inference.callbacks import Callback, ThroughputMonitor, Timer
+from physicalai.inference.callbacks import Callback, LatencyMonitor, ThroughputMonitor
 from physicalai.inference.model import InferenceModel
 
 
@@ -126,32 +127,64 @@ class TestCallbackBase:
         assert repr(cb) == "_RecordingCallback()"
 
 
-class TestTimer:
+class TestLatencyMonitor:
     def test_initial_state(self) -> None:
-        timer = Timer()
-        assert timer.last_duration_ms == 0.0
-        assert timer.history == []
+        monitor = LatencyMonitor()
+        assert monitor.latest_ms == 0.0
+        assert monitor.total_calls == 0
+        assert monitor.avg_ms == 0.0
+        assert monitor.min_ms == 0.0
+        assert monitor.max_ms == 0.0
+        assert monitor.p95_ms == 0.0
 
     def test_records_duration(self) -> None:
-        timer = Timer()
-        timer.on_predict_start({"x": np.array([1.0])})
-        timer.on_predict_end({"action": np.array([1.0])})
-        assert timer.last_duration_ms > 0.0
-        assert len(timer.history) == 1
-        assert timer.history[0] == timer.last_duration_ms
+        monitor = LatencyMonitor()
+        monitor.on_predict_start({"x": np.array([1.0])})
+        monitor.on_predict_end({"action": np.array([1.0])})
+        assert monitor.latest_ms > 0.0
+        assert monitor.total_calls == 1
+        assert len(monitor._window) == 1
+        assert monitor._window[0] == monitor.latest_ms
 
-    def test_accumulates_history(self) -> None:
-        timer = Timer()
+    def test_accumulates_in_window(self) -> None:
+        monitor = LatencyMonitor()
         for _ in range(3):
-            timer.on_predict_start({"x": np.array([1.0])})
-            timer.on_predict_end({"action": np.array([1.0])})
-        assert len(timer.history) == 3
+            monitor.on_predict_start({"x": np.array([1.0])})
+            monitor.on_predict_end({"action": np.array([1.0])})
+        assert len(monitor._window) == 3
+        assert monitor.total_calls == 3
+
+    def test_window_evicts_oldest(self) -> None:
+        monitor = LatencyMonitor(window_size=3)
+        for _ in range(5):
+            monitor.on_predict_start({"x": np.array([1.0])})
+            monitor.on_predict_end({"action": np.array([1.0])})
+        assert len(monitor._window) == 3
+        assert monitor.total_calls == 5
+
+    def test_statistics_with_known_values(self) -> None:
+        monitor = LatencyMonitor(window_size=100)
+        known_durations = [10.0, 20.0, 30.0, 40.0, 50.0]
+        for duration in known_durations:
+            monitor._window.append(duration)
+            monitor.total_calls += 1
+        assert monitor.avg_ms == pytest.approx(30.0)
+        assert monitor.min_ms == pytest.approx(10.0)
+        assert monitor.max_ms == pytest.approx(50.0)
+
+    def test_p95_with_known_values(self) -> None:
+        monitor = LatencyMonitor(window_size=200)
+        for i in range(1, 101):
+            monitor._window.append(float(i))
+            monitor.total_calls += 1
+        # 100 values 1..100, p95 nearest-rank = ceil(0.95*100)-1 = index 94 → value 95
+        assert monitor.p95_ms == pytest.approx(95.0)
 
     def test_repr(self) -> None:
-        timer = Timer()
-        assert "Timer" in repr(timer)
-        assert "last=0.0ms" in repr(timer)
-        assert "calls=0" in repr(timer)
+        monitor = LatencyMonitor()
+        assert "LatencyMonitor" in repr(monitor)
+        assert "latest=0.0ms" in repr(monitor)
+        assert "calls=0" in repr(monitor)
 
 
 class TestThroughputMonitor:
@@ -173,22 +206,36 @@ class TestThroughputMonitor:
         assert monitor.total_predictions == 1
         assert monitor.throughput == 0.0
 
-    def test_custom_window_size(self) -> None:
-        monitor = ThroughputMonitor(window_size=3)
-        for _ in range(10):
-            monitor.on_predict_end({"action": np.array([1.0])})
-        assert monitor.total_predictions == 10
-        assert monitor._window_size == 3
+    def test_default_window_seconds(self) -> None:
+        monitor = ThroughputMonitor()
+        assert monitor._window_seconds == 10.0
+
+    def test_custom_window_seconds(self) -> None:
+        monitor = ThroughputMonitor(window_seconds=5.0)
+        assert monitor._window_seconds == 5.0
+
+    def test_time_based_pruning(self) -> None:
+        monitor = ThroughputMonitor(window_seconds=1.0)
+        now = time.perf_counter()
+        monitor._timestamps.append(now - 5.0)
+        monitor._timestamps.append(now - 4.0)
+        monitor._timestamps.append(now - 3.0)
+        monitor.total_predictions = 3
+
+        monitor.on_predict_end({"action": np.array([1.0])})
+
+        assert monitor.total_predictions == 4
+        assert len(monitor._timestamps) == 1
 
     def test_repr(self) -> None:
-        monitor = ThroughputMonitor(window_size=50)
+        monitor = ThroughputMonitor(window_seconds=5.0)
         assert "ThroughputMonitor" in repr(monitor)
         assert "throughput=0.0/s" in repr(monitor)
         assert "total=0" in repr(monitor)
-        assert "window=50" in repr(monitor)
+        assert "window=5.0s" in repr(monitor)
 
     def test_throughput_updates_after_predictions(self) -> None:
-        monitor = ThroughputMonitor(window_size=10)
+        monitor = ThroughputMonitor(window_seconds=10.0)
         for _ in range(3):
             monitor.on_predict_end({"action": np.array([1.0])})
         assert monitor.throughput > 0.0
@@ -311,18 +358,19 @@ class TestCallbackWiring:
         # 2.0 * 3.0 = 6.0, then 6.0 * 2.0 = 12.0
         np.testing.assert_array_equal(action, np.array([[12.0]]))
 
-    def test_timer_integration(
+    def test_latency_monitor_integration(
         self,
         mock_export_dir: Path,
         mock_adapter: MagicMock,
     ) -> None:
-        timer = Timer()
-        model = _make_model(mock_export_dir, mock_adapter, callbacks=[timer])
+        monitor = LatencyMonitor()
+        model = _make_model(mock_export_dir, mock_adapter, callbacks=[monitor])
 
         model({"state": np.array([1.0])})
 
-        assert timer.last_duration_ms > 0.0
-        assert len(timer.history) == 1
+        assert monitor.latest_ms > 0.0
+        assert monitor.total_calls == 1
+        assert len(monitor._window) == 1
 
     def test_throughput_monitor_integration(
         self,
