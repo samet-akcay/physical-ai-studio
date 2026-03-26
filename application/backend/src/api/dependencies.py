@@ -137,6 +137,13 @@ def get_dataset_id(dataset_id: str) -> UUID:
     return UUID(dataset_id)
 
 
+def get_model_id(model_id: str) -> UUID:
+    """Initialize and validates a model ID."""
+    if not is_valid_uuid(model_id):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid model ID")
+    return UUID(model_id)
+
+
 def get_robot_id(robot_id: str) -> UUID:
     """Initialize and validates a robot ID."""
     if not is_valid_uuid(robot_id):

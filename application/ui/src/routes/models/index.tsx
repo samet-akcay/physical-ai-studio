@@ -42,10 +42,10 @@ const ModelList = ({
 
     const jobsById = new Map(jobs.map((j) => [j.id, j]));
 
-    const deleteModelMutation = $api.useMutation('delete', '/api/models');
+    const deleteModelMutation = $api.useMutation('delete', '/api/models/{model_id}');
 
     const deleteModel = (model: SchemaModel) => {
-        deleteModelMutation.mutate({ params: { query: { uuid: model.id! } } });
+        deleteModelMutation.mutate({ params: { path: { model_id: model.id! } } });
     };
 
     return (

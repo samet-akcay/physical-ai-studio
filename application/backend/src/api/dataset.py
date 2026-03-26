@@ -1,4 +1,3 @@
-import re
 from pathlib import Path
 from typing import Annotated
 from uuid import UUID
@@ -14,6 +13,7 @@ from api.dependencies import (
     get_dataset_service,
     get_episode_thumbnail_service,
 )
+from api.utils import safe_archive_name
 from internal_datasets.lerobot.lerobot_dataset import InternalLeRobotDataset
 from internal_datasets.mutations.delete_episode_mutation import DeleteEpisodesMutation
 from internal_datasets.utils import get_internal_dataset
@@ -21,11 +21,6 @@ from schemas import Dataset, Episode, EpisodeInfo
 from services import DatasetDownloadService, DatasetService, EpisodeThumbnailService
 
 router = APIRouter(prefix="/api/dataset", tags=["Dataset"])
-
-
-def _safe_archive_name(name: str) -> str:
-    sanitized = re.sub(r"[^A-Za-z0-9_.-]+", "-", name).strip(".-")
-    return sanitized or "dataset"
 
 
 @router.get("/{dataset_id}")
@@ -152,7 +147,7 @@ async def dataset_download_endpoint(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dataset path not found.")
 
     archive_path = dataset_download_service.create_dataset_archive(dataset_path)
-    filename = f"{_safe_archive_name(dataset.name)}.zip"
+    filename = f"{safe_archive_name(dataset.name, fallback='dataset')}.zip"
     return FileResponse(
         archive_path,
         media_type="application/zip",

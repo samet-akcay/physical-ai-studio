@@ -3,7 +3,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends
 
-from api.dependencies import get_dataset_service, get_model_service, validate_uuid
+from api.dependencies import get_dataset_service, get_model_id, get_model_service
 from exceptions import ResourceNotFoundError, ResourceType
 from internal_datasets.utils import get_internal_dataset
 from schemas import Model
@@ -14,7 +14,7 @@ router = APIRouter(prefix="/api/models", tags=["Models"])
 
 @router.get("/{model_id}")
 async def get_model_by_id(
-    model_id: Annotated[UUID, Depends(validate_uuid)],
+    model_id: Annotated[UUID, Depends(get_model_id)],
     model_service: Annotated[ModelService, Depends(get_model_service)],
 ) -> Model:
     """Get model by id."""
@@ -23,7 +23,7 @@ async def get_model_by_id(
 
 @router.get("/{model_id}/tasks")
 async def get_tasks_of_model(
-    model_id: Annotated[UUID, Depends(validate_uuid)],
+    model_id: Annotated[UUID, Depends(get_model_id)],
     model_service: Annotated[ModelService, Depends(get_model_service)],
     dataset_service: Annotated[DatasetService, Depends(get_dataset_service)],
 ) -> list[str]:
@@ -33,9 +33,9 @@ async def get_tasks_of_model(
     return get_internal_dataset(dataset).get_tasks()
 
 
-@router.delete("")
+@router.delete("/{model_id}")
 async def remove_model(
-    model_id: Annotated[UUID, Depends(validate_uuid)],
+    model_id: Annotated[UUID, Depends(get_model_id)],
     model_service: Annotated[ModelService, Depends(get_model_service)],
 ) -> None:
     """Fetch all projects."""
