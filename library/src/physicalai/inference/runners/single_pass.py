@@ -4,29 +4,29 @@
 """Single-pass inference runner.
 
 The simplest execution pattern: call the adapter once per inference step
-and return the resulting output dict with a canonical ``"action"`` key.
+and return the output dict unchanged.  This runner is completely generic
+— it knows nothing about the domain (robotics, vision, etc.).
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, override
 
-import numpy as np
-
 from physicalai.inference.runners.base import InferenceRunner
 
 if TYPE_CHECKING:
-    from physicalai.inference.adapters.base import RuntimeAdapter
+    import numpy as np
 
-_NDIM_WITH_TEMPORAL = 3
+    from physicalai.inference.adapters.base import RuntimeAdapter
 
 
 class SinglePass(InferenceRunner):
     """Execute a single forward pass and return the adapter output.
 
-    Handles the common case where ``adapter.predict()`` returns an output
-    dict whose primary action tensor has an optional temporal dimension of
-    size 1 that needs to be squeezed away.
+    This is a pure passthrough runner: it calls ``adapter.predict()``
+    and returns the result unchanged.  Any domain-specific transforms
+    (key normalization, temporal squeezing, etc.) belong in
+    postprocessors.
 
     This runner is stateless — ``reset()`` is a no-op.
     """
@@ -44,22 +44,9 @@ class SinglePass(InferenceRunner):
             inputs: Pre-processed model inputs.
 
         Returns:
-            Adapter output dict with the primary action stored under
-            ``"action"``. If the action tensor has a temporal dimension
-            of size 1, it is squeezed.
+            Adapter output dict, returned as-is.
         """
-        outputs = dict(adapter.predict(inputs))
-        if "action" in outputs:
-            actions: np.ndarray = outputs["action"]
-        else:
-            raw_action_key = adapter.output_names[0] if adapter.output_names else next(iter(outputs))
-            actions = outputs.pop(raw_action_key)
-
-        if actions.ndim == _NDIM_WITH_TEMPORAL and actions.shape[1] == 1:
-            actions = np.squeeze(actions, axis=1)
-
-        outputs["action"] = actions
-        return outputs
+        return dict(adapter.predict(inputs))
 
     def reset(self) -> None:
         """No-op — single-pass runner is stateless."""

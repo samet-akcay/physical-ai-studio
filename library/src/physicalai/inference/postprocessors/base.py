@@ -6,10 +6,6 @@
 Postprocessors transform inference outputs *after* the runner returns.
 They receive a dict of model outputs and must return a dict of the same
 shape.
-
-Postprocessors are domain-provided — ``physicalai.inference`` ships only
-the ABC.  Concrete implementations (``ActionUnnormalizer``,
-``ActionClamp``, …) belong in domain layers.
 """
 
 from __future__ import annotations

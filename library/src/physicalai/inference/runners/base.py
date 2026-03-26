@@ -58,10 +58,7 @@ class InferenceRunner(ABC):
             inputs: Pre-processed model inputs (flat dict of numpy arrays).
 
         Returns:
-            Dict mapping output names to numpy arrays.  For robotics
-            runners the dict typically contains an ``"action"`` key with
-            shape ``(batch_size, action_dim)``; vision or other domains
-            may use different keys (``"boxes"``, ``"scores"``, etc.).
+            Dict mapping output names to numpy arrays.
         """
 
     @abstractmethod

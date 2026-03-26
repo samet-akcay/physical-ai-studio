@@ -3,10 +3,10 @@
 
 """Action-chunking inference runner (decorator).
 
-Wraps any ``InferenceRunner`` to add temporal action buffering. The inner
+Wraps any ``InferenceRunner`` to add temporal action buffering.  The inner
 runner produces an output dict whose action value has shape
 ``(batch, horizon, action_dim)``.  This wrapper queues the individual
-timesteps, dispensing one per call. Only invokes the inner runner again
+timesteps, dispensing one per call.  Only invokes the inner runner again
 when the queue is exhausted.
 
 This is the GoF Decorator pattern: ``ActionChunking`` *is* an
@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from physicalai.inference.constants import ACTION
 from physicalai.inference.runners.base import InferenceRunner
 
 if TYPE_CHECKING:
@@ -37,8 +38,10 @@ class ActionChunking(InferenceRunner):
 
     Args:
         runner: The inner runner to delegate inference to.
-        chunk_size: Number of actions per chunk. Must match the inner
+        chunk_size: Number of actions per chunk.  Must match the inner
             runner's output temporal dimension.
+        action_key: Key in the runner output dict that holds the action
+            tensor.  Defaults to ``"action"``.
 
     Examples:
         Wrap a single-pass runner with action chunking:
@@ -52,15 +55,22 @@ class ActionChunking(InferenceRunner):
         >>> runner = ActionChunking(FlowMatching(num_steps=20), chunk_size=5)
     """
 
-    def __init__(self, runner: InferenceRunner, chunk_size: int = 1) -> None:
-        """Initialize with an inner runner and chunk size.
+    def __init__(
+        self,
+        runner: InferenceRunner,
+        chunk_size: int = 1,
+        action_key: str = ACTION,
+    ) -> None:
+        """Initialize with an inner runner and chunk configuration.
 
         Args:
             runner: The inner runner to wrap.
             chunk_size: Number of actions per chunk.
+            action_key: Key for the action tensor in the output dict.
         """
         self.runner = runner
         self.chunk_size = chunk_size
+        self.action_key = action_key
         self._action_queue: deque[np.ndarray] = deque()
 
     def run(
@@ -79,15 +89,15 @@ class ActionChunking(InferenceRunner):
             ``(batch_size, action_dim)``.
         """
         if len(self._action_queue) > 0:
-            return {"action": self._action_queue.popleft()}
+            return {self.action_key: self._action_queue.popleft()}
 
         outputs = self.runner.run(adapter, inputs)
-        actions = outputs["action"]
+        actions = outputs[self.action_key]
 
         batch_actions = np.transpose(actions, (1, 0, 2))
         self._action_queue.extend(batch_actions)
 
-        return {"action": self._action_queue.popleft()}
+        return {self.action_key: self._action_queue.popleft()}
 
     def reset(self) -> None:
         """Clear the action queue and reset the inner runner."""

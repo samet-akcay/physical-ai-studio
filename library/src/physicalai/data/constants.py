@@ -7,8 +7,9 @@ Module-level constants providing string literals for Observation field names,
 enabling IDE autocomplete and safe refactoring for dict-based access patterns.
 """
 
+from physicalai.inference.constants import ACTION
+
 # Core observation fields
-ACTION = "action"
 TASK = "task"
 STATE = "state"
 IMAGES = "images"

@@ -7,10 +7,6 @@ Preprocessors transform observation dicts *before* the adapter bridge
 (``_prepare_inputs``) flattens and filters them.  They operate on the
 user-friendly nested observation structure and must return a dict of
 the same shape.
-
-Preprocessors are domain-provided — ``physicalai.inference`` ships only
-the ABC.  Concrete implementations (``ObservationNormalizer``,
-``ImageResize``, …) belong in domain layers.
 """
 
 from __future__ import annotations

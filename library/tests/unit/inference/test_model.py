@@ -16,6 +16,7 @@ import yaml
 from physicalai.export.mixin_policy import ExportBackend
 from physicalai.inference.adapters import RuntimeAdapter
 from physicalai.inference.model import InferenceModel
+from physicalai.inference.postprocessors.action_normalizer import ActionNormalizer
 from physicalai.inference.postprocessors.base import Postprocessor
 from physicalai.inference.preprocessors.base import Preprocessor
 from physicalai.inference.runners import (
@@ -24,6 +25,7 @@ from physicalai.inference.runners import (
     SinglePass,
     get_runner,
 )
+
 
 class TestAdapter(RuntimeAdapter):
     def __init__(self, device: torch.device | str = "cpu") -> None:
@@ -251,6 +253,8 @@ class TestManifestModelInit:
     ) -> None:
         model = InferenceModel(_make_manifest_export_dir(tmp_path))
         assert isinstance(model.runner, ActionChunking)
+        model.runner.action_key = "actions"
+        model.postprocessors = [ActionNormalizer()]
 
         mock_adapter.predict.return_value = {"actions": np.random.randn(1, 10, 2)}
         action1 = model.select_action(sample_observation)
@@ -402,6 +406,7 @@ class TestSelectAction:
     ) -> None:
         model = InferenceModel(_make_legacy_export_dir(tmp_path, use_action_queue=False, chunk_size=1))
         mock_adapter.predict.return_value = {"actions": np.random.randn(1, 1, 2)}
+        model.postprocessors = [ActionNormalizer()]
 
         action = model.select_action(sample_observation)
 
@@ -417,6 +422,8 @@ class TestSelectAction:
     ) -> None:
         model = InferenceModel(_make_legacy_export_dir(tmp_path))
         assert isinstance(model.runner, ActionChunking)
+        model.runner.action_key = "actions"
+        model.postprocessors = [ActionNormalizer()]
 
         mock_adapter.predict.return_value = {"actions": np.random.randn(1, 10, 2)}
         action1 = model.select_action(sample_observation)
@@ -436,6 +443,8 @@ class TestSelectAction:
     ) -> None:
         model = InferenceModel(_make_legacy_export_dir(tmp_path))
         assert isinstance(model.runner, ActionChunking)
+        model.runner.action_key = "actions"
+        model.postprocessors = [ActionNormalizer()]
 
         mock_adapter.predict.return_value = {"actions": np.random.randn(1, 10, 2)}
         for _ in range(10):
@@ -456,7 +465,7 @@ class TestSelectAction:
         model.reset()
         assert len(model.runner._action_queue) == 0
 
-    def test_call_delegates_to_runner(
+    def test_call_returns_dict(
         self,
         tmp_path: Path,
         mock_adapter: MagicMock,
@@ -468,15 +477,32 @@ class TestSelectAction:
         outputs = model(sample_observation)
 
         assert isinstance(outputs, dict)
-        assert outputs["action"].shape == (1, 2)
+        assert "actions" in outputs
 
-    def test_call_and_select_action_return_same(
+    def test_call_with_normalizer_provides_action_key(
         self,
         tmp_path: Path,
         mock_adapter: MagicMock,
         sample_observation: dict[str, np.ndarray],
     ) -> None:
         model = InferenceModel(_make_legacy_export_dir(tmp_path, use_action_queue=False, chunk_size=1))
+        mock_adapter.predict.return_value = {"actions": np.random.randn(1, 1, 2)}
+        model.postprocessors = [ActionNormalizer()]
+
+        outputs = model(sample_observation)
+
+        assert isinstance(outputs, dict)
+        assert "action" in outputs
+        assert outputs["action"].shape == (1, 2)
+
+    def test_call_and_select_action_consistent(
+        self,
+        tmp_path: Path,
+        mock_adapter: MagicMock,
+        sample_observation: dict[str, np.ndarray],
+    ) -> None:
+        model = InferenceModel(_make_legacy_export_dir(tmp_path, use_action_queue=False, chunk_size=1))
+        model.postprocessors = [ActionNormalizer()]
         fixed_output = np.random.randn(1, 1, 2)
 
         mock_adapter.predict.return_value = {"actions": fixed_output.copy()}
@@ -523,6 +549,7 @@ class TestInputPreparation:
         }
         result = model._prepare_inputs(inputs)
         assert set(result.keys()) == {"state", "images.top"}
+
 
 @pytest.mark.usefixtures("_patch_adapter")
 class TestModelPathResolution:
@@ -614,32 +641,25 @@ class TestGetRunnerFactory:
 
 
 class TestSinglePass:
-    def test_run_squeezes_temporal_dim(self) -> None:
+    def test_run_returns_adapter_output_unchanged(self) -> None:
         adapter = MagicMock()
-        adapter.output_names = ["actions"]
+        raw_output = {"actions": np.random.randn(1, 1, 4), "extra": np.array([42.0])}
+        adapter.predict.return_value = raw_output
+
+        outputs = SinglePass().run(adapter, {"input": np.zeros(1)})
+
+        assert isinstance(outputs, dict)
+        assert set(outputs.keys()) == {"actions", "extra"}
+        np.testing.assert_array_equal(outputs["actions"], raw_output["actions"])
+        np.testing.assert_array_equal(outputs["extra"], raw_output["extra"])
+
+    def test_run_does_not_modify_shapes(self) -> None:
+        adapter = MagicMock()
         adapter.predict.return_value = {"actions": np.random.randn(1, 1, 4)}
-        outputs = SinglePass().run(adapter, {"input": np.zeros(1)})
-        assert isinstance(outputs, dict)
-        assert outputs["action"].shape == (1, 4)
 
-    def test_run_no_squeeze_when_no_temporal_dim(self) -> None:
-        adapter = MagicMock()
-        adapter.output_names = ["actions"]
-        adapter.predict.return_value = {"actions": np.random.randn(1, 4)}
         outputs = SinglePass().run(adapter, {"input": np.zeros(1)})
-        assert isinstance(outputs, dict)
-        assert outputs["action"].shape == (1, 4)
 
-    def test_run_returns_full_adapter_output(self) -> None:
-        adapter = MagicMock()
-        adapter.output_names = ["actions"]
-        adapter.predict.return_value = {
-            "actions": np.random.randn(1, 4),
-            "extra_key": np.array([42.0]),
-        }
-        outputs = SinglePass().run(adapter, {"input": np.zeros(1)})
-        assert "action" in outputs
-        assert "extra_key" in outputs
+        assert outputs["actions"].shape == (1, 1, 4)
 
     def test_reset_is_noop(self) -> None:
         SinglePass().reset()
@@ -648,8 +668,7 @@ class TestSinglePass:
 class TestActionChunking:
     def test_run_enqueues_and_returns_first(self) -> None:
         adapter = MagicMock()
-        adapter.output_names = ["actions"]
-        adapter.predict.return_value = {"actions": np.random.randn(1, 5, 2)}
+        adapter.predict.return_value = {"action": np.random.randn(1, 5, 2)}
 
         runner = ActionChunking(runner=SinglePass(), chunk_size=5)
         outputs = runner.run(adapter, {"input": np.zeros(1)})
@@ -660,8 +679,7 @@ class TestActionChunking:
 
     def test_run_returns_from_queue_without_inference(self) -> None:
         adapter = MagicMock()
-        adapter.output_names = ["actions"]
-        adapter.predict.return_value = {"actions": np.random.randn(1, 3, 2)}
+        adapter.predict.return_value = {"action": np.random.randn(1, 3, 2)}
 
         runner = ActionChunking(runner=SinglePass(), chunk_size=3)
         runner.run(adapter, {"input": np.zeros(1)})
@@ -670,8 +688,7 @@ class TestActionChunking:
 
     def test_run_refills_when_empty(self) -> None:
         adapter = MagicMock()
-        adapter.output_names = ["actions"]
-        adapter.predict.return_value = {"actions": np.random.randn(1, 2, 2)}
+        adapter.predict.return_value = {"action": np.random.randn(1, 2, 2)}
 
         runner = ActionChunking(runner=SinglePass(), chunk_size=2)
         runner.run(adapter, {"input": np.zeros(1)})
@@ -681,10 +698,19 @@ class TestActionChunking:
         runner.run(adapter, {"input": np.zeros(1)})
         assert adapter.predict.call_count == 2
 
+    def test_run_with_custom_action_key(self) -> None:
+        adapter = MagicMock()
+        adapter.predict.return_value = {"actions": np.random.randn(1, 3, 2)}
+
+        runner = ActionChunking(runner=SinglePass(), chunk_size=3, action_key="actions")
+        outputs = runner.run(adapter, {"input": np.zeros(1)})
+
+        assert "actions" in outputs
+        assert outputs["actions"].shape == (1, 2)
+
     def test_reset_clears_queue(self) -> None:
         adapter = MagicMock()
-        adapter.output_names = ["actions"]
-        adapter.predict.return_value = {"actions": np.random.randn(1, 5, 2)}
+        adapter.predict.return_value = {"action": np.random.randn(1, 5, 2)}
 
         runner = ActionChunking(runner=SinglePass(), chunk_size=5)
         runner.run(adapter, {"input": np.zeros(1)})
@@ -707,6 +733,68 @@ class TestActionChunking:
 
         assert len(runner._action_queue) == 0
         inner.reset.assert_called_once()
+
+
+class TestActionNormalizer:
+    def test_normalizes_first_key_to_action(self) -> None:
+        normalizer = ActionNormalizer()
+        outputs = normalizer({"actions": np.array([[1.0, 2.0]])})
+
+        assert "action" in outputs
+        assert "actions" not in outputs
+        np.testing.assert_array_equal(outputs["action"], np.array([[1.0, 2.0]]))
+
+    def test_preserves_existing_action_key(self) -> None:
+        normalizer = ActionNormalizer()
+        original = np.array([[1.0, 2.0]])
+        outputs = normalizer({"action": original})
+
+        np.testing.assert_array_equal(outputs["action"], original)
+
+    def test_explicit_action_key(self) -> None:
+        normalizer = ActionNormalizer(action_key="pred_actions")
+        outputs = normalizer({
+            "pred_actions": np.array([[1.0, 2.0]]),
+            "extra": np.array([42.0]),
+        })
+
+        assert "action" in outputs
+        assert "pred_actions" not in outputs
+        assert "extra" in outputs
+
+    def test_squeezes_temporal_dim_of_size_one(self) -> None:
+        normalizer = ActionNormalizer()
+        outputs = normalizer({"actions": np.random.randn(1, 1, 4)})
+
+        assert outputs["action"].shape == (1, 4)
+
+    def test_no_squeeze_when_no_temporal_dim(self) -> None:
+        normalizer = ActionNormalizer()
+        outputs = normalizer({"actions": np.random.randn(1, 4)})
+
+        assert outputs["action"].shape == (1, 4)
+
+    def test_no_squeeze_when_temporal_dim_greater_than_one(self) -> None:
+        normalizer = ActionNormalizer()
+        outputs = normalizer({"actions": np.random.randn(1, 5, 4)})
+
+        assert outputs["action"].shape == (1, 5, 4)
+
+    def test_preserves_extra_keys(self) -> None:
+        normalizer = ActionNormalizer()
+        outputs = normalizer({
+            "actions": np.array([[1.0]]),
+            "confidence": np.array([0.95]),
+        })
+
+        assert "action" in outputs
+        assert "confidence" in outputs
+
+    def test_repr_default(self) -> None:
+        assert repr(ActionNormalizer()) == "ActionNormalizer()"
+
+    def test_repr_with_key(self) -> None:
+        assert repr(ActionNormalizer(action_key="pred_actions")) == "ActionNormalizer(action_key='pred_actions')"
 
 
 class _ScalePreprocessor(Preprocessor):
@@ -756,7 +844,7 @@ class TestPipelineWiring:
 
             outputs = model(sample_observation)
             assert isinstance(outputs, dict)
-            assert isinstance(outputs["action"], np.ndarray)
+            assert "actions" in outputs
 
     def test_preprocessors_run_before_prepare_inputs(
         self,
@@ -808,7 +896,7 @@ class TestPipelineWiring:
 
         with patch("physicalai.inference.model.get_adapter", return_value=mock_adapter):
             model = InferenceModel(mock_export_dir_no_queue)
-            model.postprocessors = [_ClampPostprocessor()]
+            model.postprocessors = [ActionNormalizer(), _ClampPostprocessor()]
 
             obs = {"state": np.array([1.0])}
             outputs = model(obs)
@@ -826,6 +914,7 @@ class TestPipelineWiring:
         with patch("physicalai.inference.model.get_adapter", return_value=mock_adapter):
             model = InferenceModel(mock_export_dir_no_queue)
             model.postprocessors = [
+                ActionNormalizer(),
                 _ScalePostprocessor(factor=0.5),
                 _ClampPostprocessor(),
             ]
@@ -833,7 +922,6 @@ class TestPipelineWiring:
             obs = {"state": np.array([1.0])}
             outputs = model(obs)
 
-            # 10.0 * 0.5 = 5.0, then clamp to [-1, 1] → 1.0
             np.testing.assert_array_equal(outputs["action"], np.array([[1.0]]))
 
     def test_full_pipeline_pre_and_post(
@@ -847,7 +935,7 @@ class TestPipelineWiring:
         with patch("physicalai.inference.model.get_adapter", return_value=mock_adapter):
             model = InferenceModel(mock_export_dir_no_queue)
             model.preprocessors = [_ScalePreprocessor(factor=2.0)]
-            model.postprocessors = [_ScalePostprocessor(factor=0.25)]
+            model.postprocessors = [ActionNormalizer(), _ScalePostprocessor(factor=0.25)]
 
             obs = {"state": np.array([5.0])}
             outputs = model(obs)
