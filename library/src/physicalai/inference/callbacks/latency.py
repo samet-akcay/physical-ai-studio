@@ -62,6 +62,14 @@ class LatencyMonitor(Callback):
     # -- Lifecycle hooks ------------------------------------------------
 
     @override
+    def on_reset(self) -> None:
+        """Clear all recorded samples and reset counters."""
+        self._window.clear()
+        self.latest_ms = 0.0
+        self.total_calls = 0
+        self._start_time = 0.0
+
+    @override
     def on_predict_start(self, inputs: dict[str, Any]) -> None:
         """Record the prediction start time."""
         self._start_time = time.perf_counter()

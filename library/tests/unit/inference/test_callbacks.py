@@ -190,19 +190,19 @@ class TestThroughputMonitor:
     def test_initial_state(self) -> None:
         monitor = ThroughputMonitor()
         assert monitor.throughput == 0.0
-        assert monitor.total_predictions == 0
+        assert monitor.total_calls == 0
 
     def test_records_predictions(self) -> None:
         monitor = ThroughputMonitor()
         for _ in range(5):
             monitor.on_predict_end({"action": np.array([1.0])})
-        assert monitor.total_predictions == 5
+        assert monitor.total_calls == 5
         assert monitor.throughput > 0.0
 
     def test_single_prediction_no_throughput(self) -> None:
         monitor = ThroughputMonitor()
         monitor.on_predict_end({"action": np.array([1.0])})
-        assert monitor.total_predictions == 1
+        assert monitor.total_calls == 1
         assert monitor.throughput == 0.0
 
     def test_default_window_seconds(self) -> None:
@@ -219,11 +219,11 @@ class TestThroughputMonitor:
         monitor._timestamps.append(now - 5.0)
         monitor._timestamps.append(now - 4.0)
         monitor._timestamps.append(now - 3.0)
-        monitor.total_predictions = 3
+        monitor.total_calls = 3
 
         monitor.on_predict_end({"action": np.array([1.0])})
 
-        assert monitor.total_predictions == 4
+        assert monitor.total_calls == 4
         assert len(monitor._timestamps) == 1
 
     def test_repr(self) -> None:
@@ -238,7 +238,7 @@ class TestThroughputMonitor:
         for _ in range(3):
             monitor.on_predict_end({"action": np.array([1.0])})
         assert monitor.throughput > 0.0
-        assert monitor.total_predictions == 3
+        assert monitor.total_calls == 3
 
 
 class TestCallbackWiring:
@@ -382,7 +382,7 @@ class TestCallbackWiring:
         for _ in range(5):
             model({"state": np.array([1.0])})
 
-        assert monitor.total_predictions == 5
+        assert monitor.total_calls == 5
         assert monitor.throughput > 0.0
 
 

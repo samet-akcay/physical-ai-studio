@@ -34,7 +34,7 @@ class ThroughputMonitor(Callback):
     Attributes:
         throughput: Current throughput in predictions per second,
             computed over timestamps within the window.
-        total_predictions: Total number of predictions recorded.
+        total_calls: Total number of predictions recorded.
 
     Examples:
         >>> monitor = ThroughputMonitor(window_seconds=5.0)
@@ -53,8 +53,15 @@ class ThroughputMonitor(Callback):
         """
         self._window_seconds = window_seconds
         self._timestamps: deque[float] = deque()
-        self.total_predictions: int = 0
+        self.total_calls: int = 0
         self.throughput: float = 0.0
+
+    @override
+    def on_reset(self) -> None:
+        """Clear all timestamps and reset throughput to zero."""
+        self._timestamps.clear()
+        self.total_calls = 0
+        self.throughput = 0.0
 
     def _prune_window(self, now: float) -> None:
         """Remove timestamps older than the window boundary."""
@@ -67,7 +74,7 @@ class ThroughputMonitor(Callback):
         """Record prediction timestamp and recompute throughput."""
         now = time.perf_counter()
         self._timestamps.append(now)
-        self.total_predictions += 1
+        self.total_calls += 1
 
         self._prune_window(now)
 
@@ -85,6 +92,6 @@ class ThroughputMonitor(Callback):
         return (
             f"ThroughputMonitor("
             f"throughput={self.throughput:.1f}/s, "
-            f"total={self.total_predictions}, "
+            f"total={self.total_calls}, "
             f"window={self._window_seconds}s)"
         )
