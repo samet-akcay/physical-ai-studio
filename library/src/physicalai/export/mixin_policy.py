@@ -18,7 +18,14 @@ import torch
 import yaml
 from onnxruntime_extensions import gen_processing_models
 
-from physicalai.export.backends import ExportBackend, ExportParameters, ONNXExportParameters, OpenVINOExportParameters
+from physicalai.export.backends import (
+    ExecuTorchDelegate,
+    ExecuTorchExportParameters,
+    ExportBackend,
+    ExportParameters,
+    ONNXExportParameters,
+    OpenVINOExportParameters,
+)
 from physicalai.inference.manifest import (
     ComponentSpec,
     Manifest,
@@ -458,6 +465,132 @@ class ExportablePolicyMixin:
         # Create metadata files
         self._create_metadata(export_dir, ExportBackend.TORCH_EXPORT_IR)
 
+    @torch.no_grad()
+    def to_executorch(
+        self,
+        output_path: PathLike | str,
+        input_sample: dict[str, torch.Tensor] | None = None,
+        *,
+        delegate: ExecuTorchDelegate | None = None,
+        delegate_config: dict[str, Any] | None = None,
+        **export_kwargs: dict,
+    ) -> Path:
+        """Export the model to ExecuTorch format.
+
+        Args:
+            output_path: Directory or file path where the ExecuTorch model will be saved.
+                If directory, creates ``{policy_name}.pte``. If file, uses as-is.
+            input_sample: A sample input tensor dictionary used to trace/export the model.
+                If ``None``, attempts to use the model's ``sample_input`` property.
+            delegate: ExecuTorch delegate backend to use. Defaults to ``None``
+                (uses value from ``ExecuTorchExportParameters``). Supported values:
+
+                - ``"portable"``: Portable mode — no delegation, uses ExecuTorch portable ops.
+                - ``"xnnpack"``: XNNPACK delegation — optimized CPU kernels for ARM/x86.
+                  Works out-of-the-box with ``pip install executorch``.
+                - ``"openvino"``: OpenVINO delegation — requires ``nncf`` for export and a
+                  custom-built ExecuTorch runtime with OpenVINO backend for inference.
+            delegate_config: Optional delegate-specific configuration. For ``"openvino"``,
+                supports ``{"device": "CPU"}`` (or other supported target device).
+            **export_kwargs: Additional keyword arguments passed to ``torch.export.export``.
+
+        Returns:
+            Path: Path to the exported ``.pte`` model file.
+
+        Raises:
+            NotImplementedError: If ExecuTorch export is not supported by the policy.
+            RuntimeError: If input sample is not provided and the model does not
+                implement ``sample_input`` property.
+            ImportError: If the required ``executorch`` package (or selected delegate
+                dependencies) is not installed.
+            ValueError: If an unsupported delegate is specified.
+        """
+        if ExportBackend.EXECUTORCH not in self.supported_export_backends:
+            msg = (
+                f"ExecuTorch export is not implemented for this policy.\n"
+                f"Supported backends: {self.supported_export_backends}"
+            )
+            raise NotImplementedError(msg)
+
+        if input_sample is None and hasattr(self.model, "sample_input"):
+            input_sample = self.model.sample_input
+        elif input_sample is None:
+            msg = (
+                "An input sample must be provided for ExecuTorch export, "
+                "or the model must implement `sample_input` property."
+            )
+            raise RuntimeError(msg)
+
+        model_path = self._prepare_export_path(output_path, ".pte")
+        export_dir = model_path.parent
+
+        extra_model_args = cast(
+            "ExecuTorchExportParameters",
+            self._get_export_extra_args(ExportBackend.EXECUTORCH),
+        )
+        extra_export_kwargs = extra_model_args.exporter_kwargs
+        extra_export_kwargs.update(export_kwargs)
+
+        if delegate is None:
+            delegate = extra_model_args.delegate
+
+        try:
+            from executorch.exir import to_edge_transform_and_lower  # noqa: PLC0415
+        except ImportError as e:
+            msg = "executorch package is required for ExecuTorch export. Install with: pip install executorch"
+            raise ImportError(msg) from e
+
+        self.model.eval()
+        aten_dialect = torch.export.export(
+            self.model,
+            args=(input_sample,),
+            **extra_export_kwargs,
+        )
+
+        try:
+            if delegate == "openvino":
+                from executorch.backends.openvino.partitioner import OpenvinoPartitioner  # noqa: PLC0415
+                from executorch.exir.backend.backend_details import CompileSpec  # noqa: PLC0415
+
+                compile_spec = [CompileSpec("device", (delegate_config or {}).get("device", "CPU").encode())]
+                partitioner = OpenvinoPartitioner(compile_spec)
+            elif delegate == "xnnpack":
+                from executorch.backends.xnnpack.partition.xnnpack_partitioner import (  # noqa: PLC0415
+                    XnnpackPartitioner,
+                )
+
+                partitioner = XnnpackPartitioner()
+            elif delegate is None or delegate == "portable":
+                partitioner = None
+            else:
+                msg = (
+                    f"Unsupported ExecuTorch delegate: {delegate!r}. "
+                    f"Supported delegates: 'portable', 'openvino', 'xnnpack', None"
+                )
+                raise ValueError(msg)
+        except ImportError as e:
+            msg = f"ExecuTorch delegate dependencies are required for delegate={delegate!r}."
+            raise ImportError(msg) from e
+
+        if partitioner is not None:
+            edge_program = to_edge_transform_and_lower(aten_dialect, partitioner=[partitioner])
+        else:
+            edge_program = to_edge_transform_and_lower(aten_dialect)
+
+        exec_program = edge_program.to_executorch()
+
+        with model_path.open("wb") as f:
+            exec_program.write_to_file(f)
+
+        self._create_metadata(
+            export_dir,
+            ExportBackend.EXECUTORCH,
+            input_names=list(input_sample.keys()),  # type: ignore[arg-type, union-attr]
+            output_names=extra_model_args.output_names,
+        )
+
+        return model_path
+
     def export(
         self,
         output_path: PathLike | str,
@@ -493,6 +626,8 @@ class ExportablePolicyMixin:
             self.to_openvino(output_path, input_sample, **export_kwargs)
         elif backend == ExportBackend.TORCH_EXPORT_IR:
             self.to_torch_export_ir(output_path, input_sample, **export_kwargs)
+        elif backend == ExportBackend.EXECUTORCH:
+            self.to_executorch(output_path, input_sample, **export_kwargs)
         elif backend == ExportBackend.TORCH:
             self.to_torch(output_path)
         else:

@@ -30,6 +30,7 @@ from physicalai.data import Feature, FeatureType
 from physicalai.data.observation import ACTION, EXTRA, IMAGES, STATE, Observation
 from physicalai.export import ExportableModelMixin
 from physicalai.export.backends import (
+    ExecuTorchExportParameters,
     ExportParameters,
     ONNXExportParameters,
     OpenVINOExportParameters,
@@ -271,6 +272,7 @@ class ACT(ExportableModelMixin, Model):
             preprocessing_type="image_resize",
         )
         extra_args["torch_export_ir"] = ExportParameters()
+        extra_args["executorch"] = ExecuTorchExportParameters()
         extra_args["torch"] = TorchExportParameters()
 
         return extra_args
