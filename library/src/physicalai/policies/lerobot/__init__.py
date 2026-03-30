@@ -107,6 +107,24 @@ from physicalai.policies.lerobot.universal import LeRobotPolicy
 
 LEROBOT_AVAILABLE = module_available("lerobot")
 
+# Canonical mapping from policy name to fully-qualified class path.
+# This is the SINGLE SOURCE OF TRUTH used by both the policy factory
+# (``get_lerobot_policy``) and the config adapter (``config.lerobot``).
+POLICY_CLASS_MAP: dict[str, str] = {
+    # Explicit wrappers (full parameter exposure)
+    "act": "physicalai.policies.lerobot.ACT",
+    "diffusion": "physicalai.policies.lerobot.Diffusion",
+    "smolvla": "physicalai.policies.lerobot.SmolVLA",
+    "groot": "physicalai.policies.lerobot.Groot",
+    # Universal wrapper convenience classes
+    "vqbet": "physicalai.policies.lerobot.VQBeT",
+    "tdmpc": "physicalai.policies.lerobot.TDMPC",
+    "sac": "physicalai.policies.lerobot.SAC",
+    "pi0": "physicalai.policies.lerobot.PI0",
+    "pi05": "physicalai.policies.lerobot.PI05",
+    "pi0fast": "physicalai.policies.lerobot.PI0Fast",
+}
+
 
 # Convenience wrapper classes for universal policies
 class VQBeT(LeRobotPolicy):
@@ -179,6 +197,7 @@ __all__ = [
     "ACT",
     "PI0",
     "PI05",
+    "POLICY_CLASS_MAP",
     "SAC",
     "TDMPC",
     "Diffusion",
@@ -241,29 +260,19 @@ def get_lerobot_policy(policy_name: str, **kwargs) -> LeRobotPolicy:  # noqa: AN
 
     policy_name_lower = policy_name.lower()
 
-    # Map policy names to their classes
-    policy_map = {
-        # Explicit wrappers
-        "act": ACT,
-        "diffusion": Diffusion,
-        "smolvla": SmolVLA,
-        "groot": Groot,
-        # Universal wrapper classes
-        "vqbet": VQBeT,
-        "tdmpc": TDMPC,
-        "sac": SAC,
-        "pi0": PI0,
-        "pi05": PI05,
-        "pi0fast": PI0Fast,
-    }
+    if policy_name_lower not in POLICY_CLASS_MAP:
+        available = ", ".join(sorted(POLICY_CLASS_MAP.keys()))
+        msg = f"Unknown LeRobot policy: {policy_name}. Available policies: {available}"
+        raise ValueError(msg)
 
-    if policy_name_lower in policy_map:
-        return policy_map[policy_name_lower](**kwargs)
+    class_path = POLICY_CLASS_MAP[policy_name_lower]
+    module_path, class_name = class_path.rsplit(".", 1)
 
-    # List available policies for error message
-    available = ", ".join(sorted(policy_map.keys()))
-    msg = f"Unknown LeRobot policy: {policy_name}. Available policies: {available}"
-    raise ValueError(msg)
+    import importlib  # noqa: PLC0415
+
+    module = importlib.import_module(module_path)
+    cls = getattr(module, class_name)
+    return cls(**kwargs)
 
 
 def is_available() -> bool:
