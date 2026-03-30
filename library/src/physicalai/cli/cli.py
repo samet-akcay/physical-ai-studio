@@ -17,13 +17,21 @@ Design Pattern:
 
 Key features:
 - All LightningCLI subcommands: fit, validate, test, predict
-- Additional `benchmark` subcommand for policy evaluation
+- Additional ``benchmark`` subcommand for policy evaluation
+- Additional ``config`` subcommand for config conversion
+- Auto-detection of LeRobot configs in ``fit --config``
 - Uses physicalai.train.Trainer by default
 - Full class_path support for model (policy), data, and benchmark
 
 Examples:
-    # Train with YAML config file
+    # Train with native YAML config
     physicalai fit --config configs/train.yaml
+
+    # Train with a LeRobot config (auto-detected and converted)
+    physicalai fit --config path/to/lerobot_config.json
+
+    # Explicitly convert a LeRobot config
+    physicalai config --from lerobot path/to/config.json -o train.yaml
 
     # Override config values from CLI
     physicalai fit \
@@ -33,23 +41,15 @@ Examples:
 
     # Run benchmark evaluation
     physicalai benchmark --config configs/benchmark/libero.yaml
-
-    # Benchmark with CLI overrides (shorthand syntax)
-    physicalai benchmark \
-        --config configs/benchmark/libero.yaml \
-        --benchmark.num_episodes 50 \
-        --policy physicalai.policies.ACT \
-        --ckpt_path ./checkpoints/model.ckpt
-
-    # Generate config template
-    physicalai fit --print_config
 """
 
 from __future__ import annotations
 
 import logging
+import sys
+import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from lightning.pytorch.cli import LightningArgumentParser, LightningCLI
 
@@ -62,44 +62,31 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_TRAINING_SUBCOMMANDS = {"fit", "validate", "test", "predict"}
+
 
 class CLI(LightningCLI):
-    r"""Custom CLI extending LightningCLI with benchmark evaluation support.
+    r"""Custom CLI extending LightningCLI with benchmark and config support.
 
-    This CLI provides a unified interface for both training and evaluation:
-    - Training: fit, validate, test, predict (inherited from LightningCLI)
-    - Evaluation: benchmark (added by CLI)
+    Subcommands:
+        - fit, validate, test, predict (inherited from LightningCLI)
+        - benchmark: policy evaluation
+        - config: config conversion (``--from lerobot``)
 
-    The benchmark subcommand uses class_path pattern for benchmarks and
-    simple string arguments for policy class and checkpoint path.
+    Training subcommands auto-detect LeRobot configs passed via
+    ``--config`` and convert them transparently before parsing.
 
     Example:
-        Command line usage:
+        .. code-block:: bash
 
-            # Training
+            # Native config
             physicalai fit --config configs/train.yaml
 
-            # Benchmark evaluation with config
-            physicalai benchmark --config configs/benchmark/libero.yaml
+            # LeRobot config (auto-converted)
+            physicalai fit --config lerobot_train_config.json
 
-            # Benchmark with CLI arguments
-            physicalai benchmark \\
-                --benchmark physicalai.benchmark.LiberoBenchmark \\
-                --benchmark.task_suite libero_10 \\
-                --policy physicalai.policies.ACT \\
-                --ckpt_path ./checkpoints/model.ckpt
-
-        YAML configuration for benchmark:
-
-            benchmark:
-              class_path: physicalai.benchmark.LiberoBenchmark
-              init_args:
-                task_suite: libero_10
-                num_episodes: 20
-
-            policy: physicalai.policies.ACT
-            ckpt_path: ./checkpoints/model.ckpt
-            output_dir: ./results/benchmark
+            # Explicit conversion
+            physicalai config --from lerobot config.json -o train.yaml
     """
 
     def __init__(
@@ -113,40 +100,116 @@ class CLI(LightningCLI):
         self._benchmark_pretrained: str | None = None
         self._benchmark_output_dir: Path | None = None
         self._benchmark_verbose: bool = False
+        self._temp_config_file: tempfile.NamedTemporaryFile | None = None
 
         super().__init__(*args, **kwargs)
 
-    def instantiate_classes(self) -> None:
-        """Override to skip instantiation for benchmark subcommand.
-
-        The benchmark subcommand uses different arguments (benchmark/policy)
-        than training (model/datamodule), so we handle instantiation
-        separately in _run_benchmark().
-        """
-        if self.subcommand == "benchmark":
-            # Skip automatic instantiation for benchmark - handled in _run_benchmark()
+    def instantiate_classes(self) -> None:  # noqa: D102
+        if self.subcommand in {"benchmark", "config"}:
             return
         super().instantiate_classes()
 
     @staticmethod
-    def subcommands() -> dict[str, set[str]]:
-        """Define available subcommands including benchmark.
-
-        Returns:
-            Dict mapping subcommand names to sets of arguments to skip.
-            The benchmark subcommand skips model/data/trainer since it uses
-            its own benchmark and pretrained arguments.
-        """
+    def subcommands() -> dict[str, set[str]]:  # noqa: D102
         return {
             "fit": {"model", "train_dataloaders", "val_dataloaders", "datamodule"},
             "validate": {"model", "dataloaders", "datamodule"},
             "test": {"model", "dataloaders", "datamodule"},
             "predict": {"model", "dataloaders", "datamodule"},
             "benchmark": {"model", "dataloaders", "datamodule", "trainer"},
+            "config": set(),
         }
 
+    _NON_TRAINER_SUBCOMMANDS: ClassVar[set[str]] = {"benchmark", "config"}
+
+    def parse_arguments(self, parser: LightningArgumentParser, args: Any) -> None:  # noqa: ANN401
+        """Pre-process args to auto-convert LeRobot configs before parsing."""
+        args = self._maybe_convert_lerobot_config(args)
+
+        # Non-trainer subcommands (benchmark, config) use custom parsers that
+        # don't populate the parent namespace. Pre-seed the subcommand
+        # namespace with its parser defaults so jsonargparse can clone it
+        # during argument parsing (empty Namespace gets dropped by merge).
+        arg_list: list[str] | None = sys.argv[1:] if args is None else (args if isinstance(args, list) else None)
+        if arg_list and arg_list[0] in self._NON_TRAINER_SUBCOMMANDS:
+            from jsonargparse import Namespace  # noqa: PLC0415
+
+            subcmd = arg_list[0]
+            subparser = self._subcommand_parsers[subcmd]
+            sub_defaults = subparser.get_defaults()
+            self.config = parser.parse_args(arg_list, namespace=Namespace(**{subcmd: sub_defaults}))
+            return
+
+        super().parse_arguments(parser, args)
+
+    def _maybe_convert_lerobot_config(self, args: Any) -> Any:  # noqa: ANN401
+        """Detect and convert LeRobot config files in --config arguments.
+
+        Scans the argument list for a training subcommand with a ``--config``
+        flag pointing to a LeRobot-format file.  When found, converts the
+        file to a temporary native YAML and rewrites the arg list in-place.
+
+        Returns:
+            The (possibly modified) argument list, or ``None`` when
+            ``sys.argv`` was rewritten in-place.
+        """
+        arg_list: list[str] | None = None
+        if args is None:
+            arg_list = sys.argv[1:]
+            use_sysargv = True
+        elif isinstance(args, list):
+            arg_list = list(args)
+            use_sysargv = False
+        else:
+            return args
+
+        if not arg_list or arg_list[0] not in _TRAINING_SUBCOMMANDS:
+            return args
+
+        config_indices = [i for i, a in enumerate(arg_list) if a == "--config" and i + 1 < len(arg_list)]
+        if not config_indices:
+            return args
+
+        from physicalai.config.lerobot import detect_config_format  # noqa: PLC0415
+
+        for idx in config_indices:
+            config_path = arg_list[idx + 1]
+            if not Path(config_path).exists():
+                continue
+
+            try:
+                fmt = detect_config_format(config_path)
+            except (ValueError, FileNotFoundError):
+                continue
+
+            if fmt != "lerobot":
+                continue
+
+            logger.info("Detected LeRobot config at %s — auto-converting for physicalai.", config_path)
+
+            from physicalai.config.lerobot import TrainPipelineConfigAdapter  # noqa: PLC0415
+
+            adapter = TrainPipelineConfigAdapter.from_file(config_path)
+            self._temp_config_file = tempfile.NamedTemporaryFile(  # noqa: SIM115
+                mode="w",
+                suffix=".yaml",
+                prefix="physicalai_converted_",
+                delete=False,
+                encoding="utf-8",
+            )
+            adapter.to_yaml(self._temp_config_file.name)
+            self._temp_config_file.close()
+
+            arg_list[idx + 1] = self._temp_config_file.name
+            logger.info("Using converted config: %s", self._temp_config_file.name)
+            break
+
+        if use_sysargv:
+            sys.argv[1:] = arg_list
+            return None
+        return arg_list
+
     def _add_subcommands(self, parser: LightningArgumentParser, **kwargs: Any) -> None:  # noqa: ANN401
-        """Add subcommands including custom benchmark command."""
         from lightning.pytorch.cli import (  # noqa: PLC0415
             _get_short_description,  # noqa: PLC2701
             class_from_function,
@@ -161,13 +224,16 @@ class CLI(LightningCLI):
 
         for subcommand in self.subcommands():
             if subcommand == "benchmark":
-                # Custom handling for benchmark subcommand
                 description = "Run benchmark evaluation on a trained policy."
                 subparser_kwargs = kwargs.get(subcommand, {})
                 subparser_kwargs.setdefault("description", description)
                 subcommand_parser = self._create_benchmark_parser(**subparser_kwargs)
+            elif subcommand == "config":
+                description = "Convert external config formats (e.g. LeRobot) to physicalai YAML."
+                subparser_kwargs = kwargs.get(subcommand, {})
+                subparser_kwargs.setdefault("description", description)
+                subcommand_parser = self._create_config_parser(**subparser_kwargs)
             else:
-                # Standard LightningCLI handling for training subcommands
                 fn = getattr(trainer_class, subcommand)
                 description = _get_short_description(fn) or f"Run {subcommand}"
                 subparser_kwargs = kwargs.get(subcommand, {})
@@ -178,16 +244,10 @@ class CLI(LightningCLI):
             parser_subcommands.add_subcommand(subcommand, subcommand_parser, help=description)
 
     def _create_benchmark_parser(self, **kwargs: Any) -> LightningArgumentParser:  # noqa: ANN401, PLR6301
-        """Create argument parser for benchmark subcommand.
-
-        Returns:
-            Parser configured with benchmark, policy class, checkpoint, and output arguments.
-        """
         from physicalai.benchmark import Benchmark  # noqa: PLC0415
 
         parser = LightningArgumentParser(**kwargs)
 
-        # Add benchmark with class_path pattern (like model in training)
         parser.add_subclass_arguments(
             Benchmark,
             nested_key="benchmark",
@@ -195,7 +255,6 @@ class CLI(LightningCLI):
             help="Benchmark configuration. Use class_path for specialized benchmarks.",
         )
 
-        # Policy class path as simple string (required)
         parser.add_argument(
             "--policy",
             type=str,
@@ -209,13 +268,10 @@ class CLI(LightningCLI):
             default=None,
             help=(
                 "Path to checkpoint file (.ckpt) or export directory. "
-                "For Policy subclasses: path to Lightning checkpoint (.ckpt). "
-                "For InferenceModel: path to export directory containing model files. "
-                "If not provided, uses randomly initialized policy (Policy only)."
+                "If not provided, uses randomly initialized policy."
             ),
         )
 
-        # Output directory
         parser.add_argument(
             "--output_dir",
             type=str,
@@ -225,12 +281,69 @@ class CLI(LightningCLI):
 
         return parser
 
+    def _create_config_parser(self, **kwargs: Any) -> LightningArgumentParser:  # noqa: ANN401, PLR6301
+        parser = LightningArgumentParser(**kwargs)
+
+        parser.add_argument(
+            "--from",
+            type=str,
+            dest="source_format",
+            default="lerobot",
+            help="Source config format. Currently supported: 'lerobot'.",
+        )
+
+        parser.add_argument(
+            "input",
+            type=str,
+            help="Path to source config file, local checkpoint directory, or HuggingFace Hub repo ID.",
+        )
+
+        parser.add_argument(
+            "-o",
+            "--output",
+            type=str,
+            default=None,
+            help="Output YAML file path. Defaults to <input_stem>_physicalai.yaml.",
+        )
+
+        return parser
+
     def _run_subcommand(self, subcommand: str) -> None:
-        """Run the chosen subcommand with custom benchmark handling."""
         if subcommand == "benchmark":
             self._run_benchmark()
+        elif subcommand == "config":
+            self._run_config()
         else:
             super()._run_subcommand(subcommand)
+
+    def _run_config(self) -> None:
+        from physicalai.config.lerobot import TrainPipelineConfigAdapter  # noqa: PLC0415
+
+        if self.subcommand is None:
+            msg = "No subcommand specified"
+            raise ValueError(msg)
+        config = self.config.get(self.subcommand)
+        if config is None:
+            msg = "config subcommand configuration not found"
+            raise ValueError(msg)
+
+        source_format = config.source_format
+        input_path = config.input
+        output_path = config.output
+
+        if source_format != "lerobot":
+            msg = f"Unsupported source format: {source_format!r}. Currently supported: 'lerobot'."
+            raise ValueError(msg)
+
+        adapter = TrainPipelineConfigAdapter.from_file(input_path)
+
+        if output_path is None:
+            stem = Path(input_path).stem if Path(input_path).exists() else "lerobot"
+            output_path = f"{stem}_physicalai.yaml"
+
+        result_path = adapter.to_yaml(output_path)
+        logger.info("Config written to %s", result_path)
+        print(f"Converted config written to: {result_path}")  # noqa: T201
 
     @staticmethod
     def _load_policy(

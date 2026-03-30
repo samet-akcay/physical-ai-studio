@@ -5,12 +5,11 @@
 
 from __future__ import annotations
 
+import pathlib
 import tempfile
-from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
-
 
 # Skip all tests if lerobot not installed
 pytestmark = pytest.mark.skipif(
@@ -25,7 +24,6 @@ def lerobot_imports():
     """Import LeRobot modules once per test module."""
     pytest.importorskip("lerobot")
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
-
     from physicalai.policies.lerobot import LeRobotPolicy
 
     return {"LeRobotPolicy": LeRobotPolicy, "LeRobotDataset": LeRobotDataset}
@@ -284,9 +282,7 @@ class TestLeRobotPolicyCheckpoint:
                 assert torch.allclose(orig, loaded), "Weights should match after loading"
 
         finally:
-            import os
-
-            os.unlink(checkpoint_path)
+            pathlib.Path(checkpoint_path).unlink()
 
     def test_load_from_checkpoint_explicit_wrapper_act(self, lerobot_imports, pusht_dataset):
         """Test checkpoint save and load for explicit ACT wrapper."""
@@ -324,9 +320,7 @@ class TestLeRobotPolicyCheckpoint:
                 assert torch.allclose(orig, loaded), "Weights should match after loading"
 
         finally:
-            import os
-
-            os.unlink(checkpoint_path)
+            pathlib.Path(checkpoint_path).unlink()
 
     def test_load_from_checkpoint_explicit_wrapper_diffusion(self, lerobot_imports, pusht_dataset):
         """Test checkpoint save and load for explicit Diffusion wrapper."""
@@ -363,9 +357,7 @@ class TestLeRobotPolicyCheckpoint:
                 assert torch.allclose(orig, loaded), "Weights should match after loading"
 
         finally:
-            import os
-
-            os.unlink(checkpoint_path)
+            pathlib.Path(checkpoint_path).unlink()
 
     def test_load_from_checkpoint_missing_config_raises_error(self, tmp_path):
         """Test that loading checkpoint without config raises KeyError."""
@@ -404,9 +396,7 @@ class TestLeRobotPolicyCheckpoint:
                 assert loaded_policy._dataset_stats is not None
 
         finally:
-            import os
-
-            os.unlink(checkpoint_path)
+            pathlib.Path(checkpoint_path).unlink()
 
 
 class TestLeRobotPolicyNumericalEquivalence:
@@ -506,6 +496,20 @@ class TestLeRobotPolicyNumericalEquivalence:
             atol=1e-5,
             msg="Wrapper predict_action_chunk should match LeRobot predict_action_chunk",
         )
+
+    def test_forward_training_returns_loss(self, policy_and_batch):
+        """Verify forward in training mode returns (loss, loss_dict)."""
+        policy, batch = policy_and_batch
+
+        policy.train()
+        policy.reset()
+
+        output = policy(batch)
+
+        assert isinstance(output, tuple)
+        loss = output[0]
+        assert isinstance(loss, torch.Tensor)
+        assert loss.numel() == 1
 
     def test_select_action_shape_is_single_action(self, policy_and_batch):
         """Verify select_action returns single action per batch item."""

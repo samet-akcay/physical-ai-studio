@@ -8,3 +8,12 @@ from physicalai.config.instantiate import instantiate_obj
 from physicalai.config.mixin import FromConfig
 
 __all__ = ["Config", "FromConfig", "instantiate_obj"]
+
+
+def __getattr__(name: str) -> object:
+    if name in {"TrainPipelineConfigAdapter", "detect_config_format"}:
+        from physicalai.config import lerobot as _lr  # noqa: PLC0415
+
+        return getattr(_lr, name)
+    msg = f"module {__name__!r} has no attribute {name!r}"
+    raise AttributeError(msg)
