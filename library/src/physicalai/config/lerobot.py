@@ -7,18 +7,6 @@ Converts LeRobot's ``TrainPipelineConfig`` (draccus dataclass) into
 physicalai-studio's jsonargparse YAML format so that a LeRobot user can
 bring their existing training config and run it through the physicalai
 ``Trainer`` with zero code changes.
-
-Design decisions
-----------------
-* **Thinnest wrapper** -- we only translate at the config boundary.
-  Optimizer / scheduler settings are embedded inside the policy config
-  (``LeRobotPolicy.configure_optimizers`` reads from its ``_config``),
-  so we do NOT create separate YAML optimizer/scheduler sections.
-* **Round-trip safe** -- the generated YAML is valid input for
-  ``physicalai fit --config <generated>.yaml``.
-* **Lossless where possible** -- fields that have no physicalai
-  equivalent are stored under ``_lerobot_extra`` in the YAML so the
-  user can inspect them.
 """
 
 from __future__ import annotations
