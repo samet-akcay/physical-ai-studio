@@ -248,7 +248,7 @@ class TestTrainPipelineConfigAdapterPolicyMapping:
             ("sac", "physicalai.policies.lerobot.SAC"),
             ("pi0", "physicalai.policies.lerobot.PI0"),
             ("pi05", "physicalai.policies.lerobot.PI05"),
-            ("pi0fast", "physicalai.policies.lerobot.PI0Fast"),
+            ("pi0_fast", "physicalai.policies.lerobot.PI0Fast"),
         ],
     )
     def test_policy_type_to_class_path(self, policy_type, expected_class_path):
