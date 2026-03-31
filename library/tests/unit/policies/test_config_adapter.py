@@ -1,10 +1,7 @@
-# Copyright (C) 2025-2026 Intel Corporation
+# Copyright (C) 2026 Intel Corporation
 # SPDX-License-Identifier: Apache-2.0
 
 """Tests for LeRobot configuration adapter behavior."""
-
-# ruff: noqa: S101, PLR6301, PLC0415, D102
-# ruff: noqa: D101, D103, ANN001, ANN201, S108, PLR2004
 
 from __future__ import annotations
 
