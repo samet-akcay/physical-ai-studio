@@ -343,9 +343,11 @@ class InferenceModel:
 
         return Manifest()
 
-    @staticmethod
-    def _load_processors(specs: list[ComponentSpec]) -> list[Any]:
+    def _load_processors(self, specs: list[ComponentSpec]) -> list[Any]:
         """Instantiate preprocessors or postprocessors from component specs.
+
+        Resolves relative ``artifact`` paths to absolute paths using
+        the export directory before instantiation.
 
         Args:
             specs: List of component specifications to instantiate.
@@ -353,7 +355,38 @@ class InferenceModel:
         Returns:
             List of instantiated processor objects.
         """
-        return [instantiate_component(spec) for spec in specs]
+        return [instantiate_component(self._resolve_artifact(spec)) for spec in specs]
+
+    def _resolve_artifact(self, spec: ComponentSpec) -> ComponentSpec:
+        """Resolve relative ``artifact`` paths to absolute paths.
+
+        For type-based specs, resolves a relative ``artifact`` flat
+        param to an absolute path.  For class_path-based specs,
+        resolves a relative ``artifact`` in ``init_args``.
+
+        Returns:
+            The spec with resolved artifact path, or the original spec
+            unchanged if no resolution is needed.
+        """
+        flat = spec.flat_params
+        if "artifact" in flat and not Path(flat["artifact"]).is_absolute():
+            resolved_path = str(self.export_dir / flat["artifact"])
+            new_params = {**flat, "artifact": resolved_path}
+            return ComponentSpec.model_validate({
+                "type": spec.type,
+                **new_params,
+            })
+
+        if spec.class_path and "artifact" in spec.init_args:
+            artifact = spec.init_args["artifact"]
+            if not Path(artifact).is_absolute():
+                new_init_args = {**spec.init_args, "artifact": str(self.export_dir / artifact)}
+                return ComponentSpec.model_validate({
+                    "class_path": spec.class_path,
+                    "init_args": new_init_args,
+                })
+
+        return spec
 
     def _detect_policy_name(self) -> str:
         """Auto-detect policy name from manifest or file heuristics.

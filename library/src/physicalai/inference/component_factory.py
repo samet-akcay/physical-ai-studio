@@ -100,6 +100,12 @@ component_registry = ComponentRegistry()
 component_registry.register("single_pass", "physicalai.inference.runners.SinglePass")
 component_registry.register("action_chunking", "physicalai.inference.runners.ActionChunking")
 
+# Preprocessors
+component_registry.register("normalize", "physicalai.inference.preprocessors.StatsNormalizer")
+
+# Postprocessors
+component_registry.register("denormalize", "physicalai.inference.postprocessors.StatsDenormalizer")
+
 
 def _import_class(class_path: str) -> type:
     """Import and return a class from a fully-qualified dotted path.
