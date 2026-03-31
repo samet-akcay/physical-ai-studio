@@ -1,4 +1,4 @@
-# Copyright (C) 2025 Intel Corporation
+# Copyright (C) 2025-2026 Intel Corporation
 # SPDX-License-Identifier: Apache-2.0
 
 """LeRobot <-> physicalai-studio configuration adapter.
@@ -53,19 +53,21 @@ _LEROBOT_MARKER_KEYS = {"policy", "dataset"}
 _DEFAULT_TOLERANCE_S = 1e-4
 
 
-class _TopLevelMappingTypeError(TypeError, ValueError):
+class _TopLevelMappingTypeError(ValueError):
     """Raised when a config does not contain a top-level mapping."""
 
 
 def detect_config_format(path: str | Path) -> str:
     """Detect whether a config file is native physicalai or LeRobot format.
 
-    The detection is purely structural — it inspects top-level keys:
+    The detection is deliberately **asymmetric**:
 
-    * **physicalai**: contains ``model``, ``data``, and/or ``trainer``
-      (jsonargparse ``class_path`` / ``init_args`` style).
-    * **LeRobot**: contains ``policy`` and ``dataset`` keys
-      (draccus dataclass style).
+    * **physicalai**: matched when *any* of ``model``, ``data``, ``trainer``
+      is present.  A single marker is enough because physicalai configs
+      may validly contain only a subset (e.g. a trainer-only override).
+    * **LeRobot**: matched only when *both* ``policy`` **and** ``dataset``
+      are present.  Requiring both avoids false positives from configs
+      that happen to have a ``policy`` key for unrelated reasons.
 
     Supports both YAML (``.yaml``, ``.yml``) and JSON (``.json``) files.
 
@@ -132,7 +134,7 @@ def _read_top_level_keys(path: Path) -> set[str]:
 
             with Path(path).open(encoding="utf-8") as f:
                 data = yaml.safe_load(f)
-        except Exception:  # noqa: BLE001
+        except (ImportError, yaml.YAMLError):
             with Path(path).open(encoding="utf-8") as f:
                 data = json.load(f)
 
@@ -420,9 +422,9 @@ class TrainPipelineConfigAdapter:
             if f.name in skip:
                 continue
             val = getattr(policy_cfg, f.name)
-            if val == f.default:
+            if f.default is not dataclasses.MISSING and val == f.default:
                 continue
-            if callable(f.default_factory) and val == f.default_factory():
+            if f.default_factory is not dataclasses.MISSING and val == f.default_factory():
                 continue
             result[f.name] = _serialize_value(val)
 
@@ -434,6 +436,13 @@ class TrainPipelineConfigAdapter:
 
         This is a convenience constructor for users who have an existing
         ``train_config.json`` (e.g. from a LeRobot training run).
+
+        .. note::
+
+            Uses ``TrainPipelineConfig.from_pretrained()`` which may
+            attempt a HuggingFace Hub download when *path* looks like a
+            Hub repo ID (e.g. ``"user/model"``).  Pass a local file path
+            to guarantee offline operation.
 
         Returns:
             Adapter instance wrapping the loaded config.
