@@ -45,6 +45,7 @@ Examples:
 
 from __future__ import annotations
 
+import atexit
 import logging
 import sys
 import tempfile
@@ -103,6 +104,15 @@ class CLI(LightningCLI):
         self._temp_config_file: tempfile.NamedTemporaryFile | None = None
 
         super().__init__(*args, **kwargs)
+
+        if self._temp_config_file is not None:
+            atexit.register(self._cleanup_temp_config)
+
+    def _cleanup_temp_config(self) -> None:
+        """Remove temporary converted config file created during auto-detection."""
+        if self._temp_config_file is not None:
+            Path(self._temp_config_file.name).unlink(missing_ok=True)
+            self._temp_config_file = None
 
     def instantiate_classes(self) -> None:  # noqa: D102
         if self.subcommand in {"benchmark", "config"}:
@@ -205,6 +215,10 @@ class CLI(LightningCLI):
             break
 
         if use_sysargv:
+            # LightningCLI reads from sys.argv when args=None.  We must
+            # mutate sys.argv in-place so the converted path is visible
+            # to the downstream parser.  This is safe because CLI
+            # instances are short-lived entry-point objects.
             sys.argv[1:] = arg_list
             return None
         return arg_list

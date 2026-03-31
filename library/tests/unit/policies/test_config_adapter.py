@@ -1,4 +1,4 @@
-# Copyright (C) 2025 Intel Corporation
+# Copyright (C) 2025-2026 Intel Corporation
 # SPDX-License-Identifier: Apache-2.0
 
 """Tests for LeRobot configuration adapter behavior."""
@@ -12,12 +12,10 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-from lerobot.configs.default import DatasetConfig, WandBConfig
 
-pytestmark = pytest.mark.skipif(
-    not pytest.importorskip("lerobot", reason="LeRobot not installed"),
-    reason="Requires lerobot",
-)
+lerobot = pytest.importorskip("lerobot", reason="LeRobot not installed")
+
+from lerobot.configs.default import DatasetConfig, WandBConfig  # noqa: E402
 
 
 def _make_policy_mock(policy_type: str = "act", *, use_amp: bool = False) -> MagicMock:
