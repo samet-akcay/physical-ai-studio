@@ -39,8 +39,9 @@ if TYPE_CHECKING or module_available("lerobot"):
     from lerobot.configs.policies import PreTrainedConfig
     from lerobot.configs.types import FeatureType
     from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
-    from lerobot.datasets.utils import dataset_to_policy_features
     from lerobot.policies.factory import get_policy_class, make_policy_config, make_pre_post_processors
+
+    from physicalai._lerobot_compat import dataset_to_policy_features
 
     LEROBOT_AVAILABLE = True
 else:

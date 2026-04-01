@@ -30,9 +30,10 @@ if TYPE_CHECKING:
 
 if TYPE_CHECKING or module_available("lerobot"):
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
-    from lerobot.datasets.utils import dataset_to_policy_features
     from lerobot.policies.factory import make_pre_post_processors
     from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig as _LeRobotSmolVLAConfig
+
+    from physicalai._lerobot_compat import dataset_to_policy_features
 
     LEROBOT_AVAILABLE = True
 else:

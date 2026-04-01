@@ -10,11 +10,11 @@ import numpy as np
 import torch
 from lerobot.datasets.dataset_tools import delete_episodes as lerobot_delete_episodes
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.utils import build_dataset_frame
 from lerobot.processor import make_default_processors
 from lerobot.processor.pipeline import RobotProcessorPipeline
 from lerobot.utils.constants import ACTION, OBS_STR
 from loguru import logger
+from physicalai._lerobot_compat import build_dataset_frame
 
 from internal_datasets.dataset_client import DatasetClient
 from internal_datasets.lerobot.streaming_encoding_settings import StreamingEncodingSettings
