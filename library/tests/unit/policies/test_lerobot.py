@@ -435,9 +435,11 @@ class TestLeRobotPolicyNumericalEquivalence:
         for key, feature in config.input_features.items():
             batch[key] = torch.randn(1, *feature.shape, device=device)
 
-        # Add action (needed for some policies during inference)
-        action_shape = config.output_features["action"].shape
-        batch["action"] = torch.randn(1, *action_shape, device=device)
+        # Add action with chunk_size dimension (needed for training forward pass).
+        # LeRobot policies expect action shape (batch, chunk_size, action_dim).
+        action_dim = config.output_features["action"].shape[0]
+        chunk_size = config.chunk_size
+        batch["action"] = torch.randn(1, chunk_size, action_dim, device=device)
 
         return policy, batch
 
