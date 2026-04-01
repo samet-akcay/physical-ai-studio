@@ -441,6 +441,10 @@ class TestLeRobotPolicyNumericalEquivalence:
         chunk_size = config.chunk_size
         batch["action"] = torch.randn(1, chunk_size, action_dim, device=device)
 
+        # Add action_is_pad mask (needed by ACT's forward for masked L1 loss).
+        # Shape: (batch, chunk_size). False = not padded (all valid actions).
+        batch["action_is_pad"] = torch.zeros(1, chunk_size, dtype=torch.bool, device=device)
+
         return policy, batch
 
     def test_select_action_matches_lerobot_directly(self, policy_and_batch):
