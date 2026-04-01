@@ -17,20 +17,16 @@ if TYPE_CHECKING:
 def get_runner(metadata: dict[str, Any]) -> InferenceRunner:
     """Select and instantiate a runner from export metadata or manifest.
 
-    Supports two formats:
-
-    1. **Manifest** (``manifest.json``): If ``metadata`` contains a
-       ``"runner"`` key with ``class_path`` + ``init_args``, the runner
-       is instantiated dynamically via :class:`ComponentSpec`.
-    2. **Legacy** (``metadata.yaml``): Falls back to reading flat keys
-       ``use_action_queue`` and ``chunk_size``.
-
-    Args:
-        metadata: Export metadata dict (from ``metadata.yaml`` or
-            ``manifest.json``).
+    Supports:
+    1. Manifest object — reads ``source.model.runner`` and instantiates
+       via :func:`instantiate_component`.
+    2. Dict with runner spec — raw manifest dict containing a ``"model"``
+       section with a runner component spec.
+    3. Legacy dict — falls back to flat ``use_action_queue`` and
+       ``chunk_size`` keys.
 
     Returns:
-        Configured runner instance.
+        Instantiated runner configured from manifest/metadata input.
     """
     runner_spec = metadata.get("runner")
     if isinstance(runner_spec, dict) and "class_path" in runner_spec:
@@ -43,3 +39,17 @@ def get_runner(metadata: dict[str, Any]) -> InferenceRunner:
         chunk_size = metadata.get("chunk_size", 1)
         return ActionChunking(runner=SinglePass(), chunk_size=chunk_size)
     return SinglePass()
+
+
+def _extract_runner_spec(metadata: dict[str, Any]) -> dict[str, Any] | None:
+    model_section = metadata.get("model", {})
+    if isinstance(model_section, dict):
+        runner = model_section.get("runner")
+        if isinstance(runner, dict) and ("class_path" in runner or "type" in runner):
+            return runner
+
+    runner = metadata.get("runner")
+    if isinstance(runner, dict) and ("class_path" in runner or "type" in runner):
+        return runner
+
+    return None

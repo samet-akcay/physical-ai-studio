@@ -25,5 +25,12 @@ Examples:
 
 from physicalai.inference.callbacks.base import Callback
 from physicalai.inference.model import InferenceModel
+from physicalai.inference.postprocessors import StatsDenormalizer
+from physicalai.inference.preprocessors import StatsNormalizer
 
-__all__ = ["Callback", "InferenceModel"]
+__all__ = [
+    "Callback",
+    "InferenceModel",
+    "StatsDenormalizer",
+    "StatsNormalizer",
+]
