@@ -9,10 +9,16 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
+
+if TYPE_CHECKING:
+    import argparse
+
+    from physicalai.cli.cli import CLI
 
 # ───────────────────────────────────────────────────────────────────
 # detect_config_format
@@ -214,7 +220,7 @@ class TestMaybeConvertLerobotConfig:
     """
 
     @staticmethod
-    def _make_cli_stub() -> object:
+    def _make_cli_stub() -> CLI:
         """Create a minimal CLI-like object with ``_maybe_convert_lerobot_config``."""
         from physicalai.cli.cli import CLI
 
@@ -318,7 +324,7 @@ class TestCreateConfigParser:
     """Tests for the ``config`` subcommand argument parser."""
 
     @staticmethod
-    def _get_config_parser() -> object:
+    def _get_config_parser() -> argparse.ArgumentParser:
         """Get a config parser from a CLI stub."""
         from physicalai.cli.cli import CLI
 
@@ -361,7 +367,7 @@ class TestRunConfig:
         source_format: str,
         input_path: str,
         output_path: str | None = None,
-    ) -> object:
+    ) -> CLI:
         """Create a CLI stub with a mocked ``self.config`` namespace."""
         from physicalai.cli.cli import CLI
 

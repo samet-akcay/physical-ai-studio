@@ -101,7 +101,7 @@ class CLI(LightningCLI):
         self._benchmark_pretrained: str | None = None
         self._benchmark_output_dir: Path | None = None
         self._benchmark_verbose: bool = False
-        self._temp_config_file: tempfile.NamedTemporaryFile | None = None
+        self._temp_config_file: Any | None = None  # tempfile.NamedTemporaryFile instance
 
         super().__init__(*args, **kwargs)
 
