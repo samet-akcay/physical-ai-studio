@@ -6,8 +6,7 @@
 Wraps any ``InferenceRunner`` to add temporal action buffering.  The inner
 runner produces an output dict whose action value has shape
 ``(batch, horizon, action_dim)``.  This wrapper queues the individual
-timesteps, dispensing one per call.  Only invokes the inner runner again
-when the queue is exhausted.
+timesteps, dispensing one per call.
 
 This is the GoF Decorator pattern: ``ActionChunking`` *is* an
 ``InferenceRunner`` and *has* an ``InferenceRunner``.
@@ -16,9 +15,9 @@ This is the GoF Decorator pattern: ``ActionChunking`` *is* an
 from __future__ import annotations
 
 from collections import deque
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-import numpy as np
+import numpy as np  # noqa: TC002
 
 from physicalai.inference.constants import ACTION
 from physicalai.inference.runners.base import InferenceRunner
@@ -37,18 +36,20 @@ class ActionChunking(InferenceRunner):
     without running inference.
 
     Args:
-        runner: The inner runner to delegate inference to.
+        runner: The inner runner to delegate inference to. If ``None``,
+            a :class:`SinglePass` is created lazily on first use.
         chunk_size: Number of actions per chunk.  Must match the inner
             runner's output temporal dimension.
-        action_key: Key in the runner output dict that holds the action
-            tensor.  Defaults to ``"action"``.
+        n_action_steps: Number of actions to actually enqueue from each
+            chunk.  Defaults to ``chunk_size``.
+        action_key: Key in the runner output dict that holds the action.
 
     Examples:
         Wrap a single-pass runner with action chunking:
 
-        >>> runner = ActionChunking(SinglePass(), chunk_size=10)
-        >>> outputs = runner.run(adapter, inputs)  # runs inference, queues 10 actions
-        >>> outputs = runner.run(adapter, inputs)  # pops from queue, no inference
+        >>> runner = ActionChunking(chunk_size=10)
+        >>> outputs = runner.run(adapters, inputs)  # runs inference, queues 10 actions
+        >>> outputs = runner.run(adapters, inputs)  # pops from queue, no inference
 
         Compose with any runner (e.g. future flow-matching):
 
@@ -57,52 +58,67 @@ class ActionChunking(InferenceRunner):
 
     def __init__(
         self,
-        runner: InferenceRunner,
+        runner: InferenceRunner | None = None,
         chunk_size: int = 1,
+        n_action_steps: int | None = None,
         action_key: str = ACTION,
+        **kwargs: Any,  # noqa: ARG002, ANN401
     ) -> None:
         """Initialize with an inner runner and chunk configuration.
 
         Args:
-            runner: The inner runner to wrap.
+            runner: The inner runner to wrap (or ``None`` for lazy SinglePass).
             chunk_size: Number of actions per chunk.
+            n_action_steps: Number of chunk steps to queue per refill.
             action_key: Key for the action tensor in the output dict.
+            **kwargs: Extra manifest parameters accepted for compatibility.
         """
         self.runner = runner
         self.chunk_size = chunk_size
+        self.n_action_steps = n_action_steps or chunk_size
         self.action_key = action_key
         self._action_queue: deque[np.ndarray] = deque()
 
     def run(
         self,
-        adapter: RuntimeAdapter,
-        inputs: dict[str, np.ndarray],
-    ) -> dict[str, np.ndarray]:
-        """Return the next action, running inference only when the queue is empty.
+        adapters: dict[str, RuntimeAdapter],
+        inputs: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Return the next action, running inference only when queue is empty.
 
         Args:
-            adapter: The loaded runtime adapter.
+            adapters: Named runtime adapters, passed to the wrapped runner.
             inputs: Pre-processed model inputs.
 
         Returns:
-            Output dict with a single action of shape
-            ``(batch_size, action_dim)``.
+            Output dict with a single action of shape ``(batch_size, action_dim)``.
         """
         if len(self._action_queue) > 0:
             return {self.action_key: self._action_queue.popleft()}
 
-        outputs = self.runner.run(adapter, inputs)
-        actions = outputs[self.action_key]
+        if self.runner is None:
+            from physicalai.inference.runners.single_pass import SinglePass  # noqa: PLC0415
 
-        batch_actions = np.transpose(actions, (1, 0, 2))
-        self._action_queue.extend(batch_actions)
+            self.runner = SinglePass()
+
+        outputs = self.runner.run(adapters, inputs)
+        chunk = outputs[self.action_key]
+
+        # Squeeze leading batch dim if present: (1, T, D) -> (T, D)
+        if chunk.ndim == 3 and chunk.shape[0] == 1:  # noqa: PLR2004
+            chunk = chunk[0]
+
+        n_steps = min(self.n_action_steps, len(chunk))
+        for i in range(n_steps):
+            self._action_queue.append(chunk[i])
 
         return {self.action_key: self._action_queue.popleft()}
 
     def reset(self) -> None:
         """Clear the action queue and reset the inner runner."""
         self._action_queue.clear()
-        self.runner.reset()
+        if self.runner is not None:
+            self.runner.reset()
 
     def __repr__(self) -> str:
         """Return string representation of the runner."""

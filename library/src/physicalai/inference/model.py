@@ -6,27 +6,47 @@
 from __future__ import annotations
 
 import json
+import logging
 import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self
 
 import yaml
 
-from physicalai.export.backends import ExportBackend
 from physicalai.inference.adapters import get_adapter
 from physicalai.inference.component_factory import instantiate_component
 from physicalai.inference.constants import ACTION
-from physicalai.inference.manifest import ComponentSpec
+from physicalai.inference.manifest import ComponentSpec, Manifest
 from physicalai.inference.runners import get_runner
 
 if TYPE_CHECKING:
     import numpy as np
 
+    from physicalai.export.backends import ExportBackend
     from physicalai.inference.adapters.base import RuntimeAdapter
     from physicalai.inference.callbacks.base import Callback
     from physicalai.inference.postprocessors.base import Postprocessor
     from physicalai.inference.preprocessors.base import Preprocessor
     from physicalai.inference.runners.base import InferenceRunner
+
+logger = logging.getLogger(__name__)
+
+
+def _resolve_processors(
+    specs: list[ComponentSpec],
+    package_path: Path,
+) -> list[Any]:
+    result: list[Any] = []
+    for spec in specs:
+        data = spec.model_dump(exclude_none=True)
+        if spec.model_extra and "artifact" in spec.model_extra:
+            data["stats_path"] = str(package_path / spec.model_extra["artifact"])
+            data.pop("artifact", None)
+            if "model_extra" in data:
+                data.pop("model_extra", None)
+        sub_spec = ComponentSpec.model_validate(data)
+        result.append(instantiate_component(sub_spec))
+    return result
 
 
 class InferenceModel:
@@ -68,7 +88,7 @@ class InferenceModel:
 
     def __init__(
         self,
-        export_dir: str | Path,
+        export_dir: str | Path | None = None,
         policy_name: str | None = None,
         backend: str | ExportBackend = "auto",
         device: str = "auto",
@@ -76,16 +96,19 @@ class InferenceModel:
         preprocessors: list[Preprocessor] | None = None,
         postprocessors: list[Postprocessor] | None = None,
         callbacks: list[Callback] | None = None,
+        *,
+        path: str | Path | None = None,
+        adapter: RuntimeAdapter | None = None,
         **adapter_kwargs: Any,  # noqa: ANN401
     ) -> None:
         """Initialize InferenceModel with optional auto-detection.
 
         Args:
-            export_dir: Directory containing exported policy files
-            policy_name: Policy name (auto-detected if None)
-            backend: Backend to use, or 'auto' to detect from metadata/files
-            device: Device for inference ('auto', 'cpu', 'cuda', 'CPU', 'GPU', etc.)
-            runner: Execution runner override. If None, auto-selected from metadata.
+            export_dir: Directory containing exported policy files.
+            policy_name: Policy name (auto-detected if None).
+            backend: Backend to use, or 'auto' to detect from metadata/files.
+            device: Device for inference ('auto', 'cpu', 'cuda', 'CPU', 'GPU', etc.).
+            runner: Execution runner override. If None, auto-selected from manifest.
             preprocessors: Pipeline stages applied to observations before the
                 runner.  If ``None``, loaded from manifest (empty if not
                 declared).
@@ -93,47 +116,95 @@ class InferenceModel:
                 ``None``, loaded from manifest (empty if not declared).
             callbacks: Lifecycle callbacks for instrumentation (timing,
                 logging, safety checks, etc.).  Defaults to no callbacks.
+            path: Alias for *export_dir* (physicalai compat).
+            adapter: Single pre-built adapter.  When given together with
+                *runner*, skips manifest loading entirely (programmatic API).
             **adapter_kwargs: Backend-specific configuration options
 
         Raises:
             FileNotFoundError: If export directory or required files don't exist
         """
-        self.export_dir = Path(export_dir)
+        self.callbacks: list[Callback] = callbacks if callbacks is not None else []
+        self._adapters: dict[str, RuntimeAdapter] = {}
+        self.preprocessors: list[Preprocessor] = preprocessors if preprocessors is not None else []
+        self.postprocessors: list[Postprocessor] = postprocessors if postprocessors is not None else []
+        self.manifest: Manifest = Manifest()
+        self.policy_name: str = policy_name or ""
+        self.backend: str = "onnx"
+        self.device: str = device if device != "auto" else "cpu"
+        self.runner: InferenceRunner | None = runner
+
+        if adapter is not None and runner is not None:
+            self._adapters = {"model": adapter}
+            for callback in self.callbacks:
+                callback.on_load(self)
+            return
+
+        resolved_dir = path or export_dir
+        if resolved_dir is None:
+            return
+
+        self.export_dir = Path(resolved_dir)
         if not self.export_dir.exists():
-            msg = f"Export directory not found: {export_dir}"
+            msg = f"Export directory not found: {resolved_dir}"
             raise FileNotFoundError(msg)
 
         self.metadata = self._load_metadata()
 
-        if policy_name is None:
-            policy_name = self._detect_policy_name()
-        self.policy_name = policy_name
+        if not self.policy_name:
+            self.policy_name = self._detect_policy_name()
 
         if backend == "auto":
-            backend = self._detect_backend_from_metadata() or self._detect_backend()
-        self.backend = ExportBackend(backend) if isinstance(backend, str) else backend
+            backend = self._detect_backend_from_manifest() or self._detect_backend()
+        self.backend = backend if isinstance(backend, str) else backend.value
 
         if device == "auto":
             device = self._detect_device()
         self.device = device
 
-        self.adapter: RuntimeAdapter = get_adapter(self.backend, device=device, **adapter_kwargs)
-        model_path = self._get_model_path()
-        self.adapter.load(model_path)
+        self._load_adapters(device=device, **adapter_kwargs)
 
-        self.runner: InferenceRunner = runner if runner is not None else get_runner(self.metadata)
+        if runner is None:
+            self.runner = get_runner(self.manifest)
+        else:
+            self.runner = runner
 
-        self.preprocessors: list[Preprocessor] = (
-            preprocessors if preprocessors is not None else self._load_processors("preprocessors")
-        )
-        self.postprocessors: list[Postprocessor] = (
-            postprocessors if postprocessors is not None else self._load_processors("postprocessors")
-        )
-
-        self.callbacks: list[Callback] = callbacks if callbacks is not None else []
+        if preprocessors is None:
+            self.preprocessors = _resolve_processors(self.manifest.model.preprocessors, self.export_dir)
+        if postprocessors is None:
+            self.postprocessors = _resolve_processors(self.manifest.model.postprocessors, self.export_dir)
 
         for callback in self.callbacks:
             callback.on_load(self)
+
+    def _load_adapters(self, device: str = "cpu", **adapter_kwargs: Any) -> None:  # noqa: ANN401
+        artifacts = self.manifest.model.artifacts
+        if artifacts:
+            for role, filename in artifacts.items():
+                if not filename:
+                    self._adapters[role] = get_adapter(self.backend, device=device, **adapter_kwargs)
+                    model_path = self._get_model_path()
+                    self._adapters[role].load(model_path)
+                else:
+                    artifact_path = self.export_dir / filename
+                    self._adapters[role] = get_adapter(
+                        self.backend,
+                        model_path=artifact_path,
+                        device=device,
+                        **adapter_kwargs,
+                    )
+        else:
+            adapter = get_adapter(self.backend, device=device, **adapter_kwargs)
+            model_path = self._get_model_path()
+            adapter.load(model_path)
+            self._adapters["model"] = adapter
+
+    @property
+    def adapter(self) -> RuntimeAdapter:
+        """Primary adapter (backward compat for single-model policies)."""
+        if "model" in self._adapters:
+            return self._adapters["model"]
+        return next(iter(self._adapters.values()))
 
     @property
     def use_action_queue(self) -> bool:
@@ -162,11 +233,11 @@ class InferenceModel:
         """Load inference model with auto-detection.
 
         Args:
-            export_dir: Directory containing exported policy files
-            **kwargs: Additional arguments passed to __init__
+            export_dir: Directory containing exported policy files.
+            **kwargs: Additional arguments passed to __init__.
 
         Returns:
-            Initialized InferenceModel instance
+            Initialized InferenceModel instance.
 
         Examples:
             >>> policy = InferenceModel.load("./exports/act_policy")
@@ -188,6 +259,9 @@ class InferenceModel:
 
         Returns:
             Model outputs after runner execution and postprocessing.
+
+        Raises:
+            RuntimeError: If no runner is configured.
         """
         for callback in self.callbacks:
             modified = callback.on_predict_start(inputs)
@@ -197,8 +271,15 @@ class InferenceModel:
         for preprocessor in self.preprocessors:
             inputs = preprocessor(inputs)
 
-        prepared = self._prepare_inputs(inputs)
-        outputs = self.runner.run(self.adapter, prepared)
+        if len(self._adapters) == 1 and (self.runner is None or not self.runner.manages_own_inputs):
+            prepared = self._prepare_inputs(inputs)
+        else:
+            prepared = inputs
+
+        if self.runner is None:
+            msg = "No runner configured. Provide a path or explicit runner."
+            raise RuntimeError(msg)
+        outputs = self.runner.run(self._adapters, prepared)
 
         for postprocessor in self.postprocessors:
             outputs = postprocessor(outputs)
@@ -228,13 +309,19 @@ class InferenceModel:
             >>> next_obs, reward, done = env.step(action)
         """
         outputs = self(observation)
-        return outputs[ACTION]
+        action = outputs[ACTION]
+
+        if hasattr(action, "ndim") and action.ndim == 3 and action.shape[0] == 1:  # noqa: PLR2004
+            action = action[0]
+
+        return action
 
     def reset(self) -> None:
         """Reset policy state for new episode.
 
         Clears runner internal state (e.g. action queues) and
         notifies all callbacks.
+
         Call this at the start of each episode.
 
         Examples:
@@ -246,7 +333,8 @@ class InferenceModel:
             ...         action = policy.select_action(obs)
             ...         obs, reward, done = env.step(action)
         """
-        self.runner.reset()
+        if self.runner is not None:
+            self.runner.reset()
         for callback in self.callbacks:
             callback.on_reset()
 
@@ -393,14 +481,24 @@ class InferenceModel:
         msg = f"Cannot determine policy name from {self.export_dir}"
         raise ValueError(msg)
 
-    def _detect_backend_from_metadata(self) -> str | None:
-        """Extract backend from manifest artifacts or legacy metadata.
+    def _detect_backend_from_manifest(self) -> str | None:  # noqa: PLR0911
+        """Extract backend from manifest artifacts or legacy extra data.
 
         Returns:
             Backend string, or ``None`` if not found.
         """
-        artifacts = self.metadata.get("artifacts", {})
-        if isinstance(artifacts, dict) and artifacts:
+        artifacts = self.manifest.model.artifacts
+        if artifacts:
+            first_file = next(iter(artifacts.values()))
+            if first_file:
+                if first_file.endswith(".xml"):
+                    return "openvino"
+                if first_file.endswith(".onnx"):
+                    return "onnx"
+                if first_file.endswith((".ckpt", ".pt")):
+                    return "torch"
+                if first_file.endswith(".pte"):
+                    return "executorch"
             return next(iter(artifacts))
 
         backend = self.metadata.get("backend")
@@ -451,16 +549,20 @@ class InferenceModel:
 
         Raises:
             FileNotFoundError: If model file doesn't exist
+            ValueError: If backend is unknown.
         """
         # Map backend to file extension(s)
         extension_map = {
-            ExportBackend.OPENVINO: [".xml"],
-            ExportBackend.ONNX: [".onnx"],
-            ExportBackend.TORCH: [".ckpt", ".pt"],
-            ExportBackend.EXECUTORCH: [".pte"],
+            "openvino": [".xml"],
+            "onnx": [".onnx"],
+            "torch": [".ckpt", ".pt"],
+            "executorch": [".pte"],
         }
 
-        extensions = extension_map[self.backend]
+        extensions = extension_map.get(self.backend, [])
+        if not extensions:
+            msg = f"Unknown backend: {self.backend}"
+            raise ValueError(msg)
 
         # Try with policy name first
         if self.policy_name:
@@ -481,10 +583,13 @@ class InferenceModel:
 
     def __repr__(self) -> str:
         """Return string representation of the model."""
-        return (
-            f"{self.__class__.__name__}("
-            f"policy={self.policy_name}, "
-            f"backend={self.backend.value}, "
-            f"device={self.device}, "
-            f"runner={self.runner!r})"
-        )
+        if hasattr(self, "export_dir"):
+            return (
+                f"{self.__class__.__name__}("
+                f"policy={self.policy_name}, "
+                f"backend={self.backend}, "
+                f"device={self.device}, "
+                f"runner={self.runner!r})"
+            )
+        name = self.manifest.policy.name if self.manifest else "unloaded"
+        return f"InferenceModel(policy={name!r}, adapters={list(self._adapters.keys())})"
