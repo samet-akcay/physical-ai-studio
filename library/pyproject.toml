@@ -47,11 +47,11 @@ dependencies = [
 
 [project.optional-dependencies]
 # PyTorch dependency groups
-cpu = ["torch", "torchvision"]
-cu128 = ["torch", "torchvision"]
+cpu = ["torch<2.11", "torchvision<0.26.0"]
+cu128 = ["torch<2.11", "torchvision<0.26.0"]
 xpu = [
-    "torch",
-    "torchvision",
+    "torch<2.11",
+    "torchvision<0.26.0",
     "pytorch-triton-xpu ; sys_platform == 'linux' or sys_platform == 'win32'",
 ]
 # Testing dependencies
