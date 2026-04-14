@@ -232,18 +232,29 @@ class TrainPipelineConfigAdapter:
             raise ValueError(msg)
 
         class_path = POLICY_CLASS_MAP.get(policy_type)
-        if class_path is None:
+        is_universal_wrapper = class_path is None
+        if is_universal_wrapper:
             class_path = "physicalai.policies.lerobot.LeRobotPolicy"
             logger.warning(
                 "No explicit wrapper for policy type %r -- falling back to LeRobotPolicy universal wrapper.",
                 policy_type,
             )
 
-        init_args: dict[str, Any] = {"policy_name": policy_type}
-
         policy_config_dict = self._policy_config_to_dict(policy_cfg)
-        if policy_config_dict:
-            init_args["policy_config"] = policy_config_dict
+
+        if is_universal_wrapper:
+            # Universal wrapper needs policy_name for dispatch and accepts
+            # extra parameters via the nested ``policy_config`` dict.
+            init_args: dict[str, Any] = {"policy_name": policy_type}
+            if policy_config_dict:
+                init_args["policy_config"] = policy_config_dict
+        else:
+            # Explicit wrappers (ACT, Diffusion, …) and convenience
+            # wrappers (VQBeT, TDMPC, …) already hard-code their
+            # policy_name internally.  Their __init__ exposes typed
+            # parameters directly, so we promote config values to
+            # top-level init_args instead of nesting them.
+            init_args = dict(policy_config_dict)
 
         return {"class_path": class_path, "init_args": init_args}
 
@@ -400,7 +411,7 @@ class TrainPipelineConfigAdapter:
         Returns:
             Dictionary of serialisable non-default policy config values.
         """
-        skip = {"input_features", "output_features", "type", "pretrained_path"}
+        skip = {"input_features", "output_features", "type", "pretrained_path", "device"}
         result: dict[str, Any] = {}
 
         if not dataclasses.is_dataclass(policy_cfg):
