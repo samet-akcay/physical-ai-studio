@@ -20,6 +20,7 @@ from physicalai.data.dataset import Dataset
 from physicalai.data.observation import ACTION
 from physicalai.export import ExportablePolicyMixin, ExportBackend
 from physicalai.policies.base import Policy
+from physicalai.train.schedulers import cosine_decay_with_warmup_scheduler
 from physicalai.train.utils import reformat_dataset_to_match_policy
 
 from .config import Pi05Config
@@ -49,7 +50,7 @@ class Pi05(ExportablePolicyMixin, Policy):
         pretrained_name_or_path: HuggingFace repo ID or local path for pretrained weights and config.
         paligemma_variant: Gemma variant for VLM backbone. Default: "gemma_2b".
         action_expert_variant: Gemma variant for action expert. Default: "gemma_300m".
-        dtype: Model precision. Default: "float32".
+        dtype: Model precision. Default: "bfloat16".
         n_obs_steps: Number of observation steps. Default: 1.
         chunk_size: Size of action chunks. Default: 50.
         n_action_steps: Number of action steps to execute. Default: 50.
@@ -77,20 +78,21 @@ class Pi05(ExportablePolicyMixin, Policy):
         >>> action = policy.select_action(obs)
     """
 
-    def __init__(  # noqa: PLR0913, PLR0917
+    def __init__(  # noqa: PLR0913
         self,
         # Pretrained model id
         pretrained_name_or_path: str | Path | None = None,
         # Model architecture
         paligemma_variant: Literal["gemma_300m", "gemma_2b"] = "gemma_2b",
         action_expert_variant: Literal["gemma_300m", "gemma_2b"] = "gemma_300m",
-        dtype: Literal["bfloat16", "float32"] = "float32",
+        dtype: Literal["bfloat16", "float32"] = "bfloat16",
         # Input / output structure
         n_obs_steps: int = 1,
         chunk_size: int = 50,
         n_action_steps: int = 50,
         max_state_dim: int = 32,
         max_action_dim: int = 32,
+        *,
         # Flow matching
         num_inference_steps: int = 10,
         time_sampling_beta_alpha: float = 1.5,
@@ -99,13 +101,13 @@ class Pi05(ExportablePolicyMixin, Policy):
         time_sampling_offset: float = 0.001,
         min_period: float = 4e-3,
         max_period: float = 4.0,
+        use_random_input_noise: bool = False,
         # Image preprocessing
         image_resolution: tuple[int, int] = (224, 224),
         empty_cameras: int = 0,
         # Tokenizer
         tokenizer_max_length: int = 200,
         # Optimization
-        *,
         gradient_checkpointing: bool = True,
         compile_model: bool = False,
         compile_mode: str = "max-autotune",
@@ -120,7 +122,7 @@ class Pi05(ExportablePolicyMixin, Policy):
         optimizer_grad_clip_norm: float = 1.0,
         # Scheduler
         scheduler_warmup_steps: int = 1_000,
-        scheduler_decay_steps: int = 30_000,
+        scheduler_decay_steps: int | None = None,
         scheduler_decay_lr: float = 2.5e-6,
         # Eager initialization
         dataset_stats: dict[str, dict[str, list[float] | str | tuple]] | None = None,
@@ -170,6 +172,7 @@ class Pi05(ExportablePolicyMixin, Policy):
                 image_resolution=image_resolution,
                 empty_cameras=empty_cameras,
                 tokenizer_max_length=tokenizer_max_length,
+                use_random_input_noise=use_random_input_noise,
                 gradient_checkpointing=gradient_checkpointing,
                 compile_model=compile_model,
                 compile_mode=compile_mode,
@@ -223,10 +226,12 @@ class Pi05(ExportablePolicyMixin, Policy):
             min_period=self.config.min_period,
             max_period=self.config.max_period,
             image_resolution=self.config.image_resolution,
+            tokenizer_max_length=self.config.tokenizer_max_length,
             freeze_vision_encoder=self.config.freeze_vision_encoder,
             train_expert_only=self.config.train_expert_only,
             gradient_checkpointing=self.config.gradient_checkpointing,
             compile_model=self.config.compile_model,
+            use_random_input_noise=self.config.use_random_input_noise,
         )
         if weights_file is not None:
             # load raw state dict
@@ -255,7 +260,6 @@ class Pi05(ExportablePolicyMixin, Policy):
             self.model.paligemma_with_expert._set_requires_grad()  # noqa: SLF001
 
         self._preprocessor, self._postprocessor = make_pi05_preprocessors(
-            max_state_dim=self.config.max_state_dim,
             max_action_dim=self.config.max_action_dim,
             stats=dataset_stats,
             image_resolution=self.config.image_resolution,
@@ -284,7 +288,7 @@ class Pi05(ExportablePolicyMixin, Policy):
         optimizer_weight_decay: float = 0.01,
         optimizer_grad_clip_norm: float = 1.0,
         scheduler_warmup_steps: int = 1_000,
-        scheduler_decay_steps: int = 30_000,
+        scheduler_decay_steps: int | None = None,
         scheduler_decay_lr: float = 2.5e-6,
         **kwargs: Any,  # noqa: ANN401
     ) -> tuple[Pi05Config, dict[str, dict[str, list[float] | str | tuple]], Path]:
@@ -317,7 +321,7 @@ class Pi05(ExportablePolicyMixin, Policy):
             optimizer_weight_decay: Override weight decay.
             optimizer_grad_clip_norm: Override gradient clip norm.
             scheduler_warmup_steps: Override warmup steps.
-            scheduler_decay_steps: Override decay steps.
+            scheduler_decay_steps: Override decay steps. ``None`` means auto.
             scheduler_decay_lr: Override final decay learning rate.
             **kwargs: Extra arguments forwarded to ``huggingface_hub.hf_hub_download``.
 
@@ -454,7 +458,6 @@ class Pi05(ExportablePolicyMixin, Policy):
         """
         logger.info("Updating preprocessor stats for fine-tuning dataset")
         self._preprocessor, self._postprocessor = make_pi05_preprocessors(
-            max_state_dim=self.config.max_state_dim,
             max_action_dim=self.config.max_action_dim,
             stats=dataset_stats,
             image_resolution=self.config.image_resolution,
@@ -523,6 +526,11 @@ class Pi05(ExportablePolicyMixin, Policy):
     def configure_optimizers(self) -> dict[str, Any]:
         """Configure optimizer and scheduler.
 
+        When ``scheduler_decay_steps`` is ``None``, the cosine decay horizon
+        is automatically set to the total training steps
+        (``self.trainer.estimated_stepping_batches``), so the LR reaches
+        ``scheduler_decay_lr`` exactly at the end of training.
+
         Returns:
             Dict with optimizer and lr_scheduler config.
         """
@@ -536,19 +544,19 @@ class Pi05(ExportablePolicyMixin, Policy):
             eps=self.config.optimizer_eps,
         )
 
-        warmup_steps = self.config.scheduler_warmup_steps
-        drop_steps = self.config.scheduler_decay_steps
-        decay_value = self.config.scheduler_decay_lr
+        num_decay_steps = self.config.scheduler_decay_steps
+        if num_decay_steps is None:
+            num_decay_steps = self.trainer.estimated_stepping_batches
+            msg = f"scheduler_decay_steps=None, using total training steps: {num_decay_steps}"
+            logger.info(msg)
 
-        decay_ratio = decay_value / self.config.optimizer_lr
-
-        def lr_lambda(step: int) -> float:
-            if step < warmup_steps:
-                return step / max(1, warmup_steps)
-            num_drops = (step - warmup_steps) // drop_steps
-            return decay_ratio**num_drops
-
-        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+        scheduler = cosine_decay_with_warmup_scheduler(
+            optimizer,
+            peak_lr=self.config.optimizer_lr,
+            decay_lr=self.config.scheduler_decay_lr,
+            num_warmup_steps=self.config.scheduler_warmup_steps,
+            num_decay_steps=num_decay_steps,
+        )
 
         return {
             "optimizer": optimizer,
@@ -574,8 +582,8 @@ class Pi05(ExportablePolicyMixin, Policy):
                 gradient_clip_algorithm=gradient_clip_algorithm or "norm",
             )
 
-    @property
-    def supported_export_backends(self) -> list[str | ExportBackend]:
+    @staticmethod
+    def get_supported_export_backends() -> list[str | ExportBackend]:
         """Get a list of export backends supported by policy.
 
         This method returns a list of supported export backends as strings.
@@ -583,4 +591,4 @@ class Pi05(ExportablePolicyMixin, Policy):
         Returns:
             list[str | ExportBackend]: A list of supported export backends.
         """
-        return [ExportBackend.TORCH, ExportBackend.OPENVINO, ExportBackend.ONNX]
+        return [ExportBackend.TORCH, ExportBackend.OPENVINO]

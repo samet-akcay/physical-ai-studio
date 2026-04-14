@@ -29,6 +29,8 @@ from physicalai.export.backends import (
 from physicalai.inference.manifest import (
     ComponentSpec,
     Manifest,
+    ModelSpec,
+    PolicySource,
     PolicySpec,
 )
 from physicalai.inference.runners.action_chunking import ActionChunking
@@ -112,7 +114,8 @@ class ExportablePolicyMixin:
 
         use_action_queue = metadata.get("use_action_queue", False)
         chunk_size = metadata.get("chunk_size", 1)
-        kind = "action_chunking" if use_action_queue else "single_pass"
+        preprocessors_specs: list[ComponentSpec] = metadata.get("preprocessors", [])
+        postprocessors_specs: list[ComponentSpec] = metadata.get("postprocessors", [])
 
         if use_action_queue:
             runner = ComponentSpec.from_class(
@@ -128,11 +131,14 @@ class ExportablePolicyMixin:
         return Manifest(
             policy=PolicySpec(
                 name=policy_name,
-                kind=kind,
-                class_path=policy_class,
+                source=PolicySource(class_path=policy_class),
             ),
-            artifacts={str(backend): artifact_filename},
-            runner=runner,
+            model=ModelSpec(
+                runner=runner,
+                artifacts={str(backend): artifact_filename},
+                preprocessors=preprocessors_specs,
+                postprocessors=postprocessors_specs,
+            ),
         )
 
     def _prepare_export_path(self, output_path: PathLike | str, extension: str) -> Path:
@@ -183,9 +189,10 @@ class ExportablePolicyMixin:
         Raises:
             NotImplementedError: If Torch export is not supported by the policy.
         """
-        if ExportBackend.TORCH not in self.supported_export_backends:
+        if ExportBackend.TORCH not in self.get_supported_export_backends():
             msg = (
-                f"Torch export is not implemented for this policy. Supported backends: {self.supported_export_backends}"
+                "Torch export is not implemented for this policy. "
+                f"Supported backends: {self.get_supported_export_backends()}"
             )
             raise NotImplementedError(msg)
 
@@ -236,9 +243,10 @@ class ExportablePolicyMixin:
                 like wrong export options.
             NotImplementedError: If ONNX export is not supported by the model.
         """
-        if ExportBackend.ONNX not in self.supported_export_backends:
+        if ExportBackend.ONNX not in self.get_supported_export_backends():
             msg = (
-                f"ONNX export is not implemented for this policy. Supported backends: {self.supported_export_backends}"
+                "ONNX export is not implemented for this policy. "
+                f"Supported backends: {self.get_supported_export_backends()}"
             )
             raise NotImplementedError(msg)
 
@@ -269,7 +277,7 @@ class ExportablePolicyMixin:
 
         if extra_model_args.export_tokenizer:
             onnx_tokenizer = gen_processing_models(
-                self._preprocessor.exportable_tokenizer,
+                self._preprocessor.tokenizer,
                 pre_kwargs={
                     "padding": "max_length",
                     "truncation": True,
@@ -285,7 +293,12 @@ class ExportablePolicyMixin:
                 raise RuntimeError(msg)
 
         # Create metadata files
-        self._create_metadata(export_dir, ExportBackend.ONNX, preprocessing_type=extra_model_args.preprocessing_type)
+        self._create_metadata(
+            export_dir,
+            ExportBackend.ONNX,
+            preprocessors=extra_model_args.preprocessors_specs,
+            postprocessors=extra_model_args.postprocessors_specs,
+        )
 
     @torch.no_grad()
     def to_openvino(
@@ -318,10 +331,10 @@ class ExportablePolicyMixin:
                 like wrong export options.
             NotImplementedError: If OpenVINO export is not supported by the policy.
         """
-        if ExportBackend.OPENVINO not in self.supported_export_backends:
+        if ExportBackend.OPENVINO not in self.get_supported_export_backends():
             msg = (
                 f"OpenVINO export is not implemented for this policy.\n"
-                f"Supported backends: {self.supported_export_backends}"
+                f"Supported backends: {self.get_supported_export_backends()}"
             )
             raise NotImplementedError(msg)
 
@@ -361,7 +374,11 @@ class ExportablePolicyMixin:
                     arg_name=arg_name,
                     **extra_export_kwargs,
                 )
-                ov_model = openvino.convert_model(tmp.name)
+                ov_model = openvino.convert_model(
+                    tmp.name,
+                    example_input={arg_name: input_sample},
+                    input=input_shapes,
+                )
         else:
             ov_model = openvino.convert_model(
                 self.model,
@@ -372,10 +389,9 @@ class ExportablePolicyMixin:
         _postprocess_openvino_model(ov_model, extra_model_args.outputs)
 
         openvino.save_model(ov_model, str(model_path), compress_to_fp16=extra_model_args.compress_to_fp16)
-
         if extra_model_args.export_tokenizer:
             ov_tokenizer = openvino_tokenizers.convert_tokenizer(
-                self._preprocessor.exportable_tokenizer,
+                self._preprocessor.tokenizer,
                 with_detokenizer=False,
                 max_length=self._preprocessor.max_token_len,
                 use_max_padding=True,
@@ -392,7 +408,8 @@ class ExportablePolicyMixin:
         self._create_metadata(
             export_dir,
             ExportBackend.OPENVINO,
-            preprocessing_type=extra_model_args.preprocessing_type,
+            preprocessors=extra_model_args.preprocessors_specs,
+            postprocessors=extra_model_args.postprocessors_specs,
         )
 
     @torch.no_grad()
@@ -435,10 +452,10 @@ class ExportablePolicyMixin:
                 dependencies) is not installed.
             ValueError: If an unsupported delegate is specified.
         """
-        if ExportBackend.EXECUTORCH not in self.supported_export_backends:
+        if ExportBackend.EXECUTORCH not in self.get_supported_export_backends():
             msg = (
                 f"ExecuTorch export is not implemented for this policy.\n"
-                f"Supported backends: {self.supported_export_backends}"
+                f"Supported backends: {self.get_supported_export_backends()}"
             )
             raise NotImplementedError(msg)
 
@@ -637,8 +654,8 @@ class ExportablePolicyMixin:
 
         return next(iter(positional_args))
 
-    @property
-    def supported_export_backends(self) -> list[str | ExportBackend]:
+    @staticmethod
+    def get_supported_export_backends() -> list[str | ExportBackend]:
         """Get a list of export backends supported by policy.
 
         Returns:

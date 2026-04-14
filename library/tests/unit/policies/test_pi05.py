@@ -65,7 +65,7 @@ class TestPi05Config:
         assert config.optimizer_weight_decay == 0.01
         assert config.optimizer_grad_clip_norm == 1.0
         assert config.scheduler_warmup_steps == 1_000
-        assert config.scheduler_decay_steps == 30_000
+        assert config.scheduler_decay_steps is None
         assert config.scheduler_decay_lr == 2.5e-6
 
     def test_flow_matching_config_values(self) -> None:
@@ -549,7 +549,6 @@ class TestPi05Preprocessor:
         from physicalai.policies.pi05.preprocessor import make_pi05_preprocessors
 
         preprocessor, postprocessor = make_pi05_preprocessors(
-            max_state_dim=32,
             max_action_dim=32,
             stats=None,
             image_resolution=(224, 224),
@@ -574,7 +573,6 @@ class TestPi05Preprocessor:
 
         preprocessor = Pi05Preprocessor()
 
-        assert preprocessor.max_state_dim == 32
         assert preprocessor.max_action_dim == 32
         assert preprocessor.image_resolution == (224, 224)
         assert preprocessor.max_token_len == 200
@@ -586,14 +584,12 @@ class TestPi05Preprocessor:
         from physicalai.policies.pi05.preprocessor import Pi05Preprocessor
 
         preprocessor = Pi05Preprocessor(
-            max_state_dim=64,
             max_action_dim=16,
             image_resolution=(512, 512),
             max_token_len=300,
             empty_cameras=2,
         )
 
-        assert preprocessor.max_state_dim == 64
         assert preprocessor.max_action_dim == 16
         assert preprocessor.image_resolution == (512, 512)
         assert preprocessor.max_token_len == 300
@@ -640,7 +636,6 @@ class TestPi05Preprocessor:
         }
 
         preprocessor, postprocessor = make_pi05_preprocessors(
-            max_state_dim=32,
             max_action_dim=32,
             stats=stats,
             image_resolution=(224, 224),

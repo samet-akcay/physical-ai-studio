@@ -5,7 +5,6 @@ import {
     ButtonGroup,
     Content,
     Dialog,
-    DialogContainer,
     DialogTrigger,
     Divider,
     Form,
@@ -13,7 +12,7 @@ import {
     Item,
     Picker,
     TextField,
-} from '@geti/ui';
+} from '@geti-ui/ui';
 import { v4 as uuidv4 } from 'uuid';
 
 import { $api } from '../../api/client';
@@ -25,7 +24,7 @@ interface NewDatasetFormProps {
     project_id: string;
     onDone: (dataset: SchemaDatasetOutput | undefined) => void;
 }
-const NewDatasetForm = ({ project_id, onDone }: NewDatasetFormProps) => {
+export const NewDatasetForm = ({ project_id, onDone }: NewDatasetFormProps) => {
     const saveMutation = $api.useMutation('post', '/api/dataset');
     const [name, setName] = useState<string>('');
     const [defaultTask, setDefaultTask] = useState<string>('');
@@ -113,18 +112,5 @@ export const NewDatasetLink = ({ project_id }: { project_id: string }) => {
             <Button variant='accent'>New Dataset</Button>
             {(close) => <NewDatasetForm project_id={project_id} onDone={close} />}
         </DialogTrigger>
-    );
-};
-
-interface NewDatasetDialogContainerProps {
-    project_id: string;
-    show: boolean;
-    onDismiss: (dataset: SchemaDatasetOutput | undefined) => void;
-}
-export const NewDatasetDialogContainer = ({ project_id, show, onDismiss }: NewDatasetDialogContainerProps) => {
-    return (
-        <DialogContainer onDismiss={() => onDismiss(undefined)}>
-            {show && <NewDatasetForm project_id={project_id} onDone={onDismiss} />}
-        </DialogContainer>
     );
 };
