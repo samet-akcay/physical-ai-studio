@@ -1,7 +1,7 @@
 # Copyright (C) 2026 Intel Corporation
 # SPDX-License-Identifier: Apache-2.0
 
-"""Two-phase runner for VLA policies (PI0, PI05, SmolVLA).
+"""KV-cache runner for VLA policies (PI0, PI05, SmolVLA).
 
 Phase 1 (encode): process images, language tokens, and state into a
 KV cache — runs once per inference call.
@@ -52,7 +52,7 @@ def _get_output(outputs: dict[str, Any], primary: str, fallbacks: list[str]) -> 
     raise KeyError(msg)
 
 
-class TwoPhaseRunner(InferenceRunner):
+class KVCacheRunner(InferenceRunner):
     """Encode-once + iterative-denoise runner for VLA policies.
 
     The encoder adapter receives observations and produces a KV cache.
@@ -91,7 +91,7 @@ class TwoPhaseRunner(InferenceRunner):
         input_mapping: dict[str, str] | None = None,
         **kwargs: Any,  # noqa: ARG002, ANN401
     ) -> None:
-        """Initialize two-phase VLA runner configuration."""
+        """Initialize KV-cache VLA runner configuration."""
         self.num_inference_steps = num_inference_steps
         self.chunk_size = chunk_size
         self.n_action_steps = n_action_steps
@@ -120,7 +120,7 @@ class TwoPhaseRunner(InferenceRunner):
             TypeError: If *adapter* is not a dict of adapters.
         """
         if not isinstance(adapter, dict):
-            msg = "TwoPhaseRunner requires a dict of adapters with 'encoder' and 'denoise' keys"
+            msg = "KVCacheRunner requires a dict of adapters with 'encoder' and 'denoise' keys"
             raise TypeError(msg)
 
         encoder_adapter = adapter["encoder"]
@@ -194,7 +194,7 @@ class TwoPhaseRunner(InferenceRunner):
         return {"action": x_t}
 
     def reset(self) -> None:
-        """No-op — two-phase runner is stateless between episodes."""
+        """No-op — KV-cache runner is stateless between episodes."""
 
     def __repr__(self) -> str:
         """Return string representation of the runner."""
