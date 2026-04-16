@@ -61,6 +61,21 @@ class InferenceRunner(ABC):
             Dict mapping output names to numpy arrays.
         """
 
+    @property
+    def manages_own_inputs(self) -> bool:
+        """Whether this runner manages adapter input composition.
+
+        When ``True``, :class:`~physicalai.inference.model.InferenceModel`
+        skips ``_prepare_inputs`` and passes the full adapters dict
+        instead of a single adapter.  Runners that build per-step
+        inputs internally (e.g. iterative denoising) should return
+        ``True``.
+
+        Returns:
+            ``False`` by default.
+        """
+        return False
+
     @abstractmethod
     def reset(self) -> None:
         """Reset internal state for a new episode.
