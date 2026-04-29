@@ -117,9 +117,8 @@ class InferenceModel:
             device = self._detect_device()
         self.device = device
 
-        self.adapter: RuntimeAdapter = get_adapter(self.backend, device=device, **adapter_kwargs)
-        model_path = self._get_model_path()
-        self.adapter.load(model_path)
+        self._adapters: dict[str, RuntimeAdapter] = self._load_adapters(device, adapter_kwargs)
+        self.adapter: RuntimeAdapter = next(iter(self._adapters.values()))
 
         self.runner: InferenceRunner = runner if runner is not None else get_runner(self.manifest)
 
@@ -203,8 +202,11 @@ class InferenceModel:
         for preprocessor in self.preprocessors:
             inputs = preprocessor(inputs)
 
-        prepared = self._prepare_inputs(inputs)
-        outputs = self.runner.run(self.adapter, prepared)
+        if self.runner.manages_own_inputs:
+            outputs = self.runner.run(self._adapters, inputs)
+        else:
+            prepared = self._prepare_inputs(inputs)
+            outputs = self.runner.run(self.adapter, prepared)
 
         for postprocessor in self.postprocessors:
             outputs = postprocessor(outputs)
@@ -343,6 +345,58 @@ class InferenceModel:
 
         return Manifest()
 
+    def _load_adapters(
+        self,
+        device: str,
+        adapter_kwargs: dict[str, Any],
+    ) -> dict[str, RuntimeAdapter]:
+        """Load one or more runtime adapters from manifest artifacts.
+
+        When artifacts contains a single entry (or is empty), a single
+        adapter is loaded the same way as before.  When multiple entries
+        are present, each is treated as a separate model file and loaded
+        into its own adapter.
+
+        Args:
+            device: Target device string.
+            adapter_kwargs: Backend-specific adapter configuration.
+
+        Returns:
+            Dict mapping logical names to loaded adapters.
+        """
+        artifacts = self.manifest.model.artifacts
+
+        if len(artifacts) > 1 and not self._artifacts_are_backend_keyed(artifacts):
+            adapters: dict[str, RuntimeAdapter] = {}
+            for name, filename in artifacts.items():
+                adapter = get_adapter(self.backend, device=device, **adapter_kwargs)
+                adapter.load(self.export_dir / filename)
+                adapters[name] = adapter
+            return adapters
+
+        adapter = get_adapter(self.backend, device=device, **adapter_kwargs)
+
+        if artifacts:
+            first_filename = next(iter(artifacts.values()))
+            model_path = self.export_dir / first_filename
+        else:
+            model_path = self._get_model_path()
+
+        adapter.load(model_path)
+        logical_name = next(iter(artifacts), "model")
+        return {logical_name: adapter}
+
+    @staticmethod
+    def _artifacts_are_backend_keyed(artifacts: dict[str, str]) -> bool:
+        """Check if artifact keys are backend names rather than logical names.
+
+        Returns:
+            ``True`` when every key in *artifacts* is a valid
+            :class:`ExportBackend` value.
+        """
+        backend_values = {b.value for b in ExportBackend}
+        return all(k in backend_values for k in artifacts)
+
     def _load_processors(self, specs: list[ComponentSpec]) -> list[Any]:
         """Instantiate preprocessors or postprocessors from component specs.
 
@@ -392,12 +446,22 @@ class InferenceModel:
     def _detect_backend_from_manifest(self) -> str | None:
         """Extract backend from manifest artifacts or legacy extra data.
 
+        Handles both backend-keyed artifacts (``{"onnx": "model.onnx"}``)
+        and logical-named artifacts (``{"model": "model.onnx"}``).
+
         Returns:
             Backend string, or ``None`` if not found.
         """
         artifacts = self.manifest.model.artifacts
         if artifacts:
-            return next(iter(artifacts))
+            first_key = next(iter(artifacts))
+            if first_key in {b.value for b in ExportBackend}:
+                return first_key
+            first_file = next(iter(artifacts.values()))
+            ext = Path(first_file).suffix.lower()
+            ext_backend = {".xml": "openvino", ".onnx": "onnx", ".pt": "torch", ".pte": "executorch"}
+            if ext in ext_backend:
+                return ext_backend[ext]
 
         legacy_backend = (self.manifest.model_extra or {}).get("backend")
         if legacy_backend:
