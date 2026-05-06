@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import torch
 from huggingface_hub import hf_hub_download
+from physicalai.inference.manifest import ComponentSpec
 from safetensors.torch import load_file
 
 from physicalai.data.dataset import Dataset
@@ -25,7 +26,6 @@ from physicalai.export.backends import (
     OpenVINOExportParameters,
     TorchExportParameters,
 )
-from physicalai.inference.manifest import ComponentSpec
 from physicalai.policies.base import Policy
 from physicalai.train.schedulers import cosine_decay_with_warmup_scheduler
 from physicalai.train.utils import reformat_dataset_to_match_policy
@@ -71,7 +71,7 @@ class Pi05(ExportablePolicyMixin, Policy):
         time_sampling_offset: Offset for time sampling. Default: 0.001.
         min_period: Minimum period for sine-cosine positional encoding. Default: 4e-3.
         max_period: Maximum period for sine-cosine positional encoding. Default: 4.0.
-        use_random_input_noise: Use random noise as initial denoising input. Default: False.
+        use_random_input_noise: Use random noise as initial denoising input. Default: True.
         image_resolution: Target image resolution. Default: (224, 224).
         empty_cameras: Number of empty camera slots to add. Default: 0.
         tokenizer_max_length: Maximum tokenizer length. Default: 200.
@@ -79,7 +79,7 @@ class Pi05(ExportablePolicyMixin, Policy):
         compile_model: Whether to use torch.compile. Default: False.
         compile_mode: Torch compile mode. Default: "max-autotune".
         freeze_vision_encoder: Freeze vision encoder. Default: False.
-        train_expert_only: Train only action expert. Default: True.
+        train_expert_only: Train only action expert. Default: False.
         normalization_mode: Normalization method for state/action features — ``"QUANTILES"``
             (percentile-based, robust to outliers) or ``"MEAN_STD"``. Default: ``"QUANTILES"``.
 
@@ -130,7 +130,7 @@ class Pi05(ExportablePolicyMixin, Policy):
         time_sampling_offset: float = 0.001,
         min_period: float = 4e-3,
         max_period: float = 4.0,
-        use_random_input_noise: bool = False,
+        use_random_input_noise: bool = True,
         # Image preprocessing
         image_resolution: tuple[int, int] = (224, 224),
         empty_cameras: int = 0,
@@ -142,7 +142,7 @@ class Pi05(ExportablePolicyMixin, Policy):
         compile_mode: str = "max-autotune",
         # Finetuning
         freeze_vision_encoder: bool = False,
-        train_expert_only: bool = True,
+        train_expert_only: bool = False,
         # Normalization
         normalization_mode: Literal["MEAN_STD", "QUANTILES"] = "QUANTILES",
         # Optimizer
@@ -306,15 +306,15 @@ class Pi05(ExportablePolicyMixin, Policy):
         self,
         pretrained_name_or_path: str | Path,
         *,
-        dtype: Literal["bfloat16", "float32"] = "float32",
-        n_action_steps: int | None = 10,
+        dtype: Literal["bfloat16", "float32"] = "bfloat16",
+        n_action_steps: int | None = 50,
         max_state_dim: int | None = None,
         num_inference_steps: int | None = None,
-        gradient_checkpointing: bool = False,
+        gradient_checkpointing: bool = True,
         compile_model: bool = False,
         compile_mode: str | None = "max-autotune",
         freeze_vision_encoder: bool = False,
-        train_expert_only: bool = True,
+        train_expert_only: bool = False,
         optimizer_lr: float = 2.5e-5,
         optimizer_betas: tuple[float, float] = (0.9, 0.95),
         optimizer_eps: float = 1e-8,
@@ -678,14 +678,14 @@ class Pi05(ExportablePolicyMixin, Policy):
 
         base_preproc_specs = [
             ComponentSpec(
-                type="pi05",
-                image_resolution=self.config.image_resolution,
-                empty_cameras=self.config.empty_cameras,
-            ),
-            ComponentSpec(
                 type="normalize",
                 stats={STATE: self._dataset_stats[f"observation.{STATE}"]},
                 mode=self.config.normalization_mode.lower(),
+            ),
+            ComponentSpec(
+                type="pi05",
+                image_resolution=self.config.image_resolution,
+                empty_cameras=self.config.empty_cameras,
             ),
         ]
         postproc_specs = [

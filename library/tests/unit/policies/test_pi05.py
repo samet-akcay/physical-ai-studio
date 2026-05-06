@@ -33,7 +33,7 @@ class TestPi05Config:
         config = Pi05Config()
         assert config.paligemma_variant == "gemma_2b"
         assert config.action_expert_variant == "gemma_300m"
-        assert config.dtype == "float32"
+        assert config.dtype == "bfloat16"
         assert config.n_obs_steps == 1
         assert config.chunk_size == 50
         assert config.n_action_steps == 50
@@ -742,6 +742,79 @@ class TestFeatureNormalization:
 
 
 # ============================================================================ #
+# Sample Input Tests                                                           #
+# ============================================================================ #
+
+
+class TestSampleInput:
+    """Tests for Pi05Model.sample_input visual-feature detection.
+
+    Uses a lightweight stub instead of constructing the full model to keep
+    these tests fast and free of HuggingFace downloads.
+    """
+
+    @staticmethod
+    def _call_sample_input(dataset_stats: dict) -> dict:
+        """Invoke the Pi05Model.sample_input property on a minimal stub."""
+
+        class _Stub:
+            def __init__(self, stats: dict) -> None:
+                self._dataset_stats = stats
+                # sample_input only reads device from this module's parameters.
+                self.paligemma_with_expert = torch.nn.Linear(1, 1)
+
+        return Pi05Model.sample_input.fget(_Stub(dataset_stats))  # type: ignore[attr-defined]
+
+    def test_sample_input_single_visual_feature_with_image_in_id(self) -> None:
+        """Single visual feature whose id contains 'image' produces IMAGES key."""
+        stats = {
+            "observation.state": {"name": "state", "shape": (8,), "type": "STATE"},
+            "observation.image": {"name": "image", "shape": (3, 224, 224), "type": "VISUAL"},
+        }
+        sample_input = self._call_sample_input(stats)
+        assert STATE in sample_input
+        assert IMAGES in sample_input
+        assert sample_input[STATE].shape == (1, 8)
+        assert sample_input[IMAGES].shape == (1, 3, 224, 224)
+
+    def test_sample_input_single_visual_feature_without_image_in_id(self) -> None:
+        """Visual feature without 'image' in id is still detected via the 'type' field."""
+        stats = {
+            "observation.state": {"name": "state", "shape": (8,), "type": "STATE"},
+            "observation.front_cam": {
+                "name": "front_cam",
+                "shape": (3, 224, 224),
+                "type": "VISUAL",
+            },
+        }
+        sample_input = self._call_sample_input(stats)
+        assert STATE in sample_input
+        assert IMAGES in sample_input
+        assert sample_input[IMAGES].shape == (1, 3, 224, 224)
+
+    def test_sample_input_multiple_visual_features_without_image_in_id(self) -> None:
+        """Multiple visual features without 'image' in id produce per-feature IMAGES.<name> keys."""
+        stats = {
+            "observation.state": {"name": "state", "shape": (8,), "type": "STATE"},
+            "observation.front_cam": {
+                "name": "front_cam",
+                "shape": (3, 224, 224),
+                "type": "VISUAL",
+            },
+            "observation.wrist_cam": {
+                "name": "wrist_cam",
+                "shape": (3, 224, 224),
+                "type": "VISUAL",
+            },
+        }
+        sample_input = self._call_sample_input(stats)
+        assert STATE in sample_input
+        assert f"{IMAGES}.front_cam" in sample_input
+        assert f"{IMAGES}.wrist_cam" in sample_input
+        assert IMAGES not in sample_input
+
+
+# ============================================================================ #
 # Policy Static Method Tests                                                   #
 # ============================================================================ #
 
@@ -985,3 +1058,56 @@ class TestPi05FineTuning:
         assert policy.config.scheduler_warmup_steps == 500
         assert policy.config.scheduler_decay_steps == 10_000
         assert policy.config.scheduler_decay_lr == 1e-5
+
+
+# ============================================================================ #
+# Export Args Tests                                                            #
+# ============================================================================ #
+
+
+class TestPi05ExtraExportArgs:
+    """Tests for Pi05.extra_export_args preprocessor ordering and contents."""
+
+    @staticmethod
+    def _mock_stats() -> dict[str, dict[str, list[float] | str | tuple]]:
+        return {
+            "observation.state": {
+                "name": "observation.state",
+                "shape": (8,),
+                "mean": [0.0] * 8,
+                "std": [1.0] * 8,
+                "q01": [-1.0] * 8,
+                "q99": [1.0] * 8,
+            },
+            "action": {
+                "name": "action",
+                "shape": (7,),
+                "mean": [0.0] * 7,
+                "std": [1.0] * 7,
+                "q01": [-1.0] * 7,
+                "q99": [1.0] * 7,
+            },
+        }
+
+    def test_raises_without_dataset_stats(self) -> None:
+        """extra_export_args should raise if dataset_stats are unavailable."""
+        policy = Pi05()
+        with pytest.raises(ValueError, match="Dataset stats are required"):
+            _ = policy.extra_export_args
+
+    def test_preprocessor_order_normalize_before_pi05(self) -> None:
+        """Normalize must run before the pi05 image transform for both onnx and openvino."""
+        policy = Pi05()
+        # Inject mock stats directly to avoid building the heavy model.
+        policy._dataset_stats = self._mock_stats()
+
+        args = policy.extra_export_args
+
+        for backend in ("onnx", "openvino"):
+            specs = args[backend].preprocessors_specs
+            types = [s.type for s in specs]
+            assert types[0] == "normalize", f"{backend}: expected normalize first, got {types}"
+            assert types[1] == "pi05", f"{backend}: expected pi05 second, got {types}"
+            assert types.index("normalize") < types.index("pi05"), (
+                f"{backend}: normalize must precede pi05, got {types}"
+            )

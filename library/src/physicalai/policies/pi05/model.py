@@ -18,7 +18,7 @@ from torch import Tensor, nn
 from transformers.cache_utils import DynamicCache
 
 from physicalai.data.constants import IMAGE_MASKS, TOKENIZED_PROMPT, TOKENIZED_PROMPT_MASK
-from physicalai.data.observation import ACTION, IMAGES, STATE, TASK
+from physicalai.data.observation import ACTION, IMAGES, STATE, TASK, FeatureType
 from physicalai.export import ExportableModelMixin
 from physicalai.policies.base import Model
 
@@ -343,8 +343,10 @@ class PaliGemmaWithExpertModel(nn.Module):
             adarms_cond_dim=action_expert_config.width if use_adarms[1] else None,
         )
 
-        self.paligemma = PaliGemmaForConditionalGenerationWithPiGemma(config=vlm_config_hf)
-        self.gemma_expert = PiGemmaForCausalLM(config=action_expert_config_hf)
+        self.paligemma = PaliGemmaForConditionalGenerationWithPiGemma(
+            config=vlm_config_hf,  # pyrefly: ignore[bad-argument-type]
+        )
+        self.gemma_expert = PiGemmaForCausalLM(config=action_expert_config_hf)  # pyrefly: ignore[bad-argument-type]
         self.gemma_expert.model.embed_tokens = None
 
         self.to_bfloat16_for_selected_params(precision)
@@ -411,7 +413,9 @@ class PaliGemmaWithExpertModel(nn.Module):
         image_outputs = self.paligemma.model.get_image_features(image)
         if not isinstance(image_outputs, torch.Tensor):
             image_outputs = image_outputs.pooler_output
-        features = image_outputs * self.paligemma.config.text_config.hidden_size**0.5
+        features = (
+            image_outputs * self.paligemma.config.text_config.hidden_size**0.5  # pyrefly: ignore[missing-attribute]
+        )
         if features.dtype != out_dtype:
             features = features.to(out_dtype)
         return features
@@ -472,7 +476,7 @@ class PaliGemmaWithExpertModel(nn.Module):
             prefix_past_key_values = None
         else:
             models = [self.paligemma.model.language_model, self.gemma_expert.model]
-            num_layers = self.paligemma.config.text_config.num_hidden_layers
+            num_layers = self.paligemma.config.text_config.num_hidden_layers  # pyrefly: ignore[missing-attribute]
 
             use_gradient_checkpointing = (
                 hasattr(self.gemma_expert.model, "gradient_checkpointing")
@@ -672,13 +676,15 @@ class Pi05Model(ExportableModelMixin, Model):
 
         sample_input = {}
 
-        num_image_features = sum(1 for key in self._dataset_stats if "image" in key)
+        num_image_features = sum(
+            1 for key in self._dataset_stats if str(FeatureType.VISUAL) in self._dataset_stats[key]["type"]
+        )
 
         for feature_id in self._dataset_stats:
             if STATE in feature_id:
                 state_feature = self._dataset_stats[feature_id]
                 sample_input[STATE] = torch.randn(1, *cast("tuple", state_feature["shape"]), device=device)
-            elif "image" in feature_id:
+            elif str(FeatureType.VISUAL) in self._dataset_stats[feature_id]["type"]:
                 image_feature = self._dataset_stats[feature_id]
                 if num_image_features == 1:
                     sample_input[IMAGES] = torch.randn(1, *cast("tuple", image_feature["shape"]), device=device)
@@ -728,6 +734,12 @@ class Pi05Model(ExportableModelMixin, Model):
         self.paligemma_with_expert.paligemma.model.language_model.gradient_checkpointing = True
         self.paligemma_with_expert.paligemma.model.vision_tower.gradient_checkpointing = True
         self.paligemma_with_expert.gemma_expert.model.gradient_checkpointing = True
+        # Force eager attention on the vision tower so that SDPA/flash-attention
+        # ops do not appear inside checkpoint regions, which would otherwise
+        # cause a KeyError in the AOT autograd partitioner when torch.compile
+        # traces the backward graph (functionalize_rng_ops cannot map the
+        # _scaled_dot_product_flash_attention op between fwd/bwd graphs).
+        self.paligemma_with_expert.paligemma.model.vision_tower.config._attn_implementation = "eager"  # noqa: SLF001
         msg = "Enabled gradient checkpointing for Pi05Model"
         logger.info(msg)
 
