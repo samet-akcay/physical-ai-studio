@@ -16,7 +16,7 @@ Architecture and design documents for the physical‑AI runtime.
 
 | Component          | Document                                                         | Purpose                                        |
 | ------------------ | ---------------------------------------------------------------- | ---------------------------------------------- |
-| **Runtime System** | [Runtime System](./components/runtime-system/INDEX.md)           | Policy runtime, execution, and CLI             |
+| **Runtime System** | [Runtime System](./components/runtime-system/README.md)          | Policy runtime, execution, and CLI             |
 | Inference Core     | [Inference Core](./components/inferencekit.md)                   | Domain‑agnostic inference layer                |
 | Robot Interface    | [Robot Interface](./components/robot-interface.md)               | Robot Protocol and hardware integration        |
 | Camera Interface   | [Camera Interface](./components/camera-interface.md)             | Capture API and camera backends                |
@@ -40,7 +40,7 @@ docs/design/
 │   └── architecture.md
 ├── components/
 │   ├── runtime-system/
-│   │   ├── INDEX.md
+│   │   ├── README.md
 │   │   ├── policy_runtime_design.md
 │   │   ├── policy_server_design.md
 │   │   ├── design_review_summary.md
@@ -62,7 +62,7 @@ docs/design/
 
 1. **[Strategy](./architecture/strategy.md)** — baseline architecture and scope
 2. **[Architecture](./architecture/architecture.md)** — runtime architecture and boundaries
-3. **[Runtime System](./components/runtime-system/INDEX.md)** — policy runtime design and phases
+3. **[Runtime System](./components/runtime-system/README.md)** — policy runtime design and phases
 4. **[Inference Core](./components/inferencekit.md)** — inference foundation
 
 ---
