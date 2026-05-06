@@ -214,7 +214,7 @@ class HILStrategy:
 
 Same shape works for sentry (`on_observation` trigger), highlight (rolling buffer + trigger), DAgger (record both expert and policy actions, beta-mix).
 
-The runtime stays workflow-agnostic. Sketches in `policy_runtime_design.md` §19.
+The runtime stays workflow-agnostic. Product workflows compose around `PolicyRuntime` with callbacks and consumer-owned code.
 
 ---
 
@@ -233,7 +233,7 @@ The runtime stays workflow-agnostic. Sketches in `policy_runtime_design.md` §19
 - **Same `Execution` contract** — `PolicyRuntime` doesn't know remote from process.
 - **gRPC bidirectional streaming**, typed proto, `prev_chunk_left_over` and `inference_delay` cross the wire.
 - **One model per server.** Multi-tenancy is a follow-up.
-- **Build target Phase 5.** Design fixed now in `policy_server_design.md`; protocol position fixed in §10.
+- **Build target Phase 5.** Design fixed now in `policy_server_design.md`; `RemoteExecution` uses the same `Execution` contract as local async.
 
 Adopts LeRobot's `PolicyServer` / `RobotClient` split, restructured around our `Execution` boundary.
 
@@ -252,7 +252,7 @@ Adopts LeRobot's `PolicyServer` / `RobotClient` split, restructured around our `
 | Strategy classes in `physicalai` | Workflows live in consumer |
 | `torch.compile` warmup | We're ExecuTorch / OpenVINO / ONNX, not Torch |
 
-Each has a documented "graduation condition" (§16). Promotion needs a concrete consumer.
+Promotion needs a concrete consumer, not an anticipated workflow.
 
 ---
 
@@ -282,7 +282,7 @@ Phase 0 + Phase 1 land independently; they're correctness and inference-API work
 
 <br>
 
-Plus: **does the Studio split land?** The §17/§18/§19 claim that strategies stay in the consumer — does that match where Studio wants to invest?
+Plus: **does the Studio split land?** Strategies stay in the consumer — does that match where Studio wants to invest?
 
 ---
 

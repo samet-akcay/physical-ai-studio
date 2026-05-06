@@ -164,7 +164,7 @@ PhysicalAI currently lacks a number of capabilities that LeRobot's rollout subsy
 | `precise_sleep` + overrun warning | yes | bare `time.sleep` in examples, no warn | Medium (silent slippage) |
 | torch.compile warmup gate | yes (`compile_warmup_inferences`) | absent | Low–Medium (Torch backend only) |
 | Robot wrapper for thread safety | `rollout/robot_wrapper.py` | absent | High (precondition for RTC) |
-| Action chunk queue mechanics | per-policy queue + RTC replace | `ActionChunking` decorator (open-loop pop); a runtime-owned queue is added alongside (see design doc §11–§12) without removing the decorator path | High (stale actions under latency) — closed by adding a runtime-owned queue with background refill; `ActionChunking` is kept permanently for direct `select_action` use |
+| Action chunk queue mechanics | per-policy queue + RTC replace | `ActionChunking` decorator (open-loop pop); a runtime-owned queue is added alongside without removing the decorator path | High (stale actions under latency) — closed by adding `ActionQueue` with background refill; `ActionChunking` is kept permanently for direct `select_action` use |
 | Relative-action reanchor in RTC | yes | absent | Medium (Pi0/Pi0.5 path) |
 | Pre/post processor pipeline | `DataProcessorPipeline` from checkpoint | `Preprocessor` / `Postprocessor` lists from manifest | Functional parity |
 | Stats normalization | `Normalize` / `Unnormalize` | `StatsNormalizer` / `StatsDenormalizer` (mean_std / min_max / quantiles) | Parity |

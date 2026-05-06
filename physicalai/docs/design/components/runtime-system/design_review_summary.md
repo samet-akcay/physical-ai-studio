@@ -1,54 +1,103 @@
-# Policy Runtime Design — 1-Page Summary
+# Policy Runtime Design Summary
 
-**Full design.** [`policy_runtime_design.md`](./policy_runtime_design.md), [`policy_server_design.md`](./policy_server_design.md).
-**Gap analysis.** [`inference_comparison_report.md`](./inference_comparison_report.md).
+We want a small runtime layer for running trained policies on robots.
 
-## What we're proposing
+Today, model inference, action chunking, queueing, async execution, remote serving, benchmarking, and product workflows are easy to mix together. The proposal separates those responsibilities.
 
-A new `physicalai.runtime` package owning the per-tick control loop. `InferenceModel` keeps its current API plus `predict_action_chunk()` and `close()`. The runtime is composable from three pieces: `InferenceModel` (policy math), `Execution` (transport — sync, async-thread, async-process, remote), and `PolicyRuntime` (loop, queue, callbacks, timing). Each piece is independently testable.
+## Proposed API
 
-Studio's `application/backend/` becomes a thin shell that constructs a `PolicyRuntime`, attaches callbacks for recording/telemetry, and forwards user events. Per-tick logic moves out of `RobotControlWorker`.
+```python
+from physicalai.inference import InferenceModel
+from physicalai.runtime import PolicyRuntime, SyncExecution
+from physicalai.robot.so101 import SO101
 
-## What we're adding
+model = InferenceModel.load("./exports/act_policy")
+robot = SO101(port="/dev/ttyACM0")
 
-| | What | Where |
+runtime = PolicyRuntime(
+    robot=robot,
+    model=model,
+    execution=SyncExecution(mode="chunk"),
+    fps=30,
+)
+
+runtime.run(duration_s=60)
+```
+
+CLI equivalent:
+
+```bash
+physicalai run --config so101_act.yaml --duration-s 60
+```
+
+## Responsibilities
+
+| Component | Owns | Does not own |
 |---|---|---|
-| Loop | `PolicyRuntime` with `run()` / `stop()` / `from_config()` | `physicalai.runtime` |
-| Transport | `Execution` protocol + `Sync` / `Async(thread)` / `Async(process)` / `Remote` | `physicalai.runtime.execution` |
-| Chunks | `ActionQueue` + `ChunkSmoother` + `RTCQueueMerger` | `physicalai.runtime.action_queue` |
-| RTC | `Guidance` protocol + `RTC()` composed into `FlowMatching` | `physicalai.inference.guidance` |
-| Hooks | `Callback` base + documented hook points | `physicalai.runtime.callbacks` |
-| CLI | `physicalai run` subcommand on a new runtime-side `physicalai` console script (jsonargparse, no Lightning) | `physicalai/src/physicalai/cli/` |
-| Remote | `RemoteExecution` + `PolicyServer` (gRPC streaming) | `physicalai.runtime.execution.remote` |
+| `InferenceModel` | loading, preprocessing, backend inference, `select_action()`, `predict_action_chunk()` | robot loop, FPS, callbacks, action dispatch |
+| `Execution` | sync/thread/process/remote inference scheduling | action buffering, robot IO |
+| `ActionQueue` | chunk storage, merge, smoothing, pop-one-action-per-tick | model execution, robot IO |
+| `PolicyRuntime` | observation, timing, queue consumption, `robot.send_action()`, callbacks, shutdown | policy math |
+| Benchmarking | measurement | production runtime semantics |
 
-## What we're explicitly not adding
+## `select_action()` vs `predict_action_chunk()`
 
-- `ObservationAssembler`, `ActionArbiter`, `ActionFilter`, `ActionInterpolator`, `ShutdownPolicy` — deferred until two consumers need them. Today's needs are met by callbacks and the `return_to_home: bool` kwarg.
-- Strategy classes (sentry / dagger / highlight / HIL) — these are product workflows. They live in the consumer, composed from `PolicyRuntime` + callbacks. Composition sketches in `policy_runtime_design.md` §19.
-- `torch.compile`, `TwoPhase` runner, server-side smoothing, multi-tenant single-server.
+```python
+action = model.select_action(obs)
+```
 
-## Why this shape
+`select_action()` returns one action. It is the simple direct-call API for scripts, tests, and existing users.
 
-1. **`Execution` is one concept, four transports.** Sync, thread, process, remote share one interface. `PolicyRuntime` does not learn about transport. Same code path supports today's `ModelWorker` (process) and tomorrow's remote GPU.
-2. **RTC composes, doesn't subclass.** `FlowMatching(guidance=RTC()) + AsyncExecution() + ActionQueue(merger=RTCQueueMerger())`. Each piece works without the others. LeRobot's `RTCInferenceEngine` lumps them together; we don't.
-3. **Strategies live in the consumer.** The loop is workflow-agnostic. Adding a new product workflow is a callback + a small wrapper in the consumer, not a runner subclass.
+```python
+chunk = model.predict_action_chunk(obs)
+actions = chunk["actions"]  # shape: (H, action_dim)
+```
 
-## Phases
+`predict_action_chunk()` returns a chunk without consuming it. `PolicyRuntime` uses this through `Execution` and stores the result in `ActionQueue`.
 
-| | Scope | Acceptance |
-|---|---|---|
-| 0 | Correctness fixes (image preprocessing parity, processor state) | Known-divergent checkpoint loads correctly or fails loudly |
-| 1 | `InferenceModel` additions (`predict_action_chunk`, `close`), `Guidance`, `FlowMatching`, `TemporalEnsemble` | `predict_action_chunk` returns documented dict; `RTC` with no overlap is identity |
-| 2 | `physicalai.runtime` core + `SyncExecution` + `AsyncExecution(thread)` + `physicalai run` CLI | Standalone example runs end-to-end at target FPS |
-| 3 | `AsyncExecution(process)` + RTC end-to-end + `RTCQueueMerger` | Flow policy runs with RTC without chunk-boundary discontinuities |
-| 4 | Hardening (numerical equivalence tests, latency tracking accuracy) | Smoothing matches reference; latency estimate within 1 frame |
-| 5 | `RemoteExecution` + `PolicyServer` + `physicalai serve` CLI | Remote run produces same actions as `AsyncExecution(process)` |
-| 6 | Deferred components, when consumer demand justifies them | Per-component graduation conditions in §16 |
+## Why This Shape
 
-## Open questions for the team
+```text
+PolicyRuntime tick:
+  obs = robot.get_observation()
+  execution.maybe_request(obs)
+  action = action_queue.pop_or_none()
+  robot.send_action(action)
+```
 
-1. `TemporalEnsemble` output: one smoothed action per tick, or smoothed chunk?
-2. `AsyncExecution` cancellation: keep no-cancel default or add `cancel_inflight=True` opt-in?
-3. Process-transport reader: dedicated reader thread, or poll inside `maybe_request`?
-4. `ObservationAssembler` protocol: needed in Phase 2, or callbacks suffice indefinitely?
-5. Remote transport: gRPC streaming (recommended) vs HTTP/2+JSON; multi-tenancy timing; auth posture.
+This keeps runtime behavior out of `InferenceModel`. It also lets the same loop use sync, thread, process, or remote inference.
+
+## Remote Inference
+
+```python
+runtime = PolicyRuntime(
+    robot=robot,
+    model=RemoteInferenceModel(endpoint="grpc://gpu-host:50051"),
+    execution=RemoteExecution(endpoint="grpc://gpu-host:50051"),
+    fps=30,
+)
+```
+
+Server side:
+
+```bash
+physicalai serve --config policy_server.yaml
+```
+
+The robot host owns the robot loop and `ActionQueue`. The server host owns the real `InferenceModel`.
+
+## Current Recommendation
+
+Build the runtime in this order:
+
+1. Add `predict_action_chunk()` and `close()` to `InferenceModel`.
+2. Add `PolicyRuntime`, `Execution`, and `ActionQueue`.
+3. Add async thread/process execution.
+4. Add RTC-specific merging and delay tracking.
+5. Add `RemoteExecution` and `PolicyServer`.
+
+Open discussion points:
+
+1. Should `select_action()` stay as direct-call convenience only?
+2. Should runtime-owned chunking be the recommended path for all robot loops?
+3. Which benchmark modes should use `PolicyRuntime` versus lower-level components directly?
