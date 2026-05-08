@@ -234,8 +234,5 @@ def instantiate_obj(
     if isinstance(config, dict):
         return instantiate_obj_from_dict(config, key=key, target_cls=target_cls)
 
-    msg = (
-        f"Unsupported configuration type: {type(config)}. "
-        "Expected dict, file path, Pydantic model, or dataclass."
-    )
+    msg = f"Unsupported configuration type: {type(config)}. Expected dict, file path, Pydantic model, or dataclass."
     raise TypeError(msg)
