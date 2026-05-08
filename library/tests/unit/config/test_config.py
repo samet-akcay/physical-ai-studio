@@ -1,20 +1,21 @@
 # Copyright (C) 2025-2026 Intel Corporation
 # SPDX-License-Identifier: Apache-2.0
+# ruff: noqa: ANN001, ANN201, B903, D107, PLR2004, PLR6301, RUF069, S101
 
 """Unit tests for config module."""
 
 import dataclasses
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import Any, cast
 
 import numpy as np
 import pytest
 from pydantic import BaseModel
 
 from physicalai.config import Config, from_config
-from physicalai.config.instantiate import _import_class, instantiate_obj
+from physicalai.config.instantiate import _import_class, instantiate_obj  # noqa: PLC2701
 from physicalai.config.mixin import FromConfig
-
 
 # =============================================================================
 # Test Fixtures
@@ -24,7 +25,7 @@ from physicalai.config.mixin import FromConfig
 class SampleModel(FromConfig):
     """Sample model implementing FromConfig."""
 
-    def __init__(self, hidden_size: int, num_layers: int = 3, **kwargs):
+    def __init__(self, hidden_size: int, num_layers: int = 3, **kwargs: object) -> None:
         self.hidden_size = hidden_size
         self.num_layers = num_layers
         self.kwargs = kwargs
@@ -220,9 +221,9 @@ class TestFromConfigMixin:
                     {
                         "class_path": f"{NestedComponent.__module__}.NestedComponent",
                         "init_args": {"value": 20},
-                    }
+                    },
                 ],
-            }
+            },
         )
         assert isinstance(model.component, NestedComponent)
         assert model.component.value == 10
@@ -231,15 +232,17 @@ class TestFromConfigMixin:
 
     def test_from_config_decorator(self) -> None:
         """Test @from_config adds the same helpers as the mixin."""
-        model = DecoratedModel.from_config({"hidden_size": 512, "num_layers": 6})
+        decorated_model_cls = cast("Any", DecoratedModel)
+        model = decorated_model_cls.from_config({"hidden_size": 512, "num_layers": 6})
         assert model.hidden_size == 512
         assert model.num_layers == 6
 
     def test_from_config_decorator_with_yaml(self, tmp_path) -> None:
         """Test decorated classes support YAML loading."""
+        decorated_model_cls = cast("Any", DecoratedModel)
         path = tmp_path / "decorated.yaml"
         path.write_text("hidden_size: 640\nnum_layers: 7")
-        model = DecoratedModel.from_config(path)
+        model = decorated_model_cls.from_config(path)
         assert model.hidden_size == 640
         assert model.num_layers == 7
 
