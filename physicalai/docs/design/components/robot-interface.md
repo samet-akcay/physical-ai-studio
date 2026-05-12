@@ -87,7 +87,7 @@ The interface uses `Protocol` (structural typing), not an Abstract Base Class. I
 
 ### Standard Python Types
 
-Observations are `dict[str, Any]`, actions are `np.ndarray`. No custom message types, no protobuf, no ROS messages. This ensures maximum portability — works with any inference runtime, any framework.
+Observations are `dict[str, Any]`. Actions are `np.ndarray` today, with a forward-compatible widening to `RobotAction = np.ndarray | Mapping[str, Any]` for composite robots — see [Action Evolution](#action-evolution-from-npndarray-to-namespaced-mappings). No custom message types, no protobuf, no ROS messages. This ensures maximum portability — works with any inference runtime, any framework.
 
 `numpy` is used over torch because it is universally available, makes no GPU assumptions, is expected by robot SDKs, and conversion to/from torch is zero-copy (`torch.from_numpy()` / `.numpy()`).
 
@@ -169,6 +169,13 @@ class Robot(Protocol):
                     (positions, velocities, torques) depend on the policy
                     that produced the action. The robot implementation is
                     responsible for interpreting them correctly.
+
+        Note:
+            The runtime contract is `RobotAction = np.ndarray`. Composite
+            robots (humanoids, mobile manipulators) need a richer action
+            shape; the forward-compatible signature widens this to
+            `np.ndarray | Mapping[str, Any]`. See
+            [Action Evolution](#action-evolution-from-npndarray-to-namespaced-mappings).
         """
         ...
 ```
@@ -331,6 +338,143 @@ with connect(left_robot), connect(right_robot):
 ```
 
 Coordination between independent robots is handled at the application level (e.g., teleoperation leader/follower or a fleet controller), not by the robot interface.
+
+---
+
+## Action Evolution: From `np.ndarray` To Namespaced Mappings
+
+The current `Robot` Protocol accepts `action: np.ndarray`. This is sufficient for every robot the runtime targets today (SO-101, Trossen, any single-arm or single-flat-vector robot) and matches the production single-rate runtime in [`runtime-system/robot_runtime_architecture.md`](./runtime-system/robot_runtime_architecture.md).
+
+It is **not** sufficient for composite robots — humanoids and mobile manipulators with multiple effectors and mixed control modes (position, velocity, torque, twist, gait goal). A flat ndarray cannot cleanly express, for example, "left arm position targets, right hand grasp force, base twist command, head pose" in one call.
+
+This section defines the forward-compatible migration path. Doc B ([`runtime-system/composite_robot_architecture.md`](./runtime-system/composite_robot_architecture.md)) consumes the namespaced form below.
+
+### Why The Current ndarray Suffices For SO-101
+
+- One arm, one rigid joint set, one control mode (position).
+- The policy outputs `(N,)` joint targets that map 1:1 to `joint_names`.
+- The Studio recording pipeline already serializes `np.ndarray` actions.
+- Any structured form would just be the same vector wrapped in a dict.
+
+### Why Composite Robots Need Structure
+
+A Unitree G1 or similar humanoid typically needs in one tick:
+
+- **Base**: twist `[vx, vy, wz]` or gait goal
+- **Torso**: posture targets
+- **Left arm / right arm**: position or velocity targets, possibly different modes per arm
+- **Left hand / right hand**: finger joint targets or grasp force
+- **Head**: pose targets
+
+Different effectors may receive commands from different subsystems (locomotion publishes base, VLA publishes arms/hands). Different effectors may have different freshness budgets (a stale base twist is dangerous; a stale head target is fine). Some effectors may be uncontrolled in a given tick.
+
+### The Smallest Forward-Compatible Change
+
+Widen the type alias only:
+
+```python
+# physicalai/robot/types.py
+RobotAction = np.ndarray | Mapping[str, Any]
+```
+
+The Protocol becomes:
+
+```python
+def send_action(self, action: RobotAction) -> None: ...
+```
+
+Backward compatibility rules:
+
+- Simple robots (SO-101, Trossen) MUST continue to accept raw `np.ndarray`.
+- Simple robots MAY additionally accept `{"joint_positions": np.ndarray}` if useful.
+- Composite robots MUST accept namespaced mappings; they SHOULD reject raw `np.ndarray` with a clear error rather than guess routing.
+
+No existing `np.ndarray`-only consumer breaks. No new typed class hierarchy is introduced.
+
+### Namespaced Action Examples
+
+Single-arm (unchanged):
+
+```python
+robot.send_action(np.array([0.1, -0.4, 0.7, 0.0, 0.2, 0.5]))
+```
+
+Single-arm via dict (optional, for future-proofing recorders):
+
+```python
+robot.send_action({"joint_positions": np.array([0.1, -0.4, 0.7, 0.0, 0.2, 0.5])})
+```
+
+Bimanual ALOHA-style:
+
+```python
+robot.send_action({
+    "left_arm":  {"joint_positions": q_left,  "mode": "position"},
+    "right_arm": {"joint_positions": q_right, "mode": "position"},
+})
+```
+
+Humanoid (G1-style):
+
+```python
+robot.send_action({
+    "base":       {"twist": np.array([vx, vy, wz])},
+    "torso":      {"joint_positions": q_torso, "mode": "position"},
+    "left_arm":   {"joint_positions": q_la, "mode": "position"},
+    "right_arm":  {"joint_velocities": qd_ra, "mode": "velocity"},
+    "left_hand":  {"joint_positions": q_lh},
+    "right_hand": {"grasp_force": 0.6},
+    "head":       {"joint_positions": q_head},
+})
+```
+
+Recommended namespace conventions:
+
+| Namespace        | Typical contents                                       |
+| ---------------- | ------------------------------------------------------ |
+| `base`           | `twist`, `pose_goal`, `gait_goal`                      |
+| `torso`          | `joint_positions`, `joint_velocities`                  |
+| `left_arm` / `right_arm` | `joint_positions`, `joint_velocities`, `joint_torques`, `mode`, `ee_pose` |
+| `left_hand` / `right_hand` | `joint_positions`, `grasp_force`                |
+| `head`           | `joint_positions`, `gaze_target`                       |
+| `gripper`        | `position` or `force` (single-arm convenience)         |
+
+`mode` is a per-effector string in `{"position", "velocity", "torque"}`. Effector keys absent from the mapping mean "no command this tick"; the robot driver decides whether to hold, decay, or refuse.
+
+### ActionMapper Role
+
+`ActionMapper` (defined in [`runtime-system/robot_runtime_architecture.md`](./runtime-system/robot_runtime_architecture.md#5-policycontroller-and-inference)) converts policy output (`PolicyAction`, often a flat normalized vector) into a `RobotAction` for a specific robot. It is the seam where flat-vector policies meet namespaced robots:
+
+```python
+class HumanoidArmsMapper:
+    def to_robot_action(self, policy_action: np.ndarray, observation: Observation) -> RobotAction:
+        return {
+            "left_arm":  {"joint_positions": policy_action[0:7], "mode": "position"},
+            "right_arm": {"joint_positions": policy_action[7:14], "mode": "position"},
+        }
+```
+
+Without an `ActionMapper`, `PolicyController` returns the policy output as-is. SO-101 and similar robots need no mapper.
+
+### Migration Plan
+
+1. Update the type alias `RobotAction = np.ndarray | Mapping[str, Any]`. No code changes required for SO-101 / Trossen.
+2. Update `check_robot_conformance()` to accept either form and to assert the robot's documented choice.
+3. Update Studio recording to serialize the mapping form when present (key-per-effector arrays); keep the ndarray form for legacy episodes.
+4. Add the first composite-robot driver under `physicalai/robot/<robot>/` that accepts namespaced mappings only.
+5. Once a typed `RobotAction` dataclass would actually catch bugs that the mapping form does not, introduce it.
+
+### What Is NOT Introduced Yet
+
+- No `RobotAction` dataclass / typed schema.
+- No per-effector capability registry on the robot side.
+- No new control-mode enum class (use strings until two robots disagree on the set).
+- No protobuf, no ROS messages, no GXF entities — see Doc B for ROS interop strategy.
+- No automatic ndarray ↔ mapping transforms inside `RobotRuntime`. The mapper is explicit.
+
+### Manifest Implications
+
+The current manifest (`robots[].action.shape`, `robots[].action.joint_order`) describes a flat vector. Composite manifests will need per-effector entries; the schema extension is deferred until the first composite driver is integrated. Until then, manifest validation continues to operate on the flat-vector contract.
 
 ---
 
@@ -741,7 +885,7 @@ class UR5e:
 | Decision            | Choice                                                                             |
 | ------------------- | ---------------------------------------------------------------------------------- |
 | Interface mechanism | `Protocol` (structural typing, no inheritance)                                     |
-| Data types          | `dict[str, Any]` for observations, `np.ndarray` for actions                        |
+| Data types          | `dict[str, Any]` for observations; `RobotAction = np.ndarray | Mapping[str, Any]` for actions (current robots use `np.ndarray`) |
 | Context manager     | `connect()` wrapper function                                                       |
 | Safety              | `disconnect()` must leave robot stationary (documented contract, conformance test) |
 | Cameras             | Separate from robot interface; user assembles observation                          |
