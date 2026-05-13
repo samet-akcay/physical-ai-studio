@@ -10,33 +10,29 @@ from .act import ACT, ACTConfig, ACTModel
 from .base import Policy
 from .groot import Groot, GrootConfig, GrootModel
 from .lerobot import get_lerobot_policy
+from .molmoact2 import MolmoAct2
 from .pi0 import Pi0, Pi0Config, Pi0Model
 from .pi05 import Pi05, Pi05Config, Pi05Model
 from .smolvla import SmolVLA, SmolVLAConfig, SmolVLAModel
 
 __all__ = [
-    # ACT
     "ACT",
     "ACTConfig",
     "ACTModel",
-    # Groot
     "Groot",
     "GrootConfig",
     "GrootModel",
-    # Pi0
+    "MolmoAct2",
     "Pi0",
     "Pi0Config",
     "Pi0Model",
     "Pi05",
     "Pi05Config",
     "Pi05Model",
-    # Base
     "Policy",
-    # SmolVLA
     "SmolVLA",
     "SmolVLAConfig",
     "SmolVLAModel",
-    # Utils
     "get_physicalai_policy_class",
     "get_policy",
     "lerobot",
@@ -51,7 +47,7 @@ def get_policy(policy_name: str, *, source: str = "physicalai", **kwargs) -> Pol
 
     Args:
         policy_name: Name of the policy to create. Supported values depend on source:
-            - physicalai: "act", "dummy", "groot", "pi0", "pi05", "smolvla"
+            - physicalai: "act", "dummy", "groot", "molmoact2", "pi0", "pi05", "smolvla"
             - lerobot: "act", "diffusion", "smolvla", "pi0", "pi05", "pi0_fast", "groot", "xvla"
         source: Where the policy implementation comes from. Options:
             - "physicalai": First-party implementations (default)
@@ -133,6 +129,8 @@ def get_physicalai_policy_class(policy_name: str) -> type[Policy]:
         return ACT
     if policy_name == "groot":
         return Groot
+    if policy_name == "molmoact2":
+        return MolmoAct2
     if policy_name == "pi0":
         return Pi0
     if policy_name == "pi05":

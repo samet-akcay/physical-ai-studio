@@ -316,6 +316,52 @@ class TestObservationFormatConversion:
         assert torch.equal(restored.action, original.action)
         assert torch.equal(restored.state, original.state)
 
+    def test_format_converter_roundtrip_with_structured_state(self):
+        """Test structured state roundtrip through LeRobot flattened keys."""
+        original = Observation(
+            state={
+                "joint": torch.tensor([0.5, 0.6]),
+                "gripper": torch.tensor([0.1]),
+            },
+            episode_index=torch.tensor(5),
+            frame_index=torch.tensor(10),
+            index=torch.tensor(100),
+            task_index=torch.tensor(0),
+            timestamp=torch.tensor(1.5),
+        )
+
+        lerobot_dict = FormatConverter.to_lerobot_dict(original)
+        restored = FormatConverter.to_observation({
+            **lerobot_dict,
+            "action": torch.tensor([1.0, 2.0]),
+        })
+
+        assert "observation.state.joint" in lerobot_dict
+        assert "observation.state.gripper" in lerobot_dict
+        assert isinstance(restored.state, dict)
+        assert torch.equal(restored.state["joint"], original.state["joint"])
+        assert torch.equal(restored.state["gripper"], original.state["gripper"])
+
+    def test_format_converter_unwraps_single_state_entry(self):
+        """Test common state={"state": tensor} maps to observation.state."""
+        obs = Observation(
+            state={"state": torch.tensor([0.5, 0.6])},
+            action=torch.tensor([1.0, 2.0]),
+            episode_index=torch.tensor(5),
+            frame_index=torch.tensor(10),
+            index=torch.tensor(100),
+            task_index=torch.tensor(0),
+            timestamp=torch.tensor(1.5),
+        )
+
+        lerobot_dict = FormatConverter.to_lerobot_dict(obs)
+        restored = FormatConverter.to_observation(lerobot_dict)
+
+        assert "observation.state" in lerobot_dict
+        assert "observation.state.state" not in lerobot_dict
+        assert torch.equal(lerobot_dict["observation.state"], obs.state["state"])
+        assert torch.equal(restored.state, obs.state["state"])
+
     def test_format_converter_with_batched_observation(self):
         """Test FormatConverter works with batched Observation."""
         batch = Observation(
@@ -334,6 +380,29 @@ class TestObservationFormatConversion:
         assert lerobot_dict["action"].shape == (2, 2)
         assert lerobot_dict["observation.state"].shape == (2, 2)
         assert lerobot_dict["observation.images.top"].shape == (2, 3, 64, 64)
+
+    def test_format_converter_to_lerobot_dict_with_structured_state(self):
+        """Test dict-valued state is flattened to LeRobot state subkeys."""
+        obs = Observation(
+            state={
+                "joint": torch.tensor([[0.5, 0.6], [0.7, 0.8]]),
+                "gripper": torch.tensor([[0.1], [0.2]]),
+            },
+            action=torch.tensor([[1.0, 2.0], [3.0, 4.0]]),
+            episode_index=torch.tensor([5, 6]),
+            frame_index=torch.tensor([10, 11]),
+            index=torch.tensor([100, 101]),
+            task_index=torch.tensor([0, 0]),
+            timestamp=torch.tensor([1.5, 1.6]),
+        )
+
+        lerobot_dict = FormatConverter.to_lerobot_dict(obs)
+
+        assert "observation.state.joint" in lerobot_dict
+        assert "observation.state.gripper" in lerobot_dict
+        assert "observation.state" not in lerobot_dict
+        assert lerobot_dict["observation.state.joint"].shape == (2, 2)
+        assert lerobot_dict["observation.state.gripper"].shape == (2, 1)
 
 
 class TestObservationEdgeCases:

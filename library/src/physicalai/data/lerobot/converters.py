@@ -167,7 +167,14 @@ def _convert_observation_to_lerobot_dict(observation: Observation) -> dict[str, 
 
     # Handle state
     if observation.state is not None:
-        batch["observation.state"] = observation.state
+        if isinstance(observation.state, dict):
+            if set(observation.state) == {"state"}:
+                batch["observation.state"] = observation.state["state"]
+            else:
+                for state_key, state_tensor in observation.state.items():
+                    batch[f"observation.state.{state_key}"] = state_tensor
+        else:
+            batch["observation.state"] = observation.state
 
     # Handle action (can be single tensor or dict of action components)
     if observation.action is not None:
@@ -243,7 +250,13 @@ def _flatten_collated_dict_to_lerobot(collated_dict: dict[str, Any]) -> dict[str
 
         elif key == "state":
             # Handle state
-            if value is not None:
+            if isinstance(value, dict):
+                if set(value) == {"state"}:
+                    result["observation.state"] = value["state"]
+                else:
+                    for state_key, state_tensor in value.items():
+                        result[f"observation.state.{state_key}"] = state_tensor
+            elif value is not None:
                 result["observation.state"] = value
 
         elif key == "action":

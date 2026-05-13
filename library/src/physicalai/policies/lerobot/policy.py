@@ -18,6 +18,7 @@ in configs.
 
 from __future__ import annotations
 
+import importlib
 import logging
 import warnings
 from pathlib import Path
@@ -49,8 +50,13 @@ if TYPE_CHECKING:
 if TYPE_CHECKING or module_available("lerobot"):
     from lerobot.configs.policies import PreTrainedConfig
     from lerobot.configs.types import FeatureType
-    from lerobot.datasets.feature_utils import dataset_to_policy_features
     from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
+
+    try:
+        from lerobot.datasets.feature_utils import dataset_to_policy_features
+    except ImportError:
+        # Ai2's MolmoAct2 fork moved this helper from datasets to utils.
+        dataset_to_policy_features = importlib.import_module("lerobot.utils.feature_utils").dataset_to_policy_features
     from lerobot.policies.factory import get_policy_class, make_policy_config, make_pre_post_processors
 
     LEROBOT_AVAILABLE = True
