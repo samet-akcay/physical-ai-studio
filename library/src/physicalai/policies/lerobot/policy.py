@@ -22,7 +22,7 @@ import logging
 import warnings
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import IO, TYPE_CHECKING, Any, ClassVar
+from typing import IO, TYPE_CHECKING, Any, ClassVar, cast
 
 import torch
 from lightning_utilities import module_available
@@ -651,7 +651,9 @@ class LeRobotPolicy(ExportablePolicyMixin, LeRobotFromConfig, Policy):
         self.add_module("_lerobot_policy", policy)
 
         # Create preprocessor/postprocessor for normalization
-        self._preprocessor, self._postprocessor = make_pre_post_processors(config, dataset_stats=dataset_stats)
+        preprocessor, postprocessor = make_pre_post_processors(config, dataset_stats=dataset_stats)
+        self._preprocessor = cast("torch.nn.Module", preprocessor)
+        self._postprocessor = cast("torch.nn.Module", postprocessor)
 
         # Expose framework info
         self._framework = "lerobot"
