@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -19,7 +20,6 @@ from physicalai.inference.adapters.registry import adapter_registry
 
 from physicalai.data.observation import Observation
 from physicalai.export.backends import TorchExportParameters
-from physicalai.policies import get_physicalai_policy_class as get_policy_class
 
 if TYPE_CHECKING:
     import numpy as np
@@ -81,10 +81,14 @@ class TorchAdapter(RuntimeAdapter):
                 raise KeyError(msg)
 
         try:
-            _, class_name = policy_class_path.rsplit(".", 1)
-            policy_class = get_policy_class(class_name)
+            module_name, class_name = policy_class_path.rsplit(".", 1)
+            policy_class = getattr(importlib.import_module(module_name), class_name)
 
-            self._policy = policy_class.load_from_checkpoint(model_path, map_location="cpu").to(self.device).eval()
+            self._policy = (
+                policy_class.load_from_checkpoint(model_path, map_location="cpu", weights_only=False)
+                .to(self.device)
+                .eval()
+            )
 
             # ``extra_export_args`` is contributed by ``ExportablePolicyMixin``
             # but ``nn.Module.__getattr__`` widens unknown attributes to

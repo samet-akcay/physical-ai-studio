@@ -31,7 +31,7 @@ from physicalai.config.serializable import dataclass_to_dict, dict_to_dataclass
 from physicalai.data import Observation
 from physicalai.data.lerobot import FormatConverter
 from physicalai.data.lerobot.dataset import _LeRobotDatasetAdapter  # noqa: PLC2701
-from physicalai.export.mixin_policy import CONFIG_KEY, DATASET_STATS_KEY, POLICY_NAME_KEY
+from physicalai.export.mixin_policy import CONFIG_KEY, DATASET_STATS_KEY, POLICY_NAME_KEY, ExportablePolicyMixin
 from physicalai.policies.base import Policy
 from physicalai.policies.lerobot.mixin import LeRobotFromConfig
 
@@ -92,7 +92,7 @@ def _warn_if_unsupported_policy(policy_name: str) -> None:
     )
 
 
-class LeRobotPolicy(Policy, LeRobotFromConfig):
+class LeRobotPolicy(ExportablePolicyMixin, Policy, LeRobotFromConfig):
     """Dynamic Lightning wrapper around any registered LeRobot policy.
 
     Dispatches to the LeRobot policy identified by ``policy_name`` and
