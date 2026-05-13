@@ -92,7 +92,7 @@ def _warn_if_unsupported_policy(policy_name: str) -> None:
     )
 
 
-class LeRobotPolicy(ExportablePolicyMixin, Policy, LeRobotFromConfig):
+class LeRobotPolicy(ExportablePolicyMixin, LeRobotFromConfig, Policy):
     """Dynamic Lightning wrapper around any registered LeRobot policy.
 
     Dispatches to the LeRobot policy identified by ``policy_name`` and
