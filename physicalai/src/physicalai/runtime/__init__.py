@@ -6,7 +6,11 @@
 from physicalai.runtime.action_queue import ActionQueue
 from physicalai.runtime.callbacks import RuntimeCallback
 from physicalai.runtime.controller import Controller
-from physicalai.runtime.execution import InferenceExecution, SyncInferenceExecution
+from physicalai.runtime.execution import (
+    AsyncInferenceExecution,
+    InferenceExecution,
+    SyncInferenceExecution,
+)
 from physicalai.runtime.factory import PolicyRuntime
 from physicalai.runtime.fallback import FallbackAction, HoldStateFallback
 from physicalai.runtime.policy_controller import PolicyController
@@ -15,6 +19,7 @@ from physicalai.runtime.safety import SafetyLayer, SafetyViolationError
 
 __all__ = [
     "ActionQueue",
+    "AsyncInferenceExecution",
     "Controller",
     "FallbackAction",
     "HoldStateFallback",

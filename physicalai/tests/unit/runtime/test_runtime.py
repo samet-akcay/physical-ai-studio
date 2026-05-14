@@ -13,6 +13,7 @@ import pytest
 
 from physicalai.runtime import (
     ActionQueue,
+    AsyncInferenceExecution,
     HoldStateFallback,
     PolicyController,
     PolicyRuntime,
@@ -321,3 +322,192 @@ class TestPolicyRuntime:
 
         runtime.run(duration_s=0.02)
         assert len(robot.actions_received) >= 1
+
+
+class _MockModel:
+    def __init__(self, chunk: np.ndarray, latency_s: float = 0.0, raises: BaseException | None = None) -> None:
+        self._chunk = chunk
+        self._latency_s = latency_s
+        self._raises = raises
+        self.call_count = 0
+        self.observations_seen: list[dict] = []
+
+    def __call__(self, observation: dict) -> dict:
+        self.call_count += 1
+        self.observations_seen.append(observation)
+        if self._latency_s > 0:
+            time.sleep(self._latency_s)
+        if self._raises is not None:
+            raise self._raises
+        return {"action": self._chunk}
+
+    def reset(self) -> None:
+        pass
+
+
+def _wait_for(predicate, timeout_s: float = 2.0, poll_s: float = 0.005) -> bool:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(poll_s)
+    return predicate()
+
+
+class TestAsyncInferenceExecution:
+    def test_bootstrap_empty_queue_with_fallback(self) -> None:
+        chunk = np.array([[1.0, 2.0]])
+        model = _MockModel(chunk, latency_s=0.05)
+        execution = AsyncInferenceExecution(refill_threshold=0)
+        pc = PolicyController(model=model, execution=execution, fallback=HoldStateFallback())
+        pc.start()
+
+        try:
+            state = np.array([0.5, 0.5])
+            action = pc.update({"state": state})
+            np.testing.assert_array_equal(action, state)
+            assert pc.fallback_count == 1
+        finally:
+            pc.stop()
+
+    def test_steady_state_refill(self) -> None:
+        chunk = np.tile(np.array([[1.0, 2.0]]), (4, 1))
+        model = _MockModel(chunk, latency_s=0.02)
+        execution = AsyncInferenceExecution(refill_threshold=2)
+        queue = ActionQueue()
+        pc = PolicyController(
+            model=model, execution=execution, action_queue=queue,
+            fallback=HoldStateFallback(),
+        )
+        pc.start()
+
+        try:
+            for _ in range(20):
+                pc.update({"state": np.zeros(2)})
+                time.sleep(0.01)
+            assert model.call_count >= 2
+            assert execution.inference_count >= 2
+        finally:
+            pc.stop()
+
+    def test_latest_wins_observation_mailbox(self) -> None:
+        chunk = np.array([[0.0, 0.0]])
+        model = _MockModel(chunk, latency_s=0.05)
+        execution = AsyncInferenceExecution(refill_threshold=0)
+        queue = ActionQueue()
+
+        execution.start(queue, model)
+        try:
+            # Submit 5 observations rapidly while the worker is busy on tag=0.
+            # Drain queue after first inference so the worker is eligible to
+            # refill; latest-wins mailbox should then pick tag=4, dropping 1-3.
+            for i in range(5):
+                execution.maybe_request({"state": np.zeros(2), "tag": i})
+                time.sleep(0.001)
+            assert _wait_for(lambda: execution.inference_count >= 1, timeout_s=2.0)
+            while not queue.empty:
+                queue.pop_or_none()
+            execution.maybe_request({"state": np.zeros(2), "tag": 99})
+            assert _wait_for(lambda: execution.inference_count >= 2, timeout_s=2.0)
+            tags_seen = [obs["tag"] for obs in model.observations_seen]
+            assert tags_seen[0] == 0, f"first processed tag should be 0, got {tags_seen[0]}"
+            assert tags_seen[1] == 99, (
+                f"latest maybe_request must overwrite mailbox (tags 1-4 dropped), "
+                f"got second tag={tags_seen[1]}"
+            )
+        finally:
+            execution.stop()
+
+    def test_transient_failure_retries_then_recovers(self) -> None:
+        chunk = np.array([[1.0, 1.0]])
+        attempts = {"n": 0}
+        def fail_then_recover(observation):
+            attempts["n"] += 1
+            if attempts["n"] == 1:
+                raise TimeoutError("transient")
+            return {"action": chunk}
+
+        class _FlakyModel:
+            call_count = 0
+            def __call__(self, observation):
+                _FlakyModel.call_count += 1
+                return fail_then_recover(observation)
+            def reset(self): pass
+
+        execution = AsyncInferenceExecution(
+            refill_threshold=0, backoff_schedule_s=(0.01, 0.01),
+        )
+        pc = PolicyController(model=_FlakyModel(), execution=execution, fallback=HoldStateFallback())
+        pc.start()
+
+        try:
+            pc.update({"state": np.zeros(2)})
+            assert _wait_for(lambda: execution.inference_count >= 1, timeout_s=2.0)
+            assert execution.transient_failure_count == 1
+        finally:
+            pc.stop()
+
+    def test_fatal_exception_surfaces_to_runtime_thread(self) -> None:
+        model = _MockModel(np.array([[0.0]]), raises=ValueError("model corruption"))
+        execution = AsyncInferenceExecution(refill_threshold=0)
+        pc = PolicyController(model=model, execution=execution, fallback=HoldStateFallback())
+        pc.start()
+
+        try:
+            pc.update({"state": np.zeros(1)})
+            assert _wait_for(lambda: execution._fatal_exception is not None, timeout_s=2.0)
+            with pytest.raises(ValueError, match="model corruption"):
+                pc.update({"state": np.zeros(1)})
+        finally:
+            pc.stop()
+
+    def test_consecutive_transient_failures_escalate_to_fatal(self) -> None:
+        model = _MockModel(np.array([[0.0]]), raises=TimeoutError("always transient"))
+        execution = AsyncInferenceExecution(
+            refill_threshold=0, backoff_schedule_s=(0.001,),
+            max_consecutive_failures=3,
+        )
+        pc = PolicyController(model=model, execution=execution, fallback=HoldStateFallback())
+        pc.start()
+
+        try:
+            pc.update({"state": np.zeros(1)})
+            assert _wait_for(
+                lambda: execution.transient_failure_count >= 3 or execution._stop.is_set(),
+                timeout_s=2.0,
+            )
+            assert execution.transient_failure_count >= 3
+            assert _wait_for(
+                lambda: execution._thread is None or not execution._thread.is_alive(),
+                timeout_s=2.0,
+            )
+        finally:
+            pc.stop()
+
+    def test_stop_during_inference_completes_within_timeout(self) -> None:
+        chunk = np.array([[1.0]])
+        model = _MockModel(chunk, latency_s=0.3)
+        execution = AsyncInferenceExecution(refill_threshold=0, shutdown_timeout_s=2.0)
+        pc = PolicyController(model=model, execution=execution, fallback=HoldStateFallback())
+        pc.start()
+
+        pc.update({"state": np.zeros(1)})
+        time.sleep(0.05)
+
+        t0 = time.monotonic()
+        pc.stop()
+        elapsed = time.monotonic() - t0
+        assert elapsed < 1.5, f"stop took {elapsed:.2f}s (worker may have orphaned)"
+
+    def test_warmup_prefills_queue(self) -> None:
+        chunk = np.array([[1.0, 2.0], [3.0, 4.0]])
+        model = _MockModel(chunk, latency_s=0.0)
+        queue = ActionQueue()
+        execution = AsyncInferenceExecution(refill_threshold=0)
+        execution.start(queue, model)
+
+        try:
+            execution.warmup({"state": np.zeros(2)}, n=2)
+            assert len(queue) == 4
+        finally:
+            execution.stop()
