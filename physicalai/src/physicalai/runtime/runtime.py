@@ -115,7 +115,7 @@ class RobotRuntime:
                     observation["sensor_data"] = obs.sensor_data
 
                 for name, camera in self._cameras.items():
-                    observation.setdefault("images", {})[name] = camera.read()
+                    observation.setdefault("images", {})[name] = camera.read_latest().data
 
                 for cb in self._callbacks:
                     cb.on_observation(observation)

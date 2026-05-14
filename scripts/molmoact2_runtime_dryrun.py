@@ -130,13 +130,6 @@ def run_runtime(export_dir: Path) -> None:
             )
             return action
 
-    class CameraInjector(RuntimeCallback):
-        """Injects camera frame into observation before inference."""
-
-        def on_observation(self, observation):
-            frame = camera.read_latest()
-            observation.setdefault("images", {})["top"] = frame.data
-
     class DryRunInterceptor(RuntimeCallback):
         """Prevents actual actuation by returning current state as action."""
 
@@ -147,7 +140,6 @@ def run_runtime(export_dir: Path) -> None:
             return action
 
     logger = DryRunLogger()
-    camera_cb = CameraInjector()
     interceptor = DryRunInterceptor()
 
     execution = SyncInferenceExecution(mode="chunk")
@@ -157,7 +149,8 @@ def run_runtime(export_dir: Path) -> None:
         model=model,
         execution=execution,
         fps=FPS,
-        callbacks=[camera_cb, logger, interceptor],
+        cameras={"top": camera},
+        callbacks=[logger, interceptor],
     )
 
     try:
