@@ -227,7 +227,18 @@ def run(args: argparse.Namespace) -> None:
 
 
 def _build_sample_with_task(robot: Any, camera: Any, task: str) -> dict:
-    obs = robot.get_observation()
+    last_err: BaseException | None = None
+    for attempt in range(10):
+        try:
+            obs = robot.get_observation()
+            break
+        except ConnectionError as e:
+            last_err = e
+            logger.warning(f"warmup obs read attempt {attempt + 1}/10 failed: {e}")
+            time.sleep(0.1)
+    else:
+        raise last_err if last_err else RuntimeError("unable to read warmup observation")
+
     sample: dict = {
         "state": obs.joint_positions,
         "timestamp": obs.timestamp,

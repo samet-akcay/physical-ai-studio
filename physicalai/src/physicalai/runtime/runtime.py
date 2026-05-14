@@ -57,6 +57,7 @@ class RobotRuntime:
         self._safety = safety
         self._return_to_home = return_to_home
         self._running = False
+        self._controller_started = False
         self._stop_flag = threading.Event()
         self._controller_lock = threading.Lock()
 
@@ -82,7 +83,9 @@ class RobotRuntime:
         self._running = True
 
         with self._controller_lock:
-            self._controller.start()
+            if not self._controller_started:
+                self._controller.start()
+                self._controller_started = True
 
         for cb in self._callbacks:
             cb.on_start()
@@ -202,7 +205,11 @@ class RobotRuntime:
                 sample_observation.setdefault("images", {})[name] = camera.read_latest().data
 
         logger.info(f"Warming up controller with {n} inference(s)")
-        self._controller.warmup(sample_observation, n=n)
+        with self._controller_lock:
+            if not self._controller_started:
+                self._controller.start()
+                self._controller_started = True
+            self._controller.warmup(sample_observation, n=n)
 
     def swap_controller(self, controller: Controller) -> None:
         """Replace the active controller. Thread-safe.
@@ -214,12 +221,14 @@ class RobotRuntime:
             self._controller.stop()
             self._controller = controller
             self._controller.start()
+            self._controller_started = True
 
     def _shutdown(self) -> None:
         """Perform safe shutdown sequence."""
         self._running = False
         with self._controller_lock:
             self._controller.stop()
+            self._controller_started = False
         for cb in self._callbacks:
             cb.on_stop()
         if self._return_to_home and hasattr(self._robot, "go_to_home"):
