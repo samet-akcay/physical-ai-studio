@@ -52,7 +52,7 @@ class MolmoAct2(NamedLeRobotPolicy):
         *,
         checkpoint_path: str | None = None,
         num_steps: int | None = None,
-        action_mode: str = "continuous",
+        inference_action_mode: str = "continuous",
         discrete_action_tokenizer: str | None = None,
         discrete_generation_max_steps: int = 128,
         enable_depth_reasoning: bool = False,
@@ -72,7 +72,7 @@ class MolmoAct2(NamedLeRobotPolicy):
             config = config_cls(
                 checkpoint_path=checkpoint_path,
                 num_steps=num_steps,
-                action_mode=action_mode,
+                inference_action_mode=inference_action_mode,
                 discrete_action_tokenizer=discrete_action_tokenizer,
                 discrete_generation_max_steps=discrete_generation_max_steps,
                 enable_depth_reasoning=enable_depth_reasoning,
