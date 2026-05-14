@@ -13,6 +13,7 @@ import pytest
 
 from physicalai.runtime import (
     ActionQueue,
+    HoldStateFallback,
     PolicyController,
     PolicyRuntime,
     RobotRuntime,
@@ -243,6 +244,68 @@ class TestPolicyController:
         model.return_value = {"action": np.array([[9.0, 9.0]])}
         a = pc.update(obs)
         np.testing.assert_array_equal(a, [9.0, 9.0])
+
+
+class TestPolicyControllerFallback:
+    @staticmethod
+    def _noop_execution():
+        class NoopExecution:
+            def start(self, action_queue, model) -> None:
+                pass
+
+            def maybe_request(self, observation) -> None:
+                pass
+
+            def warmup(self, sample_observation, n=2) -> None:
+                pass
+
+            def stop(self) -> None:
+                pass
+
+        return NoopExecution()
+
+    def test_no_action_no_fallback_raises(self) -> None:
+        model = MagicMock()
+        model.reset = MagicMock()
+        pc = PolicyController(model=model, execution=self._noop_execution())
+        pc.start()
+
+        with pytest.raises(RuntimeError, match="no action"):
+            pc.update({"state": np.zeros(6)})
+
+    def test_no_action_returns_last_action(self) -> None:
+        chunk = np.array([[1.0, 2.0]])
+        model = MagicMock()
+        model.return_value = {"action": chunk}
+        model.reset = MagicMock()
+
+        execution = SyncInferenceExecution(mode="chunk")
+        pc = PolicyController(model=model, execution=execution)
+        pc.start()
+
+        obs = {"state": np.zeros(2)}
+        first = pc.update(obs)
+        np.testing.assert_array_equal(first, [1.0, 2.0])
+
+        pc._execution = self._noop_execution()
+        held = pc.update(obs)
+        np.testing.assert_array_equal(held, [1.0, 2.0])
+
+    def test_fallback_used_when_queue_and_last_action_empty(self) -> None:
+        model = MagicMock()
+        model.reset = MagicMock()
+        fallback = HoldStateFallback()
+        pc = PolicyController(
+            model=model,
+            execution=self._noop_execution(),
+            fallback=fallback,
+        )
+        pc.start()
+
+        state = np.array([0.1, 0.2, 0.3])
+        action = pc.update({"state": state})
+        np.testing.assert_array_equal(action, state)
+        assert pc.fallback_count == 1
 
 
 class TestPolicyRuntime:
