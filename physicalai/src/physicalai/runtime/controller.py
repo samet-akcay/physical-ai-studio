@@ -47,3 +47,7 @@ class Controller(Protocol):
     def reset(self) -> None:
         """Reset controller state for a new episode."""
         ...
+
+    def warmup(self, sample_observation: dict[str, Any], n: int = 2) -> None:
+        """Optional: pre-warm controller with ``n`` blocking inferences."""
+        ...

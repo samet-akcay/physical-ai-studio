@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
     from .callbacks import RuntimeCallback
     from .execution import InferenceExecution
+    from .fallback import FallbackAction
     from .safety import SafetyLayer
 
 
@@ -31,6 +32,7 @@ def PolicyRuntime(  # noqa: N802
     cameras: dict[str, Camera] | None = None,
     callbacks: list[RuntimeCallback] | None = None,
     safety: SafetyLayer | None = None,
+    fallback: FallbackAction | None = None,
     return_to_home: bool = False,
 ) -> RobotRuntime:
     """Create a RobotRuntime with a PolicyController.
@@ -46,6 +48,9 @@ def PolicyRuntime(  # noqa: N802
         cameras: Optional external cameras.
         callbacks: Optional runtime callbacks.
         safety: Optional safety layer.
+        fallback: Optional fallback used by PolicyController when the queue is
+            empty and no previous action exists. Required for async execution
+            without warmup.
         return_to_home: Whether to return to home on shutdown.
 
     Returns:
@@ -55,6 +60,7 @@ def PolicyRuntime(  # noqa: N802
         model=model,
         execution=execution,
         action_queue=action_queue,
+        fallback=fallback,
     )
     return RobotRuntime(
         robot=robot,

@@ -172,6 +172,38 @@ class RobotRuntime:
         """Signal the loop to stop. Thread-safe."""
         self._stop_flag.set()
 
+    def warmup(
+        self,
+        sample_observation: dict[str, Any] | None = None,
+        n: int = 2,
+    ) -> None:
+        """Pre-warm the controller by running ``n`` blocking inferences.
+
+        If ``sample_observation`` is None, captures one from the robot. The
+        controller must implement ``warmup()``; controllers without it are
+        skipped silently.
+        """
+        if not hasattr(self._controller, "warmup"):
+            logger.debug("Controller has no warmup() — skipping")
+            return
+
+        if sample_observation is None:
+            obs = self._robot.get_observation()
+            sample_observation = {
+                "state": obs.joint_positions,
+                "timestamp": obs.timestamp,
+                "frame_index": 0,
+            }
+            if obs.images is not None:
+                sample_observation["images"] = obs.images
+            if obs.sensor_data is not None:
+                sample_observation["sensor_data"] = obs.sensor_data
+            for name, camera in self._cameras.items():
+                sample_observation.setdefault("images", {})[name] = camera.read_latest().data
+
+        logger.info(f"Warming up controller with {n} inference(s)")
+        self._controller.warmup(sample_observation, n=n)
+
     def swap_controller(self, controller: Controller) -> None:
         """Replace the active controller. Thread-safe.
 

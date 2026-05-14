@@ -54,6 +54,10 @@ class PolicyController:
         """Start the execution strategy."""
         self._execution.start(self._action_queue, self._model)
 
+    def warmup(self, sample_observation: dict[str, Any], n: int = 2) -> None:
+        """Pre-fill the action queue with ``n`` blocking inferences."""
+        self._execution.warmup(sample_observation, n=n)
+
     def update(self, observation: dict[str, Any]) -> np.ndarray:
         """Request inference if needed and pop one action.
 

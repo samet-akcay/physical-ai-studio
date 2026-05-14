@@ -809,9 +809,9 @@ The following are intentionally deferred until a concrete consumer needs them:
 
 ## 16. Implementation Phases
 
-1. `InferenceModel.predict_action_chunk()` and `close()`.
-2. `RobotRuntime`, `Controller`, `PolicyController`, `RuntimeCallback`, `ActionQueue`, `SyncInferenceExecution`, `PolicyRuntime` factory, validation.
-3. `AsyncInferenceExecution(transport=thread|process)`.
+1. ✅ `InferenceModel.predict_action_chunk()` and `close()`.
+2. ✅ `RobotRuntime`, `Controller`, `PolicyController`, `RuntimeCallback`, `ActionQueue`, `SyncInferenceExecution`, `PolicyRuntime` factory, validation.
+3. ✅ `AsyncInferenceExecution(transport=thread)` + `FallbackAction` + `runtime.warmup()`. Validated on SO-101 + MolmoAct2 at 2 Hz. `transport=process` deferred (YAGNI).
 4. RTC delay tracking and `RTCQueueMerger`.
 5. `RemoteExecution`, `PolicyServer`, `physicalai serve` (see [`policy_server_design.md`](./policy_server_design.md)).
 6. `SafetyLayer` and `SafetyViolationError`, when a first consumer needs action filtering.

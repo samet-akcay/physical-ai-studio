@@ -511,3 +511,50 @@ class TestAsyncInferenceExecution:
             assert len(queue) == 4
         finally:
             execution.stop()
+
+
+class TestPolicyControllerWarmup:
+    def test_delegates_to_execution(self) -> None:
+        chunk = np.array([[1.0, 2.0], [3.0, 4.0]])
+        model = _MockModel(chunk)
+        execution = SyncInferenceExecution(mode="chunk")
+        queue = ActionQueue()
+        pc = PolicyController(model=model, execution=execution, action_queue=queue)
+        pc.start()
+
+        pc.warmup({"state": np.zeros(2)}, n=3)
+        assert len(queue) == 6
+        assert model.call_count == 3
+
+
+class TestRobotRuntimeWarmup:
+    def test_skips_when_controller_lacks_warmup(self) -> None:
+        robot = FakeRobot()
+        controller = ConstantController(np.zeros(6))
+        runtime = RobotRuntime(robot=robot, controller=controller, fps=10)
+
+        runtime.warmup()
+
+    def test_passes_explicit_observation(self) -> None:
+        robot = FakeRobot()
+        controller = MagicMock()
+        runtime = RobotRuntime(robot=robot, controller=controller, fps=10)
+
+        sample = {"state": np.array([1.0, 2.0])}
+        runtime.warmup(sample, n=4)
+
+        controller.warmup.assert_called_once_with(sample, n=4)
+
+    def test_auto_captures_observation_from_robot(self) -> None:
+        robot = FakeRobot(num_joints=4)
+        controller = MagicMock()
+        runtime = RobotRuntime(robot=robot, controller=controller, fps=10)
+
+        runtime.warmup(n=1)
+
+        controller.warmup.assert_called_once()
+        call_args = controller.warmup.call_args
+        captured_obs = call_args[0][0]
+        assert "state" in captured_obs
+        np.testing.assert_array_equal(captured_obs["state"], np.zeros(4))
+        assert call_args.kwargs == {"n": 1}
