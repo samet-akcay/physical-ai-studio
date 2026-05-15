@@ -1,74 +1,76 @@
 # OpenVINO Conversion Benchmark — Findings Report
 
+## Goal
+
+Determine which OpenVINO conversion method works for each Vision-Language-Action (VLA) policy in Physical AI Studio, measure inference performance, and compare against PyTorch baselines on CPU and CUDA.
+
 ## Environment
 
-| Component | Old run | New run |
-|-----------|---------|---------|
-| OpenVINO | 2026.1.0-21367 | 2026.1.0-21367 (unchanged) |
-| PyTorch | 2.10.0+cu128 | **2.12.0+cu130** |
-| Python | 3.12.8 | 3.12.3 |
-| OV inference device | CPU | CPU (no Intel GPU on host) |
-| PyTorch device(s) | CPU | CPU + **CUDA (RTX A6000)** |
-
-OpenVINO has no plugin for NVIDIA GPUs, so OV inference stays on CPU. PyTorch runs on both CPU and CUDA so the OV-CPU IR can be compared against a realistic GPU baseline.
-
-Raw data: [benchmark_results_torch210.json](file:///home/sakcay/projects/physical-ai/physical-ai-studio-worktrees/ov-conversion-benchmark/benchmark_results_torch210.json), [benchmark_results_torch212.json](file:///home/sakcay/projects/physical-ai/physical-ai-studio-worktrees/ov-conversion-benchmark/benchmark_results_torch212.json) (also copied to `benchmark_results.json`).
-
-## TL;DR
-
-**PyTorch 2.12 fixed nothing on the OpenVINO conversion side.** Every failure that blocked SmolVLA/Pi0.5 in 2.10 reproduces verbatim in 2.12 with the same error messages. The compatibility matrix is unchanged.
-
-**OV-CPU latencies got measurably worse** under 2.12 across all working cells (1.4× slower for ACT, 1.78× slower for SmolVLA-direct, 1.92× slower for Pi0.5-via-ONNX). Conversion times also drift up.
-
-**The CUDA baseline reframes the deployment story.** OV-CPU is now compared against a real GPU number, and the gap is brutal for VLMs: Pi0.5 OV-CPU is 309× slower than Pi0.5 PyTorch-CUDA. ACT is the only model where OV-CPU is competitive with anything (~3× slower than CUDA, ~2.3× faster than CPU).
+| Component | Value |
+|-----------|-------|
+| OpenVINO | 2026.1.0 |
+| PyTorch | 2.12.0+cu130 |
+| Python | 3.12.3 |
+| CPU | Intel Xeon W-2245 (16 threads) |
+| GPU | NVIDIA RTX A6000 (48 GB) |
+| OV inference device | CPU only (no Intel GPU on host; OV has no NVIDIA plugin) |
+| PyTorch inference devices | CPU + CUDA |
 
 ## Methods Tested
 
-1. **Direct** — `ov.convert_model(nn.Module, example_input=...)` — TorchScript-based tracing
-2. **torch.export** — `torch.export.export()` → `ov.convert_model(ExportedProgram)` — FX graph capture
-3. **via ONNX** — `torch.onnx.export()` → `ov.convert_model("model.onnx")` — two-step through ONNX
+| Method | Description |
+|--------|-------------|
+| **Direct** | `ov.convert_model(nn.Module, example_input=...)` — TorchScript-based tracing |
+| **torch.export** | `torch.export.export()` then `ov.convert_model(ExportedProgram)` — FX graph |
+| **via ONNX** | `torch.onnx.export()` then `ov.convert_model("model.onnx")` — two-step |
 
-## Compatibility Matrix (PT 2.10 vs PT 2.12)
+## Compatibility Matrix
 
 | Policy | Direct | torch.export | via ONNX |
 |--------|--------|--------------|----------|
-| **ACT** (~33M) | OK to OK | OK to OK | OK to OK |
-| **SmolVLA** (~500M) | OK to OK | FAIL to FAIL | FAIL to FAIL |
-| **Pi0.5** (~3B) | FAIL to FAIL | FAIL to FAIL | OK to OK |
+| **ACT** (~33M params) | OK | OK | OK |
+| **SmolVLA** (~500M params) | OK | FAIL | FAIL |
+| **Pi0.5** (~3B params) | FAIL | FAIL | OK |
 
-Identical. **No single conversion method works for all three policies under either PyTorch version.**
+**No single conversion method works for all three policies.**
 
-## Detailed Results — PyTorch 2.12 + CUDA baseline
+## Detailed Results
 
 ### ACT (Action Chunking with Transformers, ~33M params)
+
+Standard encoder-decoder transformer for robotic manipulation.
 
 PyTorch latency: **CPU 66.6 ms** · **CUDA 8.5 ms**
 
 | Method | Conv (s) | IR (MB) | OV-CPU (ms) | vs PT-CPU | vs PT-CUDA | Max Abs Diff |
 |--------|---------:|--------:|------------:|----------:|-----------:|-------------:|
-| direct | 5.74 | 131.43 | 28.78 | **2.31x faster** | 3.39x slower | 0.72 |
-| torch.export | 8.65 | 126.20 | 33.48 | **1.99x faster** | 3.94x slower | 0.72 |
-| via ONNX | 14.48 | 126.54 | 28.95 | **2.30x faster** | 3.41x slower | 0.72 |
+| direct | 5.7 | 131 | 28.8 | **2.3x faster** | 3.4x slower | 0.72 |
+| torch.export | 8.6 | 126 | 33.5 | **2.0x faster** | 3.9x slower | 0.72 |
+| via ONNX | 14.5 | 127 | 29.0 | **2.3x faster** | 3.4x slower | 0.72 |
 
-ACT remains the only model where OV-CPU beats PyTorch-CPU. CUDA is still ~3.4x faster than OV-CPU.
+All methods succeed and produce identical numerical output. OV-CPU is 2-2.3x faster than PyTorch-CPU, but 3.4x slower than PyTorch-CUDA. Direct is fastest to convert; torch.export produces the smallest IR; via ONNX is slowest to convert but marginally best at inference.
 
 ### SmolVLA (Vision-Language-Action, SmolVLM2-500M backbone, ~500M params)
+
+VLM with SDPA attention, vision encoder, cross-attention, and action expert.
 
 PyTorch latency: **CPU 898 ms** · **CUDA 235 ms**
 
 | Method | Conv (s) | IR (MB) | OV-CPU (ms) | vs PT-CPU | vs PT-CUDA | Max Abs Diff |
 |--------|---------:|--------:|------------:|----------:|-----------:|-------------:|
-| direct | 76.96 | 956.71 | **3287** | **3.66x slower** | **14.0x slower** | 0.0043 |
+| direct | 77.0 | 957 | 3287 | **3.7x slower** | **14x slower** | 0.004 |
 | torch.export | FAIL | — | — | — | — | — |
 | via ONNX | FAIL | — | — | — | — | — |
 
-Only direct conversion succeeds. OV-CPU regressed badly: from 1845 ms (PT 2.10) to 3287 ms (PT 2.12) — a **1.78x slowdown** for the same model and IR layout. PT-CPU also got slower (756 -> 898 ms) but the OV side moved more.
+**Only direct conversion succeeds.** OV-CPU is 3.7x slower than PyTorch-CPU and 14x slower than PyTorch-CUDA. The VLM graph with SDPA attention is not well-optimised in the OV CPU plugin.
 
-Failures (unchanged from 2.10):
-- **torch.export**: `aten.empty_permuted.default has no OV conversion rule` (HuggingFace SDPA attention)
-- **via ONNX**: `Where-20: Argument 1 and 2 element types must match` (i64 vs f32 in `index_put`)
+Failure details:
+- **torch.export**: `aten.empty_permuted.default` has no OV conversion rule (used in HuggingFace transformers SDPA attention)
+- **via ONNX**: `Where-20` node fails type validation — `i64` vs `f32` mismatch in `index_put` from mixed-type indexing
 
 ### Pi0.5 (PaLIGemma + flow-matching action expert, ~3B params)
+
+Large VLA with PaLIGemma vision-language backbone, Gemma action expert, and 10-step flow-matching denoising.
 
 PyTorch latency: **CPU 8464 ms** · **CUDA 252 ms** (33.6x CUDA speedup)
 
@@ -76,107 +78,92 @@ PyTorch latency: **CPU 8464 ms** · **CUDA 252 ms** (33.6x CUDA speedup)
 |--------|---------:|--------:|------------:|----------:|-----------:|-------------:|
 | direct | FAIL | — | — | — | — | — |
 | torch.export | FAIL | — | — | — | — | — |
-| via ONNX | **930** | **6763** | **77919** | **9.2x slower** | **309x slower** | **5.15** |
+| via ONNX | 930 | 6763 | 77919 | **9.2x slower** | **309x slower** | **5.15** |
 
-Only via-ONNX succeeds, and the result has gotten worse on every axis vs 2.10:
-- Conversion: 808 s -> **930 s** (+15 %)
-- OV-CPU latency: 40.6 s -> **77.9 s** per step (+92 %)
-- Max abs diff: 4.25 -> **5.15** (+21 %)
+**Only via-ONNX succeeds**, and it is the most problematic result:
+- Conversion takes **15.5 minutes**
+- IR is **6.76 GB**
+- OV-CPU inference is **309x slower** than PyTorch-CUDA (77.9 s vs 252 ms)
+- **Max abs diff = 5.15** — significant numerical divergence from bf16-to-fp32 type promotion in the ONNX path, amplified over 10 denoising steps
 
-The 309x gap vs PyTorch CUDA confirms OV-CPU is non-viable as a deployment target for Pi0.5.
-
-Failures (unchanged from 2.10):
-- **direct**: `aten::cat Axis -2 out of tensor rank range [-1, 0]` (KV cache concat with empty rank-0 tensor) + `SequenceMark` internal type
-- **torch.export**: same `aten.cat.default` axis failure + `aten.normal.float_float has no conversion rule`
-
-## PT 2.10 -> PT 2.12 deltas (working cells only)
-
-| Cell | OV-CPU lat (2.10) | OV-CPU lat (2.12) | Delta | Conv (2.10) | Conv (2.12) | Delta |
-|---|---:|---:|---:|---:|---:|---:|
-| ACT direct | 20.4 ms | 28.8 ms | **+41 %** | 4.4 s | 5.7 s | +30 % |
-| ACT torch.export | 21.7 ms | 33.5 ms | **+54 %** | 7.8 s | 8.6 s | +10 % |
-| ACT via ONNX | 19.6 ms | 29.0 ms | **+48 %** | 13.7 s | 14.5 s | +6 % |
-| SmolVLA direct | 1845 ms | 3287 ms | **+78 %** | 75.3 s | 77.0 s | +2 % |
-| Pi0.5 via ONNX | 40625 ms | 77919 ms | **+92 %** | 808.7 s | 930.1 s | +15 % |
-
-Every successful cell got slower at OV inference time. Conversion-time impact is small except for ACT (+10–30 %). IR sizes are essentially identical between versions, so the IR layout did not change — the regression sits inside the OpenVINO runtime / PyTorch graph conversion path under 2.12, not in the produced model topology.
+Failure details:
+- **direct**: PaLIGemma's KV cache uses `aten::cat` to concatenate an empty (rank-0) tensor with a KV cache tensor. OV's Concat validator rejects this (Axis -2 invalid for rank 0). Also hits `SequenceMark` internal type failure.
+- **torch.export**: Same `aten.cat.default` axis issue, plus `aten.normal.float_float` (flow-matching noise sampling) has no conversion rule.
 
 ## Key Findings
 
-### 1. PT 2.12 does not unblock any OV conversion failure
+### 1. No universal conversion method exists
 
-Every blocker observed in the PT 2.10 run reproduces with **the same op and same error message** under PT 2.12:
+Each architecture hits different OV conversion blockers:
 
-| Architecture pattern | Blocker | Affected | Status in 2.12 |
-|---|---|---|---|
-| HF SDPA attention | `aten.empty_permuted.default` unsupported | SmolVLA torch.export, SmolVLA via ONNX | unchanged |
-| PaLIGemma KV cache (empty tensor concat) | `aten::cat` axis validation on rank-0 | Pi0.5 direct, Pi0.5 torch.export | unchanged |
-| Flow-matching noise sampling | `aten.normal.float_float` unsupported | Pi0.5 torch.export | unchanged |
-| Mixed-type indexing | ONNX Where-20 type mismatch | SmolVLA via ONNX | unchanged |
+| Architecture Pattern | Blocker | Affected Methods |
+|---------------------|---------|------------------|
+| HuggingFace SDPA attention | `aten.empty_permuted.default` unsupported | torch.export, via ONNX (SmolVLA) |
+| PaLIGemma KV cache (empty tensor concat) | `aten::cat` axis validation on rank-0 tensor | direct, torch.export (Pi0.5) |
+| Flow-matching noise sampling | `aten.normal.float_float` unsupported | torch.export (Pi0.5) |
+| Mixed-type indexing | ONNX Where-20 type mismatch | via ONNX (SmolVLA) |
 
-These are **OpenVINO frontend gaps**, not PyTorch issues. Upgrading PyTorch was never going to fix them; upgrading OpenVINO is what we need.
+### 2. OV-CPU is only faster than PyTorch-CPU for simple transformers
 
-### 2. PT 2.12 makes OV-CPU inference worse
+| Policy | PT-CPU | PT-CUDA | OV-CPU (best) | OV vs PT-CPU | OV vs PT-CUDA |
+|--------|-------:|--------:|--------------:|-------------:|--------------:|
+| ACT | 66.6 ms | 8.5 ms | 28.8 ms | **2.3x faster** | 3.4x slower |
+| SmolVLA | 898 ms | 235 ms | 3287 ms | 3.7x slower | 14x slower |
+| Pi0.5 | 8464 ms | 252 ms | 77919 ms | 9.2x slower | 309x slower |
 
-The OV-CPU runtime path is slower for every working cell, with VLMs hit hardest (+78 % for SmolVLA, +92 % for Pi0.5). PT-CPU also got slower (e.g. SmolVLA PT-CPU 756 -> 898 ms) so part of the regression is inside torch itself, but the OV-CPU regression is larger than the PT-CPU regression in every case.
+The OV-CPU advantage disappears for VLM models and reverses dramatically. PyTorch benefits from highly-tuned SDPA kernels on both CPU and CUDA that OV's CPU backend cannot match.
 
-Hypothesis: the PT 2.12 graph that OV traces / decomposes hits more dynamic shape paths or unfused subgraphs in the OV CPU plugin. Worth investigating with `OV_CPU_PROFILE=1` before filing anything.
+### 3. Numerical accuracy degrades for larger models via ONNX
 
-### 3. CUDA baseline shows OV-CPU is non-viable for VLMs
+| Policy | Method | Max Abs Diff |
+|--------|--------|-------------:|
+| ACT | all methods | 0.72 |
+| SmolVLA | direct | 0.004 |
+| Pi0.5 | via ONNX | **5.15** |
 
-| Policy | PT-CUDA | OV-CPU (best) | Ratio |
-|--------|--------:|--------------:|------:|
-| ACT | 8.5 ms | 28.78 ms | OV-CPU is **3.4x slower** |
-| SmolVLA | 235 ms | 3287 ms | OV-CPU is **14x slower** |
-| Pi0.5 | 252 ms | 77919 ms | OV-CPU is **309x slower** |
+Pi0.5's high divergence is concerning. This needs validation with trained weights to determine if it impacts action quality in deployment.
 
-For Pi0.5 the gap is so large that OV-CPU cannot be considered a deployment target without GPU plugin support or a fundamental graph-level redesign. ACT is the only policy where OV-CPU is even in the conversation versus a GPU.
+### 4. The existing dual-path strategy in `to_openvino()` is correct
 
-### 4. Pi0.5 numerical accuracy degraded further under 2.12
+The codebase already implements the right approach:
+- ACT, SmolVLA -> direct `ov.convert_model(module)` (default)
+- Pi0.5 -> `via_onnx=True` (set in `Pi05.extra_export_args`)
 
-Pi0.5 via-ONNX max abs diff went from 4.25 to **5.15**. Combined with the doubled inference time, this is the worst result in the suite by every metric. The bf16 -> fp32 promotion in the ONNX path plus the 10-step flow-matching denoising loop amplifies even small per-op differences. This needs validation against trained weights to determine real-world impact on action quality.
-
-### 5. The dual-path strategy in `to_openvino()` remains the right call
-
-Per-policy method selection still matches the data exactly:
-- ACT, SmolVLA -> direct
-- Pi0.5 -> `via_onnx=True` (already set in `Pi05.extra_export_args`)
-
-No code changes warranted from these results.
+This matches our findings exactly.
 
 ## Recommendations
 
 ### Short-term (current OV 2026.1)
 
-1. **Do not upgrade PyTorch to 2.12 for OpenVINO export workflows yet.** It fixes no failures and slows OV-CPU inference by 40–90 %. Stay on 2.10 (or 2.11) until the regression is understood.
-2. **Keep the dual-path strategy** (direct default + `via_onnx=True` per-policy override). Architecture is correct.
-3. **Add a conversion validation step** that compares OV output to PyTorch reference and warns if max abs diff exceeds ~1.0. Pi0.5's 5.15 divergence should fire the warning.
+1. **Keep the dual-path strategy** — direct by default, `via_onnx=True` per-policy override. No architectural changes needed.
+2. **Add a conversion validation step** that compares OV output to PyTorch reference and warns if max abs diff exceeds a threshold (e.g., 1.0). Pi0.5's 5.15 divergence should trigger a warning.
+3. **Do not default to torch.export** — it fails for both VLM policies. It only works for simple models where direct also works.
 
-### Medium-term (file/track upstream)
+### Medium-term (file OV issues)
 
-4. **File OV bugs for the four blockers** above. None of them moved between OV 2026.1 + PT 2.10 and OV 2026.1 + PT 2.12, so they are pure OV frontend issues:
-   - `aten.empty_permuted.default` (HF SDPA attention path) — blocks torch.export for any HF transformer model
-   - `aten::cat` / `aten.cat.default` axis validation on empty rank-0 tensors — blocks direct + torch.export for any KV-cached model
-   - `aten.normal.float_float` — blocks torch.export for any stochastic-sampling model (flow matching, diffusion)
-   - ONNX `Where-20` type-merge requirement on `i64` vs `f32` Select — blocks via-ONNX for models with mixed-dtype indexing
-5. **File the OV-CPU latency regression with PT 2.12** as a separate report. Reproducer is the SmolVLA direct path (1845 -> 3287 ms with no IR changes).
+4. **File OV bug: `aten.empty_permuted.default`** — blocks torch.export for all HuggingFace transformer models.
+5. **File OV bug: `aten::cat` with empty/rank-0 tensors** — blocks direct conversion for models with KV cache (PaLIGemma, Gemma).
+6. **File OV bug: `aten.normal.float_float`** — blocks torch.export for any model using stochastic sampling (flow matching, diffusion).
 
 ### Long-term
 
-6. **For VLM CPU deployment, OV is currently not the right answer.** Either invest in OV-CPU optimisation for large attention graphs, or target a different runtime (PyTorch CUDA, vLLM, ExecuTorch with hardware delegate).
-7. **Re-run this benchmark when the four ops above land in OV.** torch.export then becomes worth a second look.
+7. **OV-CPU is non-viable for VLM deployment.** The 14-309x gap vs PyTorch-CUDA means that without an OV GPU plugin (Intel Arc/dGPU) or fundamental CPU plugin optimisation for large attention graphs, deploying SmolVLA/Pi0.5 via OpenVINO on CPU is impractical. Target Intel GPU/NPU devices or alternative runtimes for these models.
+8. **Re-benchmark when OV fixes the above ops** — torch.export may then become viable and could produce better-optimised IR than TorchScript tracing.
 
 ## Reproducing
 
 ```bash
-uv run --no-project python benchmark_ov_conversion.py            # PT-CPU + PT-CUDA + OV-CPU, all policies
+# Full benchmark (CPU + CUDA PyTorch baseline, OV-CPU inference)
+uv run --no-project python benchmark_ov_conversion.py
+
+# Single policy
 uv run --no-project python benchmark_ov_conversion.py --policies ACT
+
+# CPU only (no CUDA baseline)
 uv run --no-project python benchmark_ov_conversion.py --pt-devices cpu --output cpu_only.json
 ```
 
-Script: [benchmark_ov_conversion.py](file:///home/sakcay/projects/physical-ai/physical-ai-studio-worktrees/ov-conversion-benchmark/benchmark_ov_conversion.py)
-
-## Appendix: PT 2.12 failure error messages
+## Appendix: Failure Error Messages
 
 ### SmolVLA — torch.export
 ```
@@ -189,7 +176,7 @@ OpConversionFailure: Model wasn't fully converted.
 [ONNX Frontend] Conversion failed for Where-20
 While validating ONNX node '<Node(Where): index_put>':
 Argument 1 and 2 element types must match.
-(opset1::Select Select_1877721 (boolean[1,1024], i64[1024], f32[1,1024]))
+(opset1::Select (boolean[1,1024], i64[1024], f32[1,1024]))
 ```
 
 ### Pi0.5 — Direct (TorchScript)
