@@ -11,23 +11,29 @@ Compares three conversion paths:
 
 Measures: conversion time, peak memory, output IR size, inference latency,
           and numerical accuracy vs PyTorch reference.
+
+PyTorch baseline runs on both CPU and CUDA (if available).
+OpenVINO inference runs on CPU only (no NVIDIA GPU plugin in OV).
+Conversion is always performed from a CPU copy of the model (OV/ONNX paths
+require CPU tensors); PyTorch latency on CUDA is reported separately.
 """
 
 from __future__ import annotations
 
+import argparse
 import gc
 import json
 import os
+import resource
 import sys
 import tempfile
 import time
 import traceback
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 import openvino
-import resource
 import torch
 
 # ---------------------------------------------------------------------------
@@ -39,9 +45,14 @@ def _peak_rss_mb() -> float:
     return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024  # KB → MB
 
 
-def _reset_memory():
+def _reset_memory() -> None:
     gc.collect()
-    torch.cuda.empty_cache() if torch.cuda.is_available() else None
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
+def _move_inputs(input_dict: dict[str, torch.Tensor], device: torch.device) -> dict[str, torch.Tensor]:
+    return {k: v.to(device) for k, v in input_dict.items()}
 
 
 @dataclass
@@ -64,7 +75,7 @@ class BenchmarkResult:
 
 def _make_act_policy():
     """Create an ACT policy with dummy dataset stats."""
-    from physicalai.data import Feature, FeatureType
+    from physicalai.data import FeatureType
 
     dataset_stats = {
         "observation.state": {
@@ -180,18 +191,18 @@ def _make_pi05_policy():
 
 
 # ---------------------------------------------------------------------------
-# Conversion methods
+# Conversion methods (always run on CPU model+inputs)
 # ---------------------------------------------------------------------------
 
 def _get_model_and_input(policy):
-    """Extract the inner model and its preprocessed sample input."""
+    """Extract the inner model and its preprocessed sample input (CPU)."""
     sample = policy.model.sample_input
     processed = policy._preprocessor(sample)
-    input_dict = {k: v for k, v in processed.items() if isinstance(v, torch.Tensor)}
+    input_dict = {k: v.cpu() for k, v in processed.items() if isinstance(v, torch.Tensor)}
     return policy.model, input_dict
 
 
-def _get_forward_arg_name(model):
+def _get_forward_arg_name(model) -> str:
     """Get the first positional arg name of model.forward (excluding self)."""
     import inspect
     sig = inspect.signature(model.forward)
@@ -204,14 +215,35 @@ def _get_forward_arg_name(model):
     return "batch"
 
 
-def _pytorch_reference(model, input_dict, arg_name):
-    """Run PyTorch reference inference, return numpy output."""
-    model.eval()
+def _pytorch_inference(model, input_dict, arg_name) -> np.ndarray:
+    """Run a single PyTorch forward, return numpy output (always cast to fp32 cpu)."""
     with torch.no_grad():
         out = model(**{arg_name: input_dict})
     if isinstance(out, tuple):
         out = out[0]
-    return out.cpu().numpy()
+    return out.detach().float().cpu().numpy()
+
+
+def _measure_pytorch_latency(model, input_dict, arg_name, device: torch.device, n_runs: int = 20) -> float:
+    """Return per-step latency in ms. Uses CUDA events when on GPU."""
+    use_cuda = device.type == "cuda"
+    with torch.no_grad():
+        for _ in range(3):  # warmup
+            model(**{arg_name: input_dict})
+        if use_cuda:
+            torch.cuda.synchronize()
+            start = torch.cuda.Event(enable_timing=True)
+            end = torch.cuda.Event(enable_timing=True)
+            start.record()
+            for _ in range(n_runs):
+                model(**{arg_name: input_dict})
+            end.record()
+            torch.cuda.synchronize()
+            return start.elapsed_time(end) / n_runs  # ms
+        t0 = time.perf_counter()
+        for _ in range(n_runs):
+            model(**{arg_name: input_dict})
+        return (time.perf_counter() - t0) / n_runs * 1000
 
 
 def convert_direct(model, input_dict, arg_name, tmp_dir):
@@ -258,30 +290,26 @@ def convert_via_onnx(model, input_dict, arg_name, tmp_dir):
 
 
 # ---------------------------------------------------------------------------
-# Inference & accuracy
+# OV Inference
 # ---------------------------------------------------------------------------
 
-def _run_ov_inference(ov_model, input_dict):
-    """Compile and run OV inference, return output numpy and latency."""
+def _run_ov_inference(ov_model, input_dict_cpu, ov_device: str = "CPU") -> tuple[np.ndarray, float]:
+    """Compile and run OV inference, return output numpy and latency (ms)."""
     core = openvino.Core()
-    compiled = core.compile_model(ov_model, "CPU")
+    compiled = core.compile_model(ov_model, ov_device)
     infer_req = compiled.create_infer_request()
 
-    # Prepare input tensors
-    feed = {}
-    for i, (name, tensor) in enumerate(input_dict.items()):
-        feed[i] = tensor.cpu().numpy()
+    feed = {i: tensor.cpu().numpy() for i, (_, tensor) in enumerate(input_dict_cpu.items())}
 
     # Warm-up
     for _ in range(3):
         infer_req.infer(feed)
 
-    # Timed runs
     n_runs = 20
     t0 = time.perf_counter()
     for _ in range(n_runs):
         infer_req.infer(feed)
-    elapsed = (time.perf_counter() - t0) / n_runs * 1000  # ms
+    elapsed = (time.perf_counter() - t0) / n_runs * 1000
 
     result = infer_req.get_output_tensor(0).data.copy()
     return result, elapsed
@@ -308,15 +336,24 @@ METHODS = {
 }
 
 
-def benchmark_policy(policy_name: str, policy_factory) -> list[BenchmarkResult]:
-    """Benchmark all conversion methods for a single policy."""
-    results = []
+def benchmark_policy(
+    policy_name: str,
+    policy_factory,
+    pt_devices: list[str],
+    skip_methods: set[str] | None = None,
+) -> tuple[list[BenchmarkResult], dict[str, float]]:
+    """Benchmark all conversion methods for a single policy.
+
+    Returns (results, pt_latency_per_device).
+    """
+    skip_methods = skip_methods or set()
+    results: list[BenchmarkResult] = []
+    pt_latency: dict[str, float] = {}
 
     print(f"\n{'='*70}")
     print(f"  Policy: {policy_name}")
     print(f"{'='*70}")
 
-    # Build policy
     try:
         policy = policy_factory()
     except Exception as e:
@@ -326,42 +363,57 @@ def benchmark_policy(policy_name: str, policy_factory) -> list[BenchmarkResult]:
                 policy_name=policy_name, method=method_name,
                 success=False, error=f"Policy creation failed: {e}",
             ))
-        return results
+        return results, pt_latency
 
-    model, input_dict = _get_model_and_input(policy)
+    model, input_dict_cpu = _get_model_and_input(policy)
     arg_name = _get_forward_arg_name(model)
 
-    # PyTorch reference
-    print(f"  Running PyTorch reference inference...")
+    # PyTorch reference (CPU, fp32 numpy)
+    print("  Running PyTorch reference inference (CPU)...")
     model.eval()
-    ref_output = _pytorch_reference(model, input_dict, arg_name)
+    ref_output = _pytorch_inference(model, input_dict_cpu, arg_name)
     print(f"  Reference output shape: {ref_output.shape}")
 
-    # PyTorch inference latency
-    with torch.no_grad():
-        # warmup
-        for _ in range(3):
-            model(**{arg_name: input_dict})
-        n_runs = 20
-        t0 = time.perf_counter()
-        for _ in range(n_runs):
-            model(**{arg_name: input_dict})
-        pt_latency = (time.perf_counter() - t0) / n_runs * 1000
-    print(f"  PyTorch CPU latency: {pt_latency:.1f} ms")
+    # PyTorch latency on each requested device
+    for dev_name in pt_devices:
+        device = torch.device(dev_name)
+        try:
+            if dev_name == "cuda":
+                model_dev = model.to(device)
+                inp_dev = _move_inputs(input_dict_cpu, device)
+            else:
+                model_dev = model  # already CPU
+                inp_dev = input_dict_cpu
+            lat = _measure_pytorch_latency(model_dev, inp_dev, arg_name, device)
+            pt_latency[dev_name] = lat
+            print(f"  PyTorch {dev_name.upper()} latency: {lat:.1f} ms")
+        except Exception as e:
+            print(f"  PyTorch {dev_name.upper()} latency FAILED: {e}")
+            pt_latency[dev_name] = float("nan")
+        finally:
+            if dev_name == "cuda":
+                # Move model back to CPU for conversion
+                model = model.to("cpu")
+                _reset_memory()
 
+    # Conversions (always from CPU model + CPU inputs)
     for method_name, convert_fn in METHODS.items():
         print(f"\n  --- {method_name} ---")
         _reset_memory()
-
         result = BenchmarkResult(policy_name=policy_name, method=method_name, success=False)
+
+        if method_name in skip_methods:
+            result.error = "skipped via --skip"
+            print(f"    SKIPPED: {result.error}")
+            results.append(result)
+            continue
 
         try:
             with tempfile.TemporaryDirectory() as tmp_dir:
-                # Measure conversion
                 rss_before = _peak_rss_mb()
                 t0 = time.perf_counter()
 
-                ov_model, xml_path = convert_fn(model, input_dict, arg_name, tmp_dir)
+                ov_model, xml_path = convert_fn(model, input_dict_cpu, arg_name, tmp_dir)
 
                 result.conversion_time_s = time.perf_counter() - t0
                 result.peak_rss_mb = _peak_rss_mb() - rss_before
@@ -371,18 +423,16 @@ def benchmark_policy(policy_name: str, policy_factory) -> list[BenchmarkResult]:
                       f"IR size: {result.ir_size_mb:.2f} MB | "
                       f"Peak RSS delta: {result.peak_rss_mb:.1f} MB")
 
-                # Inference
-                ov_output, latency = _run_ov_inference(ov_model, input_dict)
+                ov_output, latency = _run_ov_inference(ov_model, input_dict_cpu, "CPU")
                 result.inference_latency_ms = latency
 
-                # Accuracy
-                # Handle shape mismatch — OV may flatten or add dims
                 ov_flat = ov_output.flatten()
                 ref_flat = ref_output.flatten()
                 min_len = min(len(ov_flat), len(ref_flat))
                 if min_len > 0:
-                    result.max_abs_diff = float(np.max(np.abs(ov_flat[:min_len] - ref_flat[:min_len])))
-                    result.mean_abs_diff = float(np.mean(np.abs(ov_flat[:min_len] - ref_flat[:min_len])))
+                    diff = np.abs(ov_flat[:min_len] - ref_flat[:min_len])
+                    result.max_abs_diff = float(np.max(diff))
+                    result.mean_abs_diff = float(np.mean(diff))
                 else:
                     result.max_abs_diff = float("nan")
                     result.mean_abs_diff = float("nan")
@@ -395,90 +445,97 @@ def benchmark_policy(policy_name: str, policy_factory) -> list[BenchmarkResult]:
         except Exception as e:
             result.error = f"{type(e).__name__}: {e}"
             print(f"    FAILED: {result.error}")
-            traceback.print_exc()
+            traceback.print_exc(limit=3)
 
         results.append(result)
 
-    # Cleanup
     del policy, model
     _reset_memory()
+    return results, pt_latency
 
-    return results
 
-
-def print_report(all_results: list[BenchmarkResult], pt_latency_map: dict[str, float]):
+def print_report(
+    all_results: list[BenchmarkResult],
+    pt_latency_map: dict[str, dict[str, float]],
+) -> None:
     """Print formatted benchmark report."""
-    print(f"\n\n{'='*90}")
+    print(f"\n\n{'='*100}")
     print("  OPENVINO CONVERSION BENCHMARK REPORT")
-    print(f"{'='*90}")
+    print(f"{'='*100}")
     print(f"  OpenVINO: {openvino.__version__}")
     print(f"  PyTorch:  {torch.__version__}")
-    print(f"  Device:   CPU")
-    print(f"{'='*90}\n")
+    print(f"  CUDA:     {torch.cuda.is_available()} "
+          f"({torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'n/a'})")
+    print(f"{'='*100}\n")
 
-    # Group by policy
-    policies = {}
+    policies: dict[str, list[BenchmarkResult]] = {}
     for r in all_results:
         policies.setdefault(r.policy_name, []).append(r)
 
     for policy_name, results in policies.items():
         print(f"  Policy: {policy_name}")
-        pt_lat = pt_latency_map.get(policy_name, 0)
-        print(f"  PyTorch CPU latency: {pt_lat:.1f} ms\n")
+        for dev, lat in pt_latency_map.get(policy_name, {}).items():
+            print(f"    PyTorch {dev.upper()} latency: {lat:.1f} ms")
+        print()
 
-        header = f"  {'Method':<25} {'Status':<8} {'Conv(s)':<10} {'IR(MB)':<10} {'Lat(ms)':<10} {'MaxDiff':<12} {'MeanDiff':<12} {'RSS(MB)':<10}"
+        header = (f"  {'Method':<25} {'Status':<8} {'Conv(s)':<10} {'IR(MB)':<10} "
+                  f"{'OV-CPU(ms)':<12} {'MaxDiff':<12} {'MeanDiff':<12} {'RSS(MB)':<10}")
         print(header)
-        print(f"  {'-'*107}")
+        print(f"  {'-'*111}")
 
         for r in results:
-            status = "✓" if r.success else "✗"
+            status = "OK" if r.success else "FAIL"
             conv = f"{r.conversion_time_s:.2f}" if r.conversion_time_s is not None else "N/A"
             ir = f"{r.ir_size_mb:.2f}" if r.ir_size_mb is not None else "N/A"
             lat = f"{r.inference_latency_ms:.2f}" if r.inference_latency_ms is not None else "N/A"
             maxd = f"{r.max_abs_diff:.6f}" if r.max_abs_diff is not None else "N/A"
             meand = f"{r.mean_abs_diff:.6f}" if r.mean_abs_diff is not None else "N/A"
             rss = f"{r.peak_rss_mb:.1f}" if r.peak_rss_mb is not None else "N/A"
-            print(f"  {r.method:<25} {status:<8} {conv:<10} {ir:<10} {lat:<10} {maxd:<12} {meand:<12} {rss:<10}")
+            print(f"  {r.method:<25} {status:<8} {conv:<10} {ir:<10} {lat:<12} {maxd:<12} {meand:<12} {rss:<10}")
 
             if r.error:
                 print(f"    Error: {r.error}")
-
         print()
 
 
-def main():
-    policies = {
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--policies", nargs="+",
+                        choices=["ACT", "SmolVLA", "Pi0.5"],
+                        default=["ACT", "SmolVLA", "Pi0.5"],
+                        help="Policies to benchmark")
+    parser.add_argument("--pt-devices", nargs="+",
+                        choices=["cpu", "cuda"],
+                        default=None,
+                        help="PyTorch devices to measure latency on. "
+                             "Default: cpu (+ cuda if available).")
+    parser.add_argument("--skip-methods", nargs="*", default=[],
+                        choices=list(METHODS),
+                        help="Conversion methods to skip")
+    parser.add_argument("--output", type=Path,
+                        default=Path(__file__).parent / "benchmark_results.json",
+                        help="Output JSON path")
+    args = parser.parse_args()
+
+    if args.pt_devices is None:
+        args.pt_devices = ["cpu"] + (["cuda"] if torch.cuda.is_available() else [])
+
+    factories = {
         "ACT": _make_act_policy,
         "SmolVLA": _make_smolvla_policy,
         "Pi0.5": _make_pi05_policy,
     }
 
-    all_results = []
-    pt_latency_map = {}
+    all_results: list[BenchmarkResult] = []
+    pt_latency_map: dict[str, dict[str, float]] = {}
 
-    for policy_name, factory in policies.items():
-        # Build once to measure PT latency
+    for policy_name in args.policies:
         try:
-            policy = factory()
-            model, input_dict = _get_model_and_input(policy)
-            arg_name = _get_forward_arg_name(model)
-            model.eval()
-            with torch.no_grad():
-                for _ in range(3):
-                    model(**{arg_name: input_dict})
-                n_runs = 20
-                t0 = time.perf_counter()
-                for _ in range(n_runs):
-                    model(**{arg_name: input_dict})
-                pt_latency_map[policy_name] = (time.perf_counter() - t0) / n_runs * 1000
-            del policy, model
-            _reset_memory()
-        except Exception as e:
-            print(f"Warning: Could not measure PT latency for {policy_name}: {e}")
-            pt_latency_map[policy_name] = 0
-
-        try:
-            results = benchmark_policy(policy_name, factory)
+            results, pt_lat = benchmark_policy(
+                policy_name, factories[policy_name],
+                pt_devices=args.pt_devices,
+                skip_methods=set(args.skip_methods),
+            )
         except Exception as e:
             print(f"FATAL: benchmark_policy crashed for {policy_name}: {e}")
             traceback.print_exc()
@@ -486,35 +543,37 @@ def main():
                 policy_name=policy_name, method=m,
                 success=False, error=f"Policy crashed: {e}",
             ) for m in METHODS]
+            pt_lat = {}
         all_results.extend(results)
+        pt_latency_map[policy_name] = pt_lat
 
     print_report(all_results, pt_latency_map)
 
-    # Save JSON results
-    json_results = []
-    for r in all_results:
-        json_results.append({
-            "policy": r.policy_name,
-            "method": r.method,
-            "success": r.success,
-            "error": r.error,
-            "conversion_time_s": r.conversion_time_s,
-            "peak_rss_delta_mb": r.peak_rss_mb,
-            "ir_size_mb": r.ir_size_mb,
-            "inference_latency_ms": r.inference_latency_ms,
-            "max_abs_diff": r.max_abs_diff,
-            "mean_abs_diff": r.mean_abs_diff,
-        })
+    json_results = [{
+        "policy": r.policy_name,
+        "method": r.method,
+        "success": r.success,
+        "error": r.error,
+        "conversion_time_s": r.conversion_time_s,
+        "peak_rss_delta_mb": r.peak_rss_mb,
+        "ir_size_mb": r.ir_size_mb,
+        "ov_cpu_inference_latency_ms": r.inference_latency_ms,
+        "max_abs_diff": r.max_abs_diff,
+        "mean_abs_diff": r.mean_abs_diff,
+    } for r in all_results]
 
-    out_path = Path(__file__).parent / "benchmark_results.json"
-    with open(out_path, "w") as f:
+    with open(args.output, "w") as f:
         json.dump({
             "openvino_version": openvino.__version__,
             "pytorch_version": torch.__version__,
-            "pytorch_latency_ms": pt_latency_map,
+            "python_version": ".".join(map(str, sys.version_info[:3])),
+            "cuda_available": torch.cuda.is_available(),
+            "cuda_device": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
+            "ov_inference_device": "CPU",
+            "pt_latency_ms": pt_latency_map,
             "results": json_results,
         }, f, indent=2)
-    print(f"\nResults saved to {out_path}")
+    print(f"\nResults saved to {args.output}")
 
 
 if __name__ == "__main__":

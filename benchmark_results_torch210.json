@@ -1,0 +1,22 @@
+{
+  "openvino_version": "2026.1.0-21367-63e31528c62-releases/2026/1",
+  "pytorch_version": "2.10.0+cu128",
+  "python_version": "3.12.8",
+  "device": "CPU",
+  "pytorch_latency_ms": {
+    "ACT": 57.2,
+    "SmolVLA": 755.8,
+    "Pi0.5": 5848.7
+  },
+  "results": [
+    {"policy": "ACT", "method": "direct (TorchScript)", "success": true, "conversion_time_s": 4.42, "peak_rss_delta_mb": 86.8, "ir_size_mb": 131.43, "inference_latency_ms": 20.36, "max_abs_diff": 0.849641, "mean_abs_diff": 0.413301},
+    {"policy": "ACT", "method": "torch.export (FX)", "success": true, "conversion_time_s": 7.84, "peak_rss_delta_mb": 0.0, "ir_size_mb": 126.20, "inference_latency_ms": 21.65, "max_abs_diff": 0.849641, "mean_abs_diff": 0.413301},
+    {"policy": "ACT", "method": "via ONNX", "success": true, "conversion_time_s": 13.69, "peak_rss_delta_mb": 142.8, "ir_size_mb": 126.54, "inference_latency_ms": 19.59, "max_abs_diff": 0.849641, "mean_abs_diff": 0.413301},
+    {"policy": "SmolVLA", "method": "direct (TorchScript)", "success": true, "conversion_time_s": 75.32, "peak_rss_delta_mb": 1781.2, "ir_size_mb": 956.71, "inference_latency_ms": 1844.87, "max_abs_diff": 0.005117, "mean_abs_diff": 0.001525},
+    {"policy": "SmolVLA", "method": "torch.export (FX)", "success": false, "error": "aten.empty_permuted.default has no OV conversion rule"},
+    {"policy": "SmolVLA", "method": "via ONNX", "success": false, "error": "ONNX Where-20 type mismatch: i64 vs f32 in Select/index_put node"},
+    {"policy": "Pi0.5", "method": "direct (TorchScript)", "success": false, "error": "KV cache aten::cat with empty tensor causes Axis -2 out of rank range [-1, 0] in Concat. Also SequenceMark internal type failure."},
+    {"policy": "Pi0.5", "method": "torch.export (FX)", "success": false, "error": "Same aten.cat.default axis validation failure + aten.normal.float_float has no conversion rule"},
+    {"policy": "Pi0.5", "method": "via ONNX", "success": true, "conversion_time_s": 808.73, "peak_rss_delta_mb": 0.0, "ir_size_mb": 6762.73, "inference_latency_ms": 40624.80, "max_abs_diff": 4.254059, "mean_abs_diff": 1.214982}
+  ]
+}
