@@ -65,6 +65,7 @@ PyTorch latency: **CPU 898 ms** · **CUDA 235 ms**
 **Only direct conversion succeeds.** OV-CPU is 3.7x slower than PyTorch-CPU and 14x slower than PyTorch-CUDA. The VLM graph with SDPA attention is not well-optimised in the OV CPU plugin.
 
 Failure details:
+
 - **torch.export**: `aten.empty_permuted.default` has no OV conversion rule (used in HuggingFace transformers SDPA attention)
 - **via ONNX**: `Where-20` node fails type validation — `i64` vs `f32` mismatch in `index_put` from mixed-type indexing
 
@@ -81,12 +82,14 @@ PyTorch latency: **CPU 8464 ms** · **CUDA 252 ms** (33.6x CUDA speedup)
 | via ONNX | 930 | 6763 | 77919 | **9.2x slower** | **309x slower** | **5.15** |
 
 **Only via-ONNX succeeds**, and it is the most problematic result:
+
 - Conversion takes **15.5 minutes**
 - IR is **6.76 GB**
 - OV-CPU inference is **309x slower** than PyTorch-CUDA (77.9 s vs 252 ms)
 - **Max abs diff = 5.15** — significant numerical divergence from bf16-to-fp32 type promotion in the ONNX path, amplified over 10 denoising steps
 
 Failure details:
+
 - **direct**: PaLIGemma's KV cache uses `aten::cat` to concatenate an empty (rank-0) tensor with a KV cache tensor. OV's Concat validator rejects this (Axis -2 invalid for rank 0). Also hits `SequenceMark` internal type failure.
 - **torch.export**: Same `aten.cat.default` axis issue, plus `aten.normal.float_float` (flow-matching noise sampling) has no conversion rule.
 
@@ -125,30 +128,12 @@ Pi0.5's high divergence is concerning. This needs validation with trained weight
 
 ### 4. The existing dual-path strategy in `to_openvino()` is correct
 
-The codebase already implements the right approach:
+Physical AI Studio's `to_openvino` implementation addresses these export issues by having two different export options:
+
 - ACT, SmolVLA -> direct `ov.convert_model(module)` (default)
 - Pi0.5 -> `via_onnx=True` (set in `Pi05.extra_export_args`)
 
-This matches our findings exactly.
-
-## Recommendations
-
-### Short-term (current OV 2026.1)
-
-1. **Keep the dual-path strategy** — direct by default, `via_onnx=True` per-policy override. No architectural changes needed.
-2. **Add a conversion validation step** that compares OV output to PyTorch reference and warns if max abs diff exceeds a threshold (e.g., 1.0). Pi0.5's 5.15 divergence should trigger a warning.
-3. **Do not default to torch.export** — it fails for both VLM policies. It only works for simple models where direct also works.
-
-### Medium-term (file OV issues)
-
-4. **File OV bug: `aten.empty_permuted.default`** — blocks torch.export for all HuggingFace transformer models.
-5. **File OV bug: `aten::cat` with empty/rank-0 tensors** — blocks direct conversion for models with KV cache (PaLIGemma, Gemma).
-6. **File OV bug: `aten.normal.float_float`** — blocks torch.export for any model using stochastic sampling (flow matching, diffusion).
-
-### Long-term
-
-7. **OV-CPU is non-viable for VLM deployment.** The 14-309x gap vs PyTorch-CUDA means that without an OV GPU plugin (Intel Arc/dGPU) or fundamental CPU plugin optimisation for large attention graphs, deploying SmolVLA/Pi0.5 via OpenVINO on CPU is impractical. Target Intel GPU/NPU devices or alternative runtimes for these models.
-8. **Re-benchmark when OV fixes the above ops** — torch.export may then become viable and could produce better-optimised IR than TorchScript tracing.
+This matches the findings in this report.
 
 ## Reproducing
 
@@ -166,12 +151,14 @@ uv run --no-project python benchmark_ov_conversion.py --pt-devices cpu --output 
 ## Appendix: Failure Error Messages
 
 ### SmolVLA — torch.export
+
 ```
 OpConversionFailure: Model wasn't fully converted.
 -- No conversion rule found for operations: aten.empty_permuted.default
 ```
 
 ### SmolVLA — via ONNX
+
 ```
 [ONNX Frontend] Conversion failed for Where-20
 While validating ONNX node '<Node(Where): index_put>':
@@ -180,6 +167,7 @@ Argument 1 and 2 element types must match.
 ```
 
 ### Pi0.5 — Direct (TorchScript)
+
 ```
 SequenceMark / aten::cat
 While validating node 'opset1::Concat Concat_1902944':
@@ -188,6 +176,7 @@ Inputs: bf16[0] (empty KV cache) + bf16[?,?,256..,256]
 ```
 
 ### Pi0.5 — torch.export (FX)
+
 ```
 SequenceMark / aten.cat.default — same axis failure
 -- No conversion rule found for operations: aten.normal.float_float
