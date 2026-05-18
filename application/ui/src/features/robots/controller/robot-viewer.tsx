@@ -10,7 +10,8 @@ import { URDFRobot } from 'urdf-loader';
 
 import { useContainerSize } from '../../../components/zoom/use-container-size';
 import { SchemaRobot, SchemaRobotType } from '../robot-types';
-import { mapJointToURDFJoint, urdfPathForType, useLoadModelMutation, useRobotModels } from './../robot-models-context';
+import { urdfPathForType } from '../robots-configuration';
+import { mapJointToURDFJoint, useLoadModelMutation, useRobotModels } from './../robot-models-context';
 
 /** Material name used by the dark parts in the Trossen URDF. */
 const TROSSEN_DARK_MATERIAL = 'trossen_black';

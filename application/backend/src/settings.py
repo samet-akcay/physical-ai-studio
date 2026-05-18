@@ -31,8 +31,6 @@ class Settings(BaseSettings):
     storage_dir: Path = Field(default=Path("~/.cache/physicalai").expanduser(), alias="STORAGE_DIR")
     static_files_dir: str | None = Field(default=None, alias="STATIC_FILES_DIR")
 
-    supported_backends: list[str] = ["torch"]
-
     # Data import/upload safety (shared for dataset/model/project imports)
     data_import_max_uncompressed_bytes: int = Field(
         default=200 * 1024 * 1024 * 1024,
@@ -55,6 +53,11 @@ class Settings(BaseSettings):
     def datasets_dir(self) -> Path:
         """Storage directory for datasets."""
         return self.storage_dir / "datasets"
+
+    @property
+    def snapshot_dir(self) -> Path:
+        """Storage directory for snapshots."""
+        return self.storage_dir / "snapshots"
 
     @property
     def cache_dir(self) -> Path:

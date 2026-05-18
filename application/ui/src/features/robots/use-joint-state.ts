@@ -3,8 +3,9 @@ import { useCallback, useEffect, useState } from 'react';
 import useWebSocket from 'react-use-websocket';
 
 import { fetchClient } from '../../api/client';
-import { mapJointToURDFJoint, urdfPathForType, useRobotModels } from './robot-models-context';
+import { mapJointToURDFJoint, useRobotModels } from './robot-models-context';
 import { SchemaRobotType } from './robot-types';
+import { urdfPathForType } from './robots-configuration';
 
 type JointsState = Array<{
     name: string;

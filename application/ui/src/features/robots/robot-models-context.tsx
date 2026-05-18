@@ -6,43 +6,11 @@ import { degToRad } from 'three/src/math/MathUtils.js';
 import URDFLoader, { URDFRobot } from 'urdf-loader';
 
 import { SchemaRobotType } from './robot-types';
+import { ROBOT_TYPE_TO_URDF_MAP } from './robots-configuration';
 
 // ---------------------------------------------------------------------------
 // Path resolution
 // ---------------------------------------------------------------------------
-
-/** Resolve a `SchemaRobotType` to its URDF asset path. */
-export const urdfPathForType = (robotType: SchemaRobotType): string => {
-    if (robotType !== undefined && robotType.toLowerCase().includes('trossen')) {
-        return '/widowx/urdf/generated/wxai/wxai_follower.urdf';
-    }
-    return '/SO101/so101_new_calib.urdf';
-};
-
-const SO101_TO_URDF = {
-    'shoulder_pan.pos': ['shoulder_pan'],
-    'shoulder_lift.pos': ['shoulder_lift'],
-    'elbow_flex.pos': ['elbow_flex'],
-    'wrist_flex.pos': ['wrist_flex'],
-    'wrist_roll.pos': ['wrist_roll'],
-    'gripper.pos': ['gripper'],
-};
-const TROSSEN_TO_URDF = {
-    'shoulder_pan.pos': ['joint_0'],
-    'shoulder_lift.pos': ['joint_1'],
-    'elbow_flex.pos': ['joint_2'],
-    'wrist_flex.pos': ['joint_3'],
-    'wrist_yaw.pos': ['joint_4'],
-    'wrist_roll.pos': ['joint_5'],
-    'gripper.pos': ['left_carriage_joint', 'right_carriage_joint'],
-};
-
-const ROBOT_TYPE_TO_URDF_MAP: Record<SchemaRobotType, Record<string, string[]>> = {
-    SO101_Follower: SO101_TO_URDF,
-    SO101_Leader: SO101_TO_URDF,
-    Trossen_WidowXAI_Leader: TROSSEN_TO_URDF,
-    Trossen_WidowXAI_Follower: TROSSEN_TO_URDF,
-};
 
 export const mapJointToURDFJoint = (
     joint: { name: string; value: number },

@@ -82,6 +82,8 @@ class SmolVLAModel(ExportableModelMixin, Model):
         min_period: float = 4e-3,
         max_period: float = 4.0,
         use_random_input_noise: bool = True,
+        tokenizer_max_length: int = 48,
+        compile_model: bool = False,
     ) -> None:
         """Initialize the SmolVLA model.
 
@@ -112,6 +114,8 @@ class SmolVLAModel(ExportableModelMixin, Model):
             max_period: Maximum period for sine-cosine positional encoding of timesteps.
             use_random_input_noise: Whether to use random noise as the initial input for the
                 denoising process during inference. If False, zeros are used instead.
+            tokenizer_max_length: Maximum token length for the tokenizer. Default: 48.
+            compile_model: Whether to apply torch.compile to the model.
         """
         super().__init__()
         self._chunk_size = chunk_size
@@ -119,6 +123,7 @@ class SmolVLAModel(ExportableModelMixin, Model):
         self._max_action_dim = max_action_dim
         self._adapt_to_pi_aloha = adapt_to_pi_aloha
         self._vlm_model_name = vlm_model_name
+        self._tokenizer_max_length = tokenizer_max_length
         self._model = VLAFlowMatching(
             chunk_size=chunk_size,
             max_state_dim=max_state_dim,
@@ -142,6 +147,12 @@ class SmolVLAModel(ExportableModelMixin, Model):
             use_random_input_noise=use_random_input_noise,
         )
         self._dataset_stats = dataset_stats
+
+        if compile_model:
+            torch.set_float32_matmul_precision("high")
+            compile_mode = "default"
+            self.predict_action_chunk = torch.compile(self.predict_action_chunk, mode=compile_mode)  # type: ignore[method-assign]
+            self.forward = torch.compile(self.forward, mode=compile_mode)  # type: ignore[method-assign]
 
     def forward(self, batch: dict[str, torch.Tensor]) -> torch.Tensor | tuple[torch.Tensor, dict[str, float]]:
         """Forward pass for the SmolVLA model.
@@ -344,6 +355,10 @@ class SmolVLAModel(ExportableModelMixin, Model):
             list[int]: A list of relative observation indices.
         """
         return [0]
+
+    def set_dataset_stats(self, dataset_stats: dict) -> None:
+        """Update dataset statistics used for normalization."""
+        self._dataset_stats = dataset_stats
 
     def _preprocess_batch(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         if self._adapt_to_pi_aloha:
@@ -838,6 +853,16 @@ class VLAFlowMatching(nn.Module):
         embs = []
         pad_masks = []
         att_masks = []
+
+        batched_embs = torch.empty(0)
+        if not self.add_image_special_tokens:
+            num_cameras = images.shape[0]
+            bsize = images.shape[1]
+            imgs_flat = images.reshape(num_cameras * bsize, *images.shape[2:])
+            batched_embs = self.vlm_with_expert.embed_image(imgs_flat)
+            num_img_embs = batched_embs.shape[1]
+            batched_embs = batched_embs.reshape(num_cameras, bsize, num_img_embs, -1)
+
         for _img_idx, (
             img,
             img_mask,
@@ -858,8 +883,9 @@ class VLAFlowMatching(nn.Module):
                 att_masks += [0] * (image_start_mask.shape[-1])
                 embs.append(image_start_token)
                 pad_masks.append(image_start_mask)
-
-            img_emb = self.vlm_with_expert.embed_image(img)
+                img_emb = self.vlm_with_expert.embed_image(img)
+            else:
+                img_emb = batched_embs[_img_idx]
 
             # Normalize image embeddings
             img_emb_dim = img_emb.shape[-1]
@@ -1247,7 +1273,7 @@ class _SmolVLMWithExpertModel(nn.Module):
         num_vlm_layers: int = -1,
         self_attn_every_n_layers: int = -1,
         expert_width_multiplier: float = 0.5,
-        device: str = "auto",
+        device: str | None = None,
     ) -> None:
         super().__init__()
 
@@ -1584,7 +1610,7 @@ class _SmolVLMWithExpertModel(nn.Module):
             )
             att_outputs.append(att_output)
         else:
-            expert_position_id = position_ids
+            expert_position_id = position_ids.clone()
 
         if use_cache:
             if past_key_values is None:
