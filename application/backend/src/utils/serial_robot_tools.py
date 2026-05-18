@@ -8,8 +8,6 @@ from serial.tools.list_ports_common import ListPortInfo
 from schemas import Robot, SerialPortInfo
 from schemas.robot import RobotType
 
-available_ports = list_ports.comports()
-
 
 def from_port(port: ListPortInfo, robot_type: str) -> SerialPortInfo | None:
     """Detect if the device is a SO-100 robot."""
@@ -22,11 +20,12 @@ def from_port(port: ListPortInfo, robot_type: str) -> SerialPortInfo | None:
 
 
 class RobotConnectionManager:
-    _all_robots: list[SerialPortInfo] = []
+    _all_robots: list[SerialPortInfo]
     available_ports: list[ListPortInfo]
 
     def __init__(self):
         self.available_ports = list(list_ports.comports())
+        self._all_robots = []
 
     @property
     def robots(self) -> list[SerialPortInfo]:
@@ -38,6 +37,7 @@ class RobotConnectionManager:
 
         Use self.scan_ports() before to update self.available_ports and self.available_can_ports
         """
+        self.available_ports = list(list_ports.comports())
         self._all_robots = []
 
         # If we are only simulating, we can just use the SO100Hardware class

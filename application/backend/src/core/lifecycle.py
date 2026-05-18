@@ -7,6 +7,7 @@ from loguru import logger
 from core.logging import setup_logging, setup_uvicorn_logging
 from services.event_processor import EventProcessor
 from settings import get_settings
+from utils.multiprocessing import ensure_spawn_start_method
 from utils.serial_robot_tools import RobotConnectionManager
 from workers.camera_worker_registry import CameraWorkerRegistry
 from workers.model_worker_registry import ModelWorkerRegistry
@@ -35,6 +36,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     )
 
     logger.info("Starting %s application...", settings.app_name)
+    ensure_spawn_start_method()
     app_scheduler = Scheduler()
     app_scheduler.start_workers()
 

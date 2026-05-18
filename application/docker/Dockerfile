@@ -68,7 +68,7 @@ COPY --link --from=web-ui /home/app/web_ui/dist /app/application/ui/
 # This separation ensures that source-only changes do not invalidate
 # the expensive uv sync layers in the device-specific builders below.
 # ===========================================================================
-FROM python:${PYTHON_VERSION}-slim@sha256:46cb7cc2877e60fbd5e21a9ae6115c30ace7a077b9f8772da879e4590c18c2e3 AS builder-base
+FROM python:${PYTHON_VERSION}-slim@sha256:6026d9374020066a85690cabdb66f5d06a2dd606e756c7082fccdaaaf6d048dd AS builder-base
 
 COPY --from=docker.io/astral/uv:0.10.4@sha256:4cac394b6b72846f8a85a7a0e577c6d61d4e17fe2ccee65d9451a8b3c9efb4ac /uv /uvx /bin/
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=0
@@ -155,7 +155,7 @@ RUN --mount=type=cache,id=uv-cuda,target=/root/.cache/uv \
 # variables, and directory structure. Healthcheck is defined in
 # docker-compose.yaml (not here) so it can reference runtime PORT.
 # ===========================================================================
-FROM python:${PYTHON_VERSION}-slim@sha256:46cb7cc2877e60fbd5e21a9ae6115c30ace7a077b9f8772da879e4590c18c2e3 AS runtime-base
+FROM python:${PYTHON_VERSION}-slim@sha256:6026d9374020066a85690cabdb66f5d06a2dd606e756c7082fccdaaaf6d048dd AS runtime-base
 
 # uv is needed at runtime for `uv run` in run.sh
 COPY --from=docker.io/astral/uv:0.10.4@sha256:4cac394b6b72846f8a85a7a0e577c6d61d4e17fe2ccee65d9451a8b3c9efb4ac /uv /uvx /bin/
@@ -169,7 +169,9 @@ RUN groupadd --gid "${APP_GID}" appuser \
     && useradd --uid "${APP_UID}" --gid "${APP_GID}" --create-home appuser
 
 # Common runtime system dependencies (OpenCV, USB access, video decoding)
+# Includes runtime toolchain/linker deps required by torch.compile (Inductor/Triton)
 RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
         ffmpeg \
         libgl1 \
         libglib2.0-0 \
@@ -190,6 +192,8 @@ ENV PATH="/app/application/backend/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONFAULTHANDLER=1 \
+    CC=/usr/bin/gcc \
+    CXX=/usr/bin/g++ \
     UV_NO_SYNC=1 \
     STATIC_FILES_DIR="/app/application/ui/" \
     DATA_DIR="/app/data" \
@@ -310,7 +314,9 @@ RUN set -eux; \
     find /usr/local/cuda* /usr/lib/x86_64-linux-gnu/ \
         \( -path '*/include' -o -path '*/headers' \) -type d \
         -exec rm -rf {} + 2>/dev/null || true; \
-    find /usr/local/cuda* /usr/lib/x86_64-linux-gnu/ \
+    # Keep system static archives (e.g. libc_nonshared.a) required by
+    # torch.compile/Triton runtime linking; remove only CUDA static libs.
+    find /usr/local/cuda* \
         -name '*.a' -delete 2>/dev/null || true; \
     # Remove documentation and samples
     rm -rf /usr/local/cuda*/doc /usr/local/cuda*/samples \

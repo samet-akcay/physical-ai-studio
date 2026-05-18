@@ -58,7 +58,7 @@ cd physical-ai-studio
 
 # Setup and run docker services
 cd application/docker
-cp .env.example .env
+./setup-devices.sh
 docker compose --profile xpu up # or use --profile cuda, --profile cpu
 ```
 
@@ -73,6 +73,10 @@ and others), configure `HF_TOKEN` to avoid unauthenticated Hub access warnings. 
 
 Run the application in development mode, using [uv package manager](https://docs.astral.sh/uv/getting-started/installation/) and [node v24](https://nodejs.org/en/download) (we recommend using nvm)
 
+Note: native setup requires additional OS-level libraries (OpenCV/video/USB and Python
+build dependencies). See the **Prerequisites** section in
+[Application Documentation](./application/README.md#prerequisites).
+
 ```bash
 # Clone the repository
 git clone https://github.com/open-edge-platform/physical-ai-studio.git
@@ -80,14 +84,18 @@ cd physical-ai-studio
 
 # Install and run backend
 cd application/backend && uv sync --extra xpu # or --extra cpu, --extra cuda
-./run.sh
 
+# Start the backend
+./run.sh
+```
+
+```bash
 # In a new terminal: install and run UI
 cd application/ui
-nvm use
 npm install
-# Fetch the api from the backend and build the types and start the frontend.
-npm run build:api:download && npm run build:api && npm run start
+
+# Start the UI
+npm run start
 ```
 
 Open http://localhost:3000 in your browser.
