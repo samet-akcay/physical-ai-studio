@@ -22,10 +22,28 @@ jobs:
       contents: read
     steps:
       - &harden-runner
-        name: Harden the runner (audit all outbound calls)
+        name: Harden the runner
         uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
         with:
-          egress-policy: audit
+          disable-sudo: false
+          disable-telemetry: true
+          egress-policy: block
+          allowed-endpoints: >
+            azure.archive.ubuntu.com:80
+            dl.google.com:443
+            download.pytorch.org:443
+            download-r2.pytorch.org:443
+            esm.ubuntu.com:443
+            files.pythonhosted.org:443
+            github.com:443
+            github-cloud.githubusercontent.com:443
+            nodejs.org:443
+            packages.microsoft.com:443
+            pypi.org:443
+            raw.githubusercontent.com:443
+            registry.npmjs.org:443
+            release-assets.githubusercontent.com:443
+            releases.astral.sh:443
 
       - &checkout
         name: Checkout code
@@ -109,6 +127,13 @@ jobs:
         with:
           node-version-file: application/ui/.nvmrc
 
+      # `min-release-age` in application/ui/.npmrc requires npm >= 11.5.1.
+      # Ensure a compatible npm is available regardless of the default npm
+      # bundled with the pinned Node version.
+      - &setup-compatible-npm
+        name: Ensure npm supports min-release-age
+        run: npm i -g npm@11.14.0
+
       - &install-dependencies
         name: Install dependencies
         working-directory: "application/ui"
@@ -153,6 +178,8 @@ jobs:
 
       - *setup-node
 
+      - *setup-compatible-npm
+
       - *install-dependencies
 
       - *download-openapi-spec
@@ -189,6 +216,8 @@ jobs:
 
       - *setup-node
 
+      - *setup-compatible-npm
+
       - *install-dependencies
 
       - *download-openapi-spec
@@ -209,13 +238,15 @@ jobs:
     timeout-minutes: 60
     runs-on: ${{ github.repository_owner == 'open-edge-platform' && 'overflow' || 'ubuntu-latest' }}
     container:
-      image: mcr.microsoft.com/playwright:v1.59.1-jammy@sha256:8a0360d39d1973be506dd59002904a774f6d697d4946c94063b3fd006461c8ff
+      image: mcr.microsoft.com/playwright:v1.60.0-jammy@sha256:e1529a04087193966ea15d4a1617345bdaa0791690a24ab2c42b65f9ce5b2cdc
     steps:
       - *harden-runner
 
       - *checkout
 
       - *setup-node
+
+      - *setup-compatible-npm
 
       - *install-dependencies
 

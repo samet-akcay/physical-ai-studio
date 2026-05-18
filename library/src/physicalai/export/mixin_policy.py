@@ -11,12 +11,10 @@ from pathlib import Path
 from typing import Any, cast
 
 import lightning
-import onnx
 import openvino
 import openvino_tokenizers
 import torch
 import yaml
-from onnxruntime_extensions import gen_processing_models
 from physicalai.inference.manifest import (
     ComponentSpec,
     Manifest,
@@ -24,7 +22,6 @@ from physicalai.inference.manifest import (
     PolicySource,
     PolicySpec,
 )
-from physicalai.inference.runners.action_chunking import ActionChunking
 from physicalai.inference.runners.single_pass import SinglePass
 
 from physicalai.export.backends import (
@@ -123,19 +120,10 @@ class ExportablePolicyMixin:
         policy_class = metadata.get("policy_class", "")
         policy_name = self.__class__.__name__.lower()
 
-        use_action_queue = metadata.get("use_action_queue", False)
-        chunk_size = metadata.get("chunk_size", 1)
         preprocessors_specs: list[ComponentSpec] = metadata.get("preprocessors", [])
         postprocessors_specs: list[ComponentSpec] = metadata.get("postprocessors", [])
 
-        if use_action_queue:
-            runner = ComponentSpec.from_class(
-                ActionChunking,
-                runner=ComponentSpec.from_class(SinglePass),
-                chunk_size=chunk_size,
-            )
-        else:
-            runner = ComponentSpec.from_class(SinglePass)
+        runner = ComponentSpec.from_class(SinglePass)
 
         artifact_filename = f"{policy_name}{backend.extension}"
 
@@ -252,7 +240,7 @@ class ExportablePolicyMixin:
             RuntimeError: If input sample is not provided and the model does not
                 implement `sample_input` property. Also if export is failed due to other issues
                 like wrong export options.
-            NotImplementedError: If ONNX export is not supported by the model.
+            NotImplementedError: If ONNX export is not supported by the model or ONNX tokenizer export is requested.
         """
         if ExportBackend.ONNX not in self.get_supported_export_backends():
             msg = (
@@ -287,23 +275,9 @@ class ExportablePolicyMixin:
         )
 
         if extra_model_args.export_tokenizer:
-            onnx_tokenizer = gen_processing_models(
-                self._preprocessor.tokenizer,
-                pre_kwargs={
-                    "padding": "max_length",
-                    "truncation": True,
-                    "max_length": self._preprocessor.max_token_len,
-                },
-            )[0]
-            if onnx_tokenizer is not None:
-                onnx.save(onnx_tokenizer, export_dir / "tokenizer.onnx")
-            else:
-                msg = (
-                    "Failed to convert tokenizer to ONNX format. The tokenizer may not be compatible with ONNX export."
-                )
-                raise RuntimeError(msg)
+            msg = "Tokenizer export is not supported for ONNX backend at this time."
+            raise NotImplementedError(msg)
 
-        # Create metadata files
         self._create_metadata(
             export_dir,
             ExportBackend.ONNX,

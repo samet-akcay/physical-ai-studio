@@ -6,6 +6,7 @@
 from typing import Any, cast
 
 import torch
+from physicalai.inference.manifest import ComponentSpec
 
 from physicalai.data import Dataset, Feature, FeatureType, NormalizationParameters, Observation
 from physicalai.export.backends import (
@@ -112,6 +113,7 @@ class ACT(ExportablePolicyMixin, Policy):
         optimizer_lr: float = 1e-5,
         optimizer_weight_decay: float = 1e-4,
         optimizer_grad_clip_norm: float = 10.0,
+        compile_model: bool = False,
         # Eager initialization (for checkpoint loading)
         dataset_stats: dict[str, Any] | None = None,
     ) -> None:
@@ -148,10 +150,11 @@ class ACT(ExportablePolicyMixin, Policy):
             optimizer_lr=optimizer_lr,
             optimizer_weight_decay=optimizer_weight_decay,
             optimizer_grad_clip_norm=optimizer_grad_clip_norm,
+            compile_model=compile_model,
         )
 
         # Save config as hyperparameters for checkpoint restoration
-        self.save_hyperparameters(ignore=["config"])  # Save individual args, not config object
+        self.save_hyperparameters(ignore=["config", "compile_model"])
         # Also save config dict for compatibility
         self.hparams["config"] = self.config.to_dict()
 
@@ -219,6 +222,7 @@ class ACT(ExportablePolicyMixin, Policy):
             temporal_ensemble_coeff=self.config.temporal_ensemble_coeff,
             dropout=self.config.dropout,
             kl_weight=self.config.kl_weight,
+            compile_model=self.config.compile_model,
         )
 
     def setup(self, stage: str) -> None:
@@ -455,19 +459,34 @@ class ACT(ExportablePolicyMixin, Policy):
         Returns:
             dict[str, ExportParameters]: A dictionary mapping format names to their export parameters.
         """
+        postproc_specs = []
+        if self.config.chunk_size != self.config.n_action_steps:
+            postproc_specs.append(
+                ComponentSpec(
+                    type="action_chunk_trimmer",
+                    n_action_steps=self.config.n_action_steps,
+                ),
+            )
+
         extra_args: dict[str, ExportParameters] = {}
         extra_args["onnx"] = ONNXExportParameters(
             exporter_kwargs={
                 "output_names": ["action"],
             },
+            postprocessors_specs=postproc_specs,
         )
         extra_args["openvino"] = OpenVINOExportParameters(
             outputs=["action"],
             export_tokenizer=False,
             compress_to_fp16=False,
             exporter_kwargs={},
+            postprocessors_specs=postproc_specs,
         )
-        extra_args["executorch"] = ExecuTorchExportParameters()
-        extra_args["torch"] = TorchExportParameters()
+        extra_args["executorch"] = ExecuTorchExportParameters(
+            postprocessors_specs=postproc_specs,
+        )
+        extra_args["torch"] = TorchExportParameters(
+            postprocessors_specs=postproc_specs,
+        )
 
         return extra_args

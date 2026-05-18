@@ -53,6 +53,31 @@ and others), configure `HF_TOKEN` to avoid unauthenticated Hub access warnings. 
 
 Or run the application natively in development mode.
 
+#### Prerequisites
+
+Before starting the backend, install the system libraries used by the Docker runtime and
+builder images.
+
+On Debian/Ubuntu:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y \
+  ffmpeg \
+  libgl1 \
+  libglib2.0-0 \
+  libusb-1.0-0 \
+  libusb-1.0-0-dev \
+  libclang-dev \
+  pkg-config \
+  build-essential \
+  g++ \
+  git
+```
+
+If you are using another Linux distribution, install equivalent packages before running
+the native setup steps below.
+
 #### Backend
 
 Install the [uv package manager](https://docs.astral.sh/uv/getting-started/installation/), then run the commands below,
@@ -75,12 +100,30 @@ Install [node v24](https://nodejs.org/en/download) (we recommend using nvm), and
 
 ```bash
 cd ui
-nvm use
 npm install
 npm run start
 ```
 
 UI runs at http://localhost:3000
+
+### Updating
+
+When you pull new changes, update your local branch first (for example, rebase onto
+`origin/main`), then restart the services so dependencies and images are refreshed.
+
+1. Fetch latest changes from git (for example, rebase onto `origin/main`).
+
+For Docker:
+2. From `application/docker`, rebuild the images: `docker compose build`
+3. Start the stack again: `docker compose up`
+
+For native:
+2. In `application/backend`, sync dependencies: `uv sync --extra xpu` (or `cpu` / `cuda`)
+3. Start the backend: `./run.sh`
+4. In a new terminal, go to `application/ui` and install frontend dependencies: `npm install`
+5. Start the frontend: `npm run start`
+
+
 
 ## Getting started
 

@@ -4,7 +4,8 @@ import { ActionButton, Flex, Grid, Heading, minmax, repeat, Slider, Switch, View
 import { ChevronDownSmallLight } from '@geti-ui/ui/icons';
 import { radToDeg } from 'three/src/math/MathUtils.js';
 
-import { urdfPathForType, useRobotModels } from '../robot-models-context';
+import { useRobotModels } from '../robot-models-context';
+import { urdfPathForType } from '../robots-configuration';
 import { useJointState, useSynchronizeModelJoints } from '../use-joint-state';
 import { useRobot, useRobotId } from '../use-robot';
 

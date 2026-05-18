@@ -21,6 +21,12 @@ async def find_robot_port(manager: RobotConnectionManager, robot: Robot) -> str 
         if managed_robot.serial_number == robot.payload.serial_number:
             return managed_robot.connection_string
 
+    await manager.find_robots()
+
+    for managed_robot in manager.robots:
+        if managed_robot.serial_number == robot.payload.serial_number:
+            return managed_robot.connection_string
+
     return None
 
 

@@ -15,7 +15,7 @@ from exceptions import (
 from repositories import JobRepository
 from schemas import Job
 from schemas.base_job import JobStatus, JobType
-from schemas.job import TrainJob, TrainJobPayload
+from schemas.job import JobPayload, TrainJob, TrainJobPayload
 from services.system_service import SystemService
 
 
@@ -76,6 +76,36 @@ class JobService:
             return await repo.get_pending_job_by_type(JobType.TRAINING)
 
     @staticmethod
+    async def update_job_payload(
+        job_id: UUID,
+        payload: JobPayload,
+        *,
+        status: JobStatus | None = None,
+        message: str | None = None,
+        progress: int | None = None,
+        extra_info: dict | None = None,
+    ) -> Job:
+        async with get_async_db_session_ctx() as session:
+            repo = JobRepository(session)
+            job = await repo.get_by_id(job_id)
+            if job is None:
+                raise ResourceNotFoundError(ResourceType.JOB, resource_id=job_id)
+
+            updates: dict = {"payload": payload.model_dump(mode="json")}
+            if status is not None:
+                updates["status"] = status
+            if message is not None:
+                updates["message"] = message
+            if progress is not None:
+                updates["progress"] = progress
+            if extra_info is not None:
+                updates["extra_info"] = extra_info
+            if status in {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELED}:
+                updates["end_time"] = datetime.datetime.now(tz=datetime.UTC)
+
+            return await repo.update(job, updates)
+
+    @staticmethod
     async def update_job_status(
         job_id: UUID,
         status: JobStatus,
@@ -99,6 +129,12 @@ class JobService:
             if status in {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELED}:
                 updates["end_time"] = datetime.datetime.now(tz=datetime.UTC)
             return await repo.update(job, updates)
+
+    @staticmethod
+    async def update_job(job: Job, update: dict) -> Job:
+        async with get_async_db_session_ctx() as session:
+            repo = JobRepository(session)
+            return await repo.update(job, update)
 
     @staticmethod
     async def delete_job(job_id: UUID) -> None:

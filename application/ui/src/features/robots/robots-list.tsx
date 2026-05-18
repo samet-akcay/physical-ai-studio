@@ -8,6 +8,7 @@ import { $api } from '../../api/client';
 import { paths } from '../../router';
 import { useProjectId } from '../projects/use-project';
 import RobotArm from './../../assets/robot-arm.png';
+import { SchemaRobot } from './robot-types';
 
 import classes from './robots-list.module.scss';
 
@@ -57,22 +58,18 @@ export const ConnectionStatus = ({ status }: { status: 'online' | 'offline' | 'u
 };
 
 const RobotListItem = ({
-    id,
-    name,
+    robot,
     status,
     isActive,
-    type,
-    connectionString,
-    serialNumber,
 }: {
-    id: string;
-    name: string;
-    type: string;
+    robot: SchemaRobot;
     status: 'online' | 'offline' | 'unknown';
-    connectionString: string | undefined;
-    serialNumber: string | undefined;
     isActive: boolean;
 }) => {
+    const payload = robot.payload;
+    const connectionString = 'connection_string' in payload ? payload.connection_string : undefined;
+    const serialNumber = 'serial_number' in robot.payload ? robot.payload.serial_number : undefined;
+
     return (
         <View
             padding='size-200'
@@ -87,10 +84,10 @@ const RobotListItem = ({
                         <img src={RobotArm} style={{ maxWidth: '32px' }} alt='Robot arm icon' />
                     </View>
                     <Heading level={2} gridArea='name' UNSAFE_style={isActive ? { color: 'var(--energy-blue)' } : {}}>
-                        {name}
+                        {robot.name}
                     </Heading>
                     <View gridArea='type' UNSAFE_style={{ fontSize: '14px' }}>
-                        {type.replaceAll('_', ' ')}
+                        {robot.type.replaceAll('_', ' ')}
                     </View>
                     <View gridArea='status'>
                         <ConnectionStatus status={status} />
@@ -120,12 +117,12 @@ const RobotListItem = ({
                                 </li>
                             ) : null}
                             <li style={{ marginLeft: 'var(--spectrum-global-dimension-size-200)' }}>
-                                ID: <pre style={{ margin: 0, display: 'inline' }}>{id}</pre>
+                                ID: <pre style={{ margin: 0, display: 'inline' }}>{robot.id}</pre>
                             </li>
                         </ul>
                     </View>
                     <View alignSelf={'end'}>
-                        <MenuActions robot_id={id} />
+                        <MenuActions robot_id={robot.id} />
                     </View>
                 </Flex>
             </Flex>
@@ -172,11 +169,7 @@ export const RobotsList = () => {
                         {({ isActive }) => {
                             return (
                                 <RobotListItem
-                                    id={robot.id}
-                                    name={robot.name}
-                                    connectionString={robot.payload.connection_string}
-                                    serialNumber={robot.payload.serial_number}
-                                    type={robot.type}
+                                    robot={robot}
                                     status={onlineProjectRobots === undefined ? 'unknown' : status}
                                     isActive={isActive}
                                 />

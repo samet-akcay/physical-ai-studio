@@ -5,6 +5,7 @@ import { Add, Close } from '@geti-ui/ui/icons';
 
 import { $api } from '../../../api/client';
 import { useProjectId } from '../../../features/projects/use-project';
+import { isFollower, isLeader } from '../robots-configuration';
 import { RobotConfiguration, useEnvironmentForm, useSetEnvironmentForm } from './provider';
 
 import classes from './form.module.scss';
@@ -106,15 +107,13 @@ export const AddRobotForm = ({
                     }
                 }}
             >
-                {availableRobots
-                    .filter((robot) => robot.type === 'SO101_Follower' || robot.type === 'Trossen_WidowXAI_Follower')
-                    .map((robot) => {
-                        return (
-                            <Item textValue={robot.name} key={robot.id}>
-                                <Text>{robot.name}</Text>
-                            </Item>
-                        );
-                    })}
+                {availableRobots.filter(isFollower).map((robot) => {
+                    return (
+                        <Item textValue={robot.name} key={robot.id}>
+                            <Text>{robot.name}</Text>
+                        </Item>
+                    );
+                })}
             </Picker>
 
             <Picker
@@ -127,15 +126,13 @@ export const AddRobotForm = ({
                     }
                 }}
             >
-                {availableRobots
-                    .filter((robot) => robot.type === 'SO101_Leader' || robot.type === 'Trossen_WidowXAI_Leader')
-                    .map((robot) => {
-                        return (
-                            <Item textValue={robot.name} key={robot.id}>
-                                <Text>{robot.name}</Text>
-                            </Item>
-                        );
-                    })}
+                {availableRobots.filter(isLeader).map((robot) => {
+                    return (
+                        <Item textValue={robot.name} key={robot.id}>
+                            <Text>{robot.name}</Text>
+                        </Item>
+                    );
+                })}
             </Picker>
 
             <Flex gap='size-100'>
