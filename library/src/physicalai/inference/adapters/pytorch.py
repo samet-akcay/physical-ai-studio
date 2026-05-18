@@ -9,12 +9,12 @@
 
 from __future__ import annotations
 
-import importlib
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import torch
 import yaml
+from physicalai.config import import_class
 from physicalai.inference.adapters.base import RuntimeAdapter
 from physicalai.inference.adapters.registry import adapter_registry
 
@@ -23,8 +23,6 @@ from physicalai.export.backends import TorchExportParameters
 
 if TYPE_CHECKING:
     import numpy as np
-
-    from physicalai.policies import Policy
 
 
 @adapter_registry.register("torch", extensions=(".ckpt", ".pt"))
@@ -81,8 +79,11 @@ class TorchAdapter(RuntimeAdapter):
                 raise KeyError(msg)
 
         try:
-            module_name, class_name = policy_class_path.rsplit(".", 1)
-            policy_class = getattr(importlib.import_module(module_name), class_name)
+            policy_class = import_class(policy_class_path)
+            load_from_checkpoint = getattr(policy_class, "load_from_checkpoint", None)
+            if not callable(load_from_checkpoint):
+                msg = f"Imported class '{policy_class_path}' does not define callable load_from_checkpoint()."
+                raise TypeError(msg)
 
             self._policy = (
                 policy_class.load_from_checkpoint(model_path, map_location="cpu", weights_only=False)
