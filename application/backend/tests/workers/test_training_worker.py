@@ -164,19 +164,16 @@ class TestTraining:
             MockDispatcher.return_value.start = MagicMock()
             MockDispatcher.return_value.is_alive = MagicMock(return_value=False)
 
-            MockJobService.update_job_status = AsyncMock(
-                side_effect=[
-                    MagicMock(),  # "Training started"
-                    failed_job,  # "Training failed"
-                ]
-            )
+            MockJobService.update_job_status = AsyncMock(return_value=failed_job)
+            MockJobService.update_job = AsyncMock(return_value=MagicMock())
 
             await worker._train_model(job, model, snapshot, payload, base_model=None)
 
             mock_setup.assert_called_once()
             trainer.fit.assert_called_once()
 
-            failed_call = MockJobService.update_job_status.call_args_list[1]
+            MockJobService.update_job.assert_called_once()
+            failed_call = MockJobService.update_job_status.call_args_list[0]
             assert failed_call.kwargs["status"] == JobStatus.FAILED
 
     @pytest.mark.anyio
@@ -215,12 +212,8 @@ class TestTraining:
             MockDispatcher.return_value.start = MagicMock()
             MockDispatcher.return_value.is_alive = MagicMock(return_value=False)
 
-            MockJobService.update_job_status = AsyncMock(
-                side_effect=[
-                    MagicMock(),  # "Training started"
-                    completed_job,  # "Training finished"
-                ]
-            )
+            MockJobService.update_job_status = AsyncMock(return_value=completed_job)
+            MockJobService.update_job = AsyncMock(return_value=MagicMock())
             MockModelService.create_model = AsyncMock(return_value=model)
 
             await worker._train_model(job, model, snapshot, payload, base_model=None)
@@ -230,7 +223,8 @@ class TestTraining:
 
             trainer.fit.assert_called_once()
 
-            assert MockJobService.update_job_status.call_args_list[1].kwargs["status"] == JobStatus.COMPLETED
+            MockJobService.update_job.assert_called_once()
+            assert MockJobService.update_job_status.call_args_list[0].kwargs["status"] == JobStatus.COMPLETED
 
     @pytest.mark.anyio
     async def test_precision_fp32_passes_32_true_to_trainer(self, worker, event_queue, tmp_path):
@@ -266,7 +260,8 @@ class TestTraining:
             MockTrainer.return_value = trainer_instance
 
             completed_job = MagicMock()
-            MockJobService.update_job_status = AsyncMock(side_effect=[MagicMock(), completed_job])
+            MockJobService.update_job = AsyncMock(return_value=MagicMock())
+            MockJobService.update_job_status = AsyncMock(return_value=completed_job)
             MockModelService.create_model = AsyncMock(return_value=model)
 
             await worker._train_model(job, model, snapshot, payload, base_model=None)
@@ -307,7 +302,8 @@ class TestTraining:
             MockTrainer.return_value = trainer_instance
 
             completed_job = MagicMock()
-            MockJobService.update_job_status = AsyncMock(side_effect=[MagicMock(), completed_job])
+            MockJobService.update_job = AsyncMock(return_value=MagicMock())
+            MockJobService.update_job_status = AsyncMock(return_value=completed_job)
             MockModelService.create_model = AsyncMock(return_value=model)
 
             await worker._train_model(job, model, snapshot, payload, base_model=None)

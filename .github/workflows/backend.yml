@@ -28,6 +28,7 @@ jobs:
           disable-telemetry: true
           egress-policy: block
           allowed-endpoints: >
+            crates.io:443
             download.pytorch.org:443
             download-r2.pytorch.org:443
             files.pythonhosted.org:443
