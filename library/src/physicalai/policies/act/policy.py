@@ -6,7 +6,7 @@
 from typing import Any, cast
 
 import torch
-from physicalai.inference.manifest import ComponentSpec
+from physicalai.config import ComponentSpec
 
 from physicalai.data import Dataset, Feature, FeatureType, NormalizationParameters, Observation
 from physicalai.export.backends import (

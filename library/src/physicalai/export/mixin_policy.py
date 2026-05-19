@@ -15,8 +15,8 @@ import openvino
 import openvino_tokenizers
 import torch
 import yaml
+from physicalai.config import ComponentSpec
 from physicalai.inference.manifest import (
-    ComponentSpec,
     Manifest,
     ModelSpec,
     PolicySource,

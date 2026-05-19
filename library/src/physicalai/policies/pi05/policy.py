@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import torch
 from huggingface_hub import hf_hub_download
-from physicalai.inference.manifest import ComponentSpec
+from physicalai.config import ComponentSpec
 from safetensors.torch import load_file
 
 from physicalai.data.dataset import Dataset
