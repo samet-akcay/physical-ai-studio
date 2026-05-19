@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
 import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -107,7 +108,14 @@ class TrainingWorker(BaseProcessWorker):
         self, job: Job, model: Model, snapshot: Snapshot, payload: TrainJobPayload, base_model: Model | None = None
     ):
         settings = get_settings()
-        await JobService.update_job_status(job_id=job.id, status=JobStatus.RUNNING, message="Training started")
+        await JobService.update_job(
+            job=job,
+            update={
+                "status": JobStatus.RUNNING,
+                "message": "Training started",
+                "start_time": datetime.datetime.now(tz=datetime.UTC),
+            },
+        )
         dispatcher = TrainingTrackingDispatcher(
             job_id=job.id,
             event_queue=self.queue,
