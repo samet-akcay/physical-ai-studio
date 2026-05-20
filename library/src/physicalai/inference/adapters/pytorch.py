@@ -29,17 +29,6 @@ if TYPE_CHECKING:
     from physicalai.policies.base import Policy
 
 
-def _raise_missing_load_from_checkpoint(policy_class_path: str) -> None:
-    """Raise when an imported policy lacks ``load_from_checkpoint``.
-
-    Raises:
-        TypeError: The imported policy class does not define callable
-            ``load_from_checkpoint``.
-    """
-    msg = f"Imported class '{policy_class_path}' does not define callable load_from_checkpoint()."
-    raise TypeError(msg)
-
-
 @adapter_registry.register("torch", extensions=(".ckpt", ".pt"))
 class TorchAdapter(RuntimeAdapter):
     """Runtime adapter for Torch models.
@@ -74,6 +63,7 @@ class TorchAdapter(RuntimeAdapter):
             FileNotFoundError: If model file doesn't exist
             RuntimeError: If model loading fails
             KeyError: If metadata is missing required entries
+            TypeError: If imported policy class is missing callable load_from_checkpoint()
         """
         model_path = Path(model_path)
         if not model_path.exists():
@@ -97,7 +87,8 @@ class TorchAdapter(RuntimeAdapter):
             policy_class = import_class(policy_class_path)
             load_from_checkpoint = getattr(policy_class, "load_from_checkpoint", None)
             if not callable(load_from_checkpoint):
-                _raise_missing_load_from_checkpoint(policy_class_path)
+                msg = f"Imported class '{policy_class_path}' does not define callable load_from_checkpoint()."
+                raise TypeError(msg)  # noqa: TRY301
 
             load_from_checkpoint = cast(
                 "Callable[..., Policy]",
