@@ -14,15 +14,30 @@ from typing import TYPE_CHECKING, Any, cast
 
 import torch
 import yaml
-from physicalai.config import import_class
 from physicalai.inference.adapters.base import RuntimeAdapter
 from physicalai.inference.adapters.registry import adapter_registry
 
+from physicalai.config import import_class
 from physicalai.data.observation import Observation
 from physicalai.export.backends import TorchExportParameters
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     import numpy as np
+
+    from physicalai.policies.base import Policy
+
+
+def _raise_missing_load_from_checkpoint(policy_class_path: str) -> None:
+    """Raise when an imported policy lacks ``load_from_checkpoint``.
+
+    Raises:
+        TypeError: The imported policy class does not define callable
+            ``load_from_checkpoint``.
+    """
+    msg = f"Imported class '{policy_class_path}' does not define callable load_from_checkpoint()."
+    raise TypeError(msg)
 
 
 @adapter_registry.register("torch", extensions=(".ckpt", ".pt"))
@@ -82,13 +97,15 @@ class TorchAdapter(RuntimeAdapter):
             policy_class = import_class(policy_class_path)
             load_from_checkpoint = getattr(policy_class, "load_from_checkpoint", None)
             if not callable(load_from_checkpoint):
-                msg = f"Imported class '{policy_class_path}' does not define callable load_from_checkpoint()."
-                raise TypeError(msg)
+                _raise_missing_load_from_checkpoint(policy_class_path)
+
+            load_from_checkpoint = cast(
+                "Callable[..., Policy]",
+                load_from_checkpoint,
+            )
 
             self._policy = (
-                policy_class.load_from_checkpoint(model_path, map_location="cpu", weights_only=False)
-                .to(self.device)
-                .eval()
+                load_from_checkpoint(model_path, map_location="cpu", weights_only=False).to(self.device).eval()
             )
 
             # ``extra_export_args`` is contributed by ``ExportablePolicyMixin``
