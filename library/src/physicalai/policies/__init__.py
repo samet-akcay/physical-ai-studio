@@ -6,13 +6,26 @@
 from __future__ import annotations
 
 from . import lerobot
-from .act import ACT, ACTConfig, ACTModel
 from .base import Policy
-from .groot import Groot, GrootConfig, GrootModel
 from .lerobot import get_lerobot_policy
-from .pi0 import Pi0, Pi0Config, Pi0Model
-from .pi05 import Pi05, Pi05Config, Pi05Model
-from .smolvla import SmolVLA, SmolVLAConfig, SmolVLAModel
+
+_PHYSICALAI_POLICY_MODULES = {
+    "ACT": (".act", "ACT"),
+    "ACTConfig": (".act", "ACTConfig"),
+    "ACTModel": (".act", "ACTModel"),
+    "Groot": (".groot", "Groot"),
+    "GrootConfig": (".groot", "GrootConfig"),
+    "GrootModel": (".groot", "GrootModel"),
+    "Pi0": (".pi0", "Pi0"),
+    "Pi0Config": (".pi0", "Pi0Config"),
+    "Pi0Model": (".pi0", "Pi0Model"),
+    "Pi05": (".pi05", "Pi05"),
+    "Pi05Config": (".pi05", "Pi05Config"),
+    "Pi05Model": (".pi05", "Pi05Model"),
+    "SmolVLA": (".smolvla", "SmolVLA"),
+    "SmolVLAConfig": (".smolvla", "SmolVLAConfig"),
+    "SmolVLAModel": (".smolvla", "SmolVLAModel"),
+}
 
 __all__ = [
     # ACT
@@ -115,6 +128,16 @@ def get_policy(policy_name: str, *, source: str = "physicalai", **kwargs) -> Pol
     raise ValueError(msg)
 
 
+def __getattr__(name: str) -> object:
+    if name in _PHYSICALAI_POLICY_MODULES:
+        from importlib import import_module
+
+        module_name, attr_name = _PHYSICALAI_POLICY_MODULES[name]
+        return getattr(import_module(module_name, __name__), attr_name)
+    msg = f"module {__name__!r} has no attribute {name!r}"
+    raise AttributeError(msg)
+
+
 def get_physicalai_policy_class(policy_name: str) -> type[Policy]:
     """Get policy class by name.
 
@@ -130,14 +153,24 @@ def get_physicalai_policy_class(policy_name: str) -> type[Policy]:
     policy_name = policy_name.lower()
 
     if policy_name == "act":
+        from .act import ACT
+
         return ACT
     if policy_name == "groot":
+        from .groot import Groot
+
         return Groot
     if policy_name == "pi0":
+        from .pi0 import Pi0
+
         return Pi0
     if policy_name == "pi05":
+        from .pi05 import Pi05
+
         return Pi05
     if policy_name == "smolvla":
+        from .smolvla import SmolVLA
+
         return SmolVLA
 
     msg = f"Unknown physicalai policy: {policy_name}. Supported policies: act, dummy, groot, pi0, pi05, smolvla"
