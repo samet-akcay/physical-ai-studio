@@ -8,9 +8,8 @@ from __future__ import annotations
 import inspect
 import tempfile
 from collections.abc import Mapping
-from os import PathLike
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import lightning
 import openvino
@@ -28,7 +27,12 @@ from physicalai.export.backends import (
 )
 from physicalai.train import __version__
 
-from .mixin_model import ExportableModelMixin
+if TYPE_CHECKING:
+    from os import PathLike
+
+    from physicalai.inference.manifest import Manifest
+
+    from .mixin_model import ExportableModelMixin
 
 CONFIG_KEY = "model_config"
 POLICY_NAME_KEY = "policy_name"
