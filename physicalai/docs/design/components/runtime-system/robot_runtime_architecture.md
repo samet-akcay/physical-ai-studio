@@ -1,205 +1,284 @@
 # Robot Runtime Architecture
 
-This document defines the production **single-rate robot runtime** for PhysicalAI: the loop that drives one robot at a fixed FPS using one decision-making controller. It is the architecture behind today's policy rollout, teleoperation, recording, HIL, and DAgger workflows, including the existing Studio `RobotControlWorker`.
+This document defines the production single-rate robot runtime for PhysicalAI: one robot, one fixed-FPS loop, and one active controller. It is the architecture for policy rollout, teleoperation, recording, HIL, DAgger, and the existing Studio `RobotControlWorker` integration.
 
-It supersedes [`policy_runtime_design.md`](./policy_runtime_design.md), which now redirects here. Remote inference details live in [`policy_server_design.md`](./policy_server_design.md). The forward-compatible action/observation evolution lives in [`../robot-interface.md`](../robot-interface.md). Multi-rate, multi-system autonomy for humanoids and mobile manipulators is intentionally **out of scope**; that is the subject of [`composite_robot_architecture.md`](./composite_robot_architecture.md).
+It supersedes [`policy_runtime_design.md`](./policy_runtime_design.md), which now redirects here. Remote inference details live in [`policy_server_design.md`](./policy_server_design.md). Forward-compatible action and observation evolution lives in [`../robot-interface.md`](../robot-interface.md). Multi-rate, multi-system autonomy is out of scope here and belongs in [`composite_robot_architecture.md`](./composite_robot_architecture.md).
 
-The core question:
+## Quick Navigation
+
+- [At a Glance](#at-a-glance)
+- [PolicyRuntime vs RobotRuntime](#policyruntime-vs-robotruntime)
+- [Scope](#scope)
+- [Studio Mapping](#studio-mapping)
+- [Runtime Loop](#runtime-loop)
+- [Core Data Model](#core-data-model)
+- [Controllers and Inference](#controllers-and-inference)
+- [Workflow Patterns](#workflow-patterns)
+- [Async Integration](#async-integration)
+- [Interfaces](#interfaces)
+- [Errors and Shutdown](#errors-and-shutdown)
+- [Mid-Loop Commands](#mid-loop-commands)
+- [Robot IO Data Plane](#robot-io-data-plane)
+- [PolicyRuntime Factory](#policyruntime-factory)
+- [Config and CLI](#config-and-cli)
+- [Benchmarking Boundary](#benchmarking-boundary)
+- [Naming and Boundaries](#naming-and-boundaries)
+- [Implementation Status](#implementation-status)
+- [Decision Summary](#decision-summary)
+
+## At a Glance
+
+The main design question is:
 
 ```text
 Is PolicyRuntime the top-level runtime, or is it one controller inside a larger RobotRuntime?
 ```
 
-Answer:
+The answer is:
 
 ```text
 RobotRuntime      owns the robot loop and lifecycle
-Controller        chooses the next RobotAction from an observation
-PolicyController  adapts InferenceModel + InferenceExecution + ActionQueue into a Controller
-PolicyRuntime     convenience factory that returns a RobotRuntime + PolicyController
+Controller        chooses the next robot action
+PolicyController  adapts inference components into a Controller
+PolicyRuntime     is a convenience factory that returns RobotRuntime + PolicyController
 ```
 
-`PolicyRuntime` remains the simple front door for policy-only deployment. The actual architecture is `RobotRuntime + Controller`.
+The actual architecture is `RobotRuntime + Controller`. `PolicyRuntime` remains the simple entry point for policy-only deployment.
 
----
+## PolicyRuntime vs RobotRuntime
 
-## 1. Goal And Non-Goals
+`PolicyRuntime` is the policy-first API. `RobotRuntime` is the reusable loop beneath it.
 
-### Goal
+| Concern | Current `PolicyRuntime` shape | `RobotRuntime` shape |
+| --- | --- | --- |
+| top-level purpose | run a policy on a robot | run any controller on a robot |
+| action source | policy inference | policy, teleop, HIL, DAgger, scripted control, autonomy |
+| model ownership | direct runtime concern | owned by `PolicyController` |
+| inference scheduling | direct runtime concern | owned by `InferenceExecution` |
+| recording and telemetry | side behavior around policy rollout | callbacks around any controller |
+| Studio integration | policy-oriented worker behavior | Studio orchestrates modes, runtime executes loop |
 
-Provide a small, predictable, synchronous control loop that:
+The migration path is additive:
+
+```python
+# policy-only API remains simple
+runtime = PolicyRuntime(robot=robot, model=model, execution=execution, fps=30)
+
+# general API exposes the underlying architecture
+runtime = RobotRuntime(robot=robot, controller=controller, fps=30)
+```
+
+Do not create two production loops. `PolicyRuntime` should remain a factory over `RobotRuntime + PolicyController`.
+
+## Scope
+
+### Goals
+
+`RobotRuntime` provides a small, predictable loop that:
 
 1. Drives one `Robot` at a fixed FPS.
-2. Reads observation data from the robot and any external cameras.
-3. Asks a `Controller` for the next `RobotAction`.
-4. Filters that action through an optional `SafetyLayer`.
+2. Reads robot state and optional camera data.
+3. Calls a `Controller` for the next action.
+4. Applies callbacks and an optional `SafetyLayer`.
 5. Sends the action to the robot.
-6. Notifies callbacks for side effects (recording, telemetry, UI events).
+6. Emits side effects for recording, telemetry, and UI.
 7. Handles transient and fatal errors deterministically.
 
-This loop must be reusable across:
+It is designed to be reused from scripts, CLI entry points, and Studio backend workers.
 
-- Python scripts (`runtime.run(duration_s=60)`)
-- CLI (`physicalai run --config so101_act.yaml`)
-- The Studio backend (`RobotControlWorker` orchestrates lifecycle, runs `RobotRuntime` inside)
+### Out of Scope
 
-### Non-Goals
+This document does not define:
 
-The following are explicitly **not** part of this document:
+- Multi-system autonomy, planners, world models, and locomotion orchestration. See [`composite_robot_architecture.md`](./composite_robot_architecture.md).
+- Multi-rate subsystem scheduling, blackboards, and effector arbitration.
+- ROS 2, behavior trees, GXF graphs, or distributed runtime frameworks.
+- A typed `RobotAction` class hierarchy.
+- Full application orchestration. `RobotRuntime` is the loop, not the application.
 
-- Multi-system autonomy (perception + world model + planner + locomotion + VLA arbitration). See [Doc B](./composite_robot_architecture.md).
-- Multi-rate subsystem scheduling, blackboards, action arbitration across effectors.
-- ROS 2 integration, behavior trees, GXF graphs, distributed runtimes.
-- A typed `RobotAction` class hierarchy. The current contract is `np.ndarray`; the migration path to `np.ndarray | Mapping[str, Any]` is documented in [`../robot-interface.md`](../robot-interface.md).
-- Replacing application orchestration. `RobotRuntime` is the loop, not the application.
+## Studio Mapping
 
----
-
-## 2. Existing Studio Worker Mapping
-
-`RobotRuntime` does not replace `RobotControlWorker`. It is the **reusable inner loop** that Studio's worker should drive.
+`RobotRuntime` does not replace `RobotControlWorker`. It becomes the reusable synchronous loop inside it.
 
 ```text
 RobotControlWorker (existing, async)
   owns:
-    process/thread lifecycle
+    process or thread lifecycle
     websocket and queue events
-    load/unload model commands
-    recording start/stop UI events
-    teleop <-> policy mode switching
-    backend schemas, model worker registry
+    model load and unload commands
+    recording UI commands
+    teleop and policy mode switching
+    backend schemas and worker registry
   drives:
-    RobotRuntime (sync, this doc)
+    RobotRuntime (sync)
 
 RobotRuntime
-  owns the observation -> controller -> action -> robot loop
+  owns:
+    observation -> controller -> action -> robot loop
 
 EnvironmentIntegration / Robot adapter
-  owns backend-specific robot/camera wiring and async IO
-  exposes the synchronous Robot Protocol upward
+  owns:
+    backend-specific async IO
+    robot and camera wiring
+  exposes:
+    synchronous Robot protocol to RobotRuntime
 ```
 
-The existing `RobotControlWorker` uses `async/await` for `EnvironmentIntegration.get_observation`, `set_follower_position_from_leader(goal_time)`, and `set_joints_state`. `RobotRuntime` does **not** become async. Async stays at the adapter boundary; see §7 (Async Application Integration).
+Async remains at the adapter boundary. `RobotRuntime` stays synchronous.
 
----
+## Runtime Loop
 
-## 3. Core Model
-
-The runtime loop has three primary values:
+The runtime has one job: read an observation, ask for an action, send it, and repeat on a fixed schedule.
 
 ```text
-observation   what the robot/world sensed, plus per-sample runtime fields
-Controller    maps Observation to RobotAction
-RobotAction   value accepted by Robot.send_action()
-```
-
-High-level flow:
-
-```text
-RobotRuntime tick:
+tick:
   observation = robot.get_observation() + cameras + runtime fields
-  observation -> callbacks.on_observation
-  action      = controller.update(observation)
-  action      = callbacks.before_send_action(action, observation)
-  action      = safety.filter(action, observation)   # if configured
+  callbacks.on_observation(observation)
+  action = controller.update(observation)
+  action = callbacks.before_send_action(action, observation)
+  action = safety.filter(action, observation)      # optional
   robot.send_action(action)
   callbacks.on_action_sent(action, observation)
   sleep_until_next_tick()
 ```
 
-Separation of concerns:
+Ownership is intentionally simple:
 
 ```text
-RobotRuntime  owns when the loop runs
-Controller    owns what action to choose
-Robot         owns how to talk to hardware
+RobotRuntime  decides when the loop runs
+Controller    decides what action to take
+Robot         decides how hardware IO happens
 ```
 
----
+### Reference Loop
 
-## 4. Observation And RobotAction
+```python
+while running:
+    try:
+        observation = robot.get_observation()
+    except Exception:
+        break
+
+    observation = merge_camera_observations(observation, cameras)
+    observation = add_runtime_observation_fields(
+        observation,
+        timestamp=clock.now(),
+        frame_index=frame_index,
+        episode_index=episode_index,
+    )
+    callbacks.on_observation(observation)
+
+    try:
+        action = controller.update(observation)
+    except Exception as error:
+        callbacks.on_error(error, observation)
+        action = last_safe_action
+
+    action = callbacks.before_send_action(action, observation)
+
+    if safety is not None:
+        try:
+            action = safety.filter(action, observation)
+        except SafetyViolationError:
+            break
+
+    try:
+        robot.send_action(action)
+    except Exception as error:
+        callbacks.on_error(error, observation)
+        break
+
+    last_safe_action = action
+    callbacks.on_action_sent(action, observation)
+    sleep_until_next_tick()
+
+controller.stop()
+callbacks.on_stop()
+if return_to_home:
+    robot.go_to_home()
+robot.disconnect()
+```
+
+## Core Data Model
 
 ### Observation
 
-For this runtime architecture, observation is intentionally kept lightweight:
+Observation stays lightweight in this architecture:
 
 ```python
 Observation = Mapping[str, Any]
 ```
 
-Typical keys include `state`, `images`, `task`, `action`, `timestamp`, and runtime-added metadata. Different controllers may consume different subsets.
-
-This document does not require a specific observation class. If the broader runtime later standardizes on a dataclass from [`../observation.md`](../observation.md), that is an implementation choice layered under the same architecture.
-
-### RobotAction (current truth)
-
-The current `Robot` protocol in [`physicalai/robot/interface.py`](../../../../src/physicalai/robot/interface.py) accepts `np.ndarray`:
+Typical keys include:
 
 ```python
-def send_action(self, action: np.ndarray) -> None: ...
+{
+    "state": ...,
+    "images": ...,
+    "task": ...,
+    "action": ...,
+    "timestamp": ...,
+    "frame_index": ...,
+}
 ```
 
-This is sufficient for SO-101, Trossen, and any single-arm or single-flat-vector robot — the full set of robots that this runtime targets today.
+This document does not require a dedicated observation class.
 
-### RobotAction (forward path)
+### Action Boundary
 
-For composite robots (humanoids, mobile manipulators) a flat ndarray cannot express base / arms / hands / head with mixed control modes. The forward-compatible signature is:
+A controller returns the value that the runtime passes to `Robot.send_action()`.
 
 ```python
-RobotAction = np.ndarray | Mapping[str, Any]
+action = controller.update(observation)
+robot.send_action(action)
 ```
 
-`Mapping[str, Any]` is **not** required by this runtime. It is the migration path documented in [`../robot-interface.md`](../robot-interface.md) and consumed by [`composite_robot_architecture.md`](./composite_robot_architecture.md). Single-robot drivers could continue to accept raw `np.ndarray`.
+Today this is usually an `np.ndarray` for single-arm or flat-vector robots. More complex action schemas are covered in [`../robot-interface.md`](../robot-interface.md) and [`composite_robot_architecture.md`](./composite_robot_architecture.md).
 
-### PolicyAction vs RobotAction
+## Controllers and Inference
 
-```text
-PolicyAction   model output, often normalized and model-specific
-RobotAction    robot-facing action accepted by Robot.send_action()
-```
+Policy deployment is one `Controller` implementation, not a second runtime.
 
-`PolicyController` may use an optional `ActionMapper` to convert `PolicyAction` to `RobotAction`. Most existing policies (ACT, Pi0, SmolVLA on SO-101) need no mapper.
+### Responsibility Split
 
----
+| Component | Owns | Does not own |
+| --- | --- | --- |
+| `InferenceModel` | model loading, preprocessing, backend execution, single action or chunk output | robot timing, callbacks, robot IO |
+| `InferenceRunner` | policy computation strategy | runtime scheduling, action buffering |
+| `ActionChunkCursor` | hold one chunk and pop from it | refilling, smoothing, queue policy |
+| `InferenceExecution` | when and where inference runs | robot IO, action queue policy |
+| `ActionQueue` | buffering, merging, smoothing, one-action-per-tick consumption | model execution |
+| `PolicyController` | adapts inference stack into `Controller` | runtime lifecycle, FPS, safety |
+| `RobotRuntime` | observation read, callbacks, safety, dispatch, timing, shutdown | policy math and model loading |
 
-## 5. PolicyController And Inference
+### Single Action vs Chunked Action
 
-Policy deployment is **one** `Controller` implementation. The model-side abstractions are factored out so they can also run in benchmarks and remote servers.
-
-### Component Ownership
-
-| Component           | Owns                                                                                      | Does NOT own                                |
-| ------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------- |
-| `InferenceModel`    | load model, preprocess input, run backend, return one action or one chunk                 | robot timing, action queue, callbacks       |
-| `InferenceRunner`   | policy computation strategy (single pass, flow matching, temporal ensemble)               | runtime queueing, async scheduling          |
-| `ActionChunkCursor` | internal helper: hold one chunk, pop one action at a time                                 | refill policy, smoothing, RTC               |
-| `InferenceExecution`| **when and where** inference runs (sync / thread / process / remote)                      | queueing policy, robot IO                   |
-| `ActionQueue`       | store chunks, merge chunks, smooth boundaries, pop one action per tick                    | model inference, robot IO                   |
-| `PolicyController`  | adapter from the above into a `Controller`                                                | robot lifecycle, FPS, callbacks, safety     |
-| `RobotRuntime`      | observation read, controller call, callbacks, safety, dispatch, timing, error handling   | policy math, model loading                  |
-
-### `select_action()` vs `predict_action_chunk()`
-
-`InferenceModel` exposes both, with shape-stable contracts that work for any runner:
+`InferenceModel` exposes both contracts:
 
 ```python
-action = model.select_action(observation)        # one action now
-chunk  = model.predict_action_chunk(observation) # full chunk, no consumption
+action = model.select_action(observation)
+chunk = model.predict_action_chunk(observation)
 ```
 
-For chunk-producing policies, `select_action()` uses an internal `ActionChunkCursor`:
+For chunk-producing policies, `select_action()` can be implemented through `ActionChunkCursor`:
 
 ```python
 if cursor.empty():
-    cursor.push_chunk(model.predict_action_chunk(obs))
+    cursor.push_chunk(model.predict_action_chunk(observation))
 return cursor.pop()
 ```
 
-For single-pass runners, `predict_action_chunk()` wraps the single action as a `(1, D)` chunk. This keeps `PolicyController`, `ActionQueue`, `Benchmark`, and `PolicyServer` from branching on runner type.
+For single-pass policies, `predict_action_chunk()` returns a one-step chunk:
 
-`InferenceModel` and `InferenceRunner` must not import `ActionQueue`. If both layers need pop-from-chunk mechanics, they share `ActionChunkCursor`, not `ActionQueue`.
+```python
+return action[None, :]
+```
 
-### InferenceExecution Modes
+This keeps downstream consumers shape-stable.
+
+### InferenceExecution
+
+`InferenceExecution` is the only policy-side sync, async, process, or remote boundary the runtime needs. The `RobotRuntime` tick still calls `controller.update(observation)` synchronously; async inference is hidden behind `maybe_request()` and `ActionQueue`.
 
 ```python
 class InferenceExecution(Protocol):
@@ -209,15 +288,13 @@ class InferenceExecution(Protocol):
     def stop(self) -> None: ...
 ```
 
-| Implementation                                  | Where inference runs | Use case                              |
-| ----------------------------------------------- | -------------------- | ------------------------------------- |
-| `SyncInferenceExecution(mode="single_action")`  | runtime thread       | simple policies                       |
-| `SyncInferenceExecution(mode="chunk")`          | runtime thread       | chunk policies, no background worker  |
-| `AsyncInferenceExecution(transport="thread")`   | worker thread        | avoid blocking the control loop       |
-| `AsyncInferenceExecution(transport="process")`  | worker process       | Studio-style model worker             |
-| `RemoteExecution`                               | remote server        | robot host without policy weights/GPU |
-
-`InferenceExecution` is the **only** sync/async boundary the runtime needs. The `RobotRuntime` loop and the `Controller.update()` call stay synchronous regardless of which execution is chosen. See [`policy_server_design.md`](./policy_server_design.md) for `RemoteExecution` and `PolicyServer` details.
+| Implementation | Where inference runs | Typical use |
+| --- | --- | --- |
+| `SyncInferenceExecution(mode="single_action")` | runtime thread | simple policies |
+| `SyncInferenceExecution(mode="chunk")` | runtime thread | chunk policies without background workers |
+| `AsyncInferenceExecution(transport="thread")` | worker thread | avoid blocking the control loop |
+| `AsyncInferenceExecution(transport="process")` | worker process | Studio-style model worker |
+| `RemoteExecution` | remote server | robot host without local model weights or GPU |
 
 ### PolicyController
 
@@ -249,8 +326,6 @@ class PolicyController:
         self.model.close()
 ```
 
-This is the existing `PolicyRuntime` policy logic, but without robot IO ownership.
-
 ### ActionQueue
 
 ```python
@@ -258,28 +333,22 @@ queue = ActionQueue(
     smoother=LerpChunkSmoother(duration_frames=10),
     merger=ReplaceMerger(),
 )
+
 queue.push_chunk(chunk)
 action = queue.pop_or_none()
 ```
 
-`ActionQueue` owns runtime action buffering: refill thresholds, cross-chunk smoothing, late results, RTC overlap state. RTC uses a specialized merger:
+RTC uses a different merger, not a different runtime:
 
 ```python
 queue = ActionQueue(merger=RTCQueueMerger())
 ```
 
----
+## Workflow Patterns
 
-## 6. Workflows
+All workflows reuse the same runtime loop. The main variation is the selected controller and callbacks.
 
-All workflows reuse the same `RobotRuntime` loop. Only the `Controller` and `Callback` selection changes.
-
-### 6.1 Policy Rollout
-
-```text
-RobotRuntime
-  controller = PolicyController(model, execution, action_queue)
-```
+### Policy Rollout
 
 ```python
 runtime = PolicyRuntime(
@@ -291,15 +360,9 @@ runtime = PolicyRuntime(
 runtime.run(duration_s=60)
 ```
 
-### 6.2 Teleoperation
+### Teleoperation
 
-Teleop is a **source of robot actions**, not a callback. This avoids the dummy-policy hack for data collection.
-
-```text
-RobotRuntime
-  controller = TeleopController
-  callbacks  = [RecordingCallback]
-```
+Teleop is a controller because it produces actions.
 
 ```python
 class TeleopController:
@@ -310,30 +373,32 @@ class TeleopController:
         return self.to_robot_action(teleop_input, observation)
 ```
 
-The reader can be a keyboard, gamepad, SpaceMouse, leader arm, VR controller, or UI stream. Promote teleop input or mapping to named interfaces only after two or more teleop implementations need the same reusable shape.
+### Recording
 
-### 6.3 Recording
-
-Recording is a **callback** because it observes the loop. It must not arbitrate actions.
+Recording is a callback because it observes the loop.
 
 ```python
 class RecordingCallback(RuntimeCallback):
     def on_episode_start(self, episode, step):
         recorder.start_episode(episode_id=episode.id)
+
     def on_observation(self, obs, step):
         recorder.write_observation(t=step.t, observation=obs)
+
     def before_send_action(self, action, step):
         recorder.write_policy_action(t=step.t, action=action)
         return action
+
     def on_action_sent(self, action, step):
         recorder.write_sent_action(t=step.t, action=action)
+
     def on_episode_end(self, episode, step):
         recorder.end_episode()
 ```
 
-### 6.4 HIL (Human-In-The-Loop)
+### Human-In-The-Loop
 
-HIL is **arbitration between two action sources** and is a controller, not a callback.
+HIL is a controller because it arbitrates between action sources.
 
 ```python
 class HILController:
@@ -345,9 +410,7 @@ class HILController:
         return arbitrate(policy_action, expert_action, self.mode_source.current())
 ```
 
-### 6.5 DAgger
-
-DAgger writes both actions to a dataset and chooses one based on a beta schedule. Also a controller.
+### DAgger
 
 ```python
 class DAggerController:
@@ -360,75 +423,75 @@ class DAggerController:
         return policy_action
 ```
 
-### 6.6 Workflow Mapping
+### Workflow Mapping
 
-| Workflow              | Controller         | Callbacks                        |
-| --------------------- | ------------------ | -------------------------------- |
-| policy rollout        | `PolicyController` | optional telemetry/recording     |
-| teleop data collection| `TeleopController` | `RecordingCallback`              |
-| recorded rollout      | `PolicyController` | `RecordingCallback`              |
-| highlight capture     | any                | `HighlightCallback`              |
-| HIL                   | `HILController`    | optional recording/telemetry     |
-| DAgger                | `DAggerController` | optional metrics/recording       |
-| scripted collection   | `ScriptedController`| `RecordingCallback`             |
+| Workflow | Controller | Callbacks |
+| --- | --- | --- |
+| policy rollout | `PolicyController` | optional telemetry or recording |
+| teleop data collection | `TeleopController` | `RecordingCallback` |
+| recorded rollout | `PolicyController` | `RecordingCallback` |
+| highlight capture | any | `HighlightCallback` |
+| HIL | `HILController` | optional recording or telemetry |
+| DAgger | `DAggerController` | optional metrics or recording |
+| scripted collection | `ScriptedController` | `RecordingCallback` |
 
-Multi-system autonomy (VLA + locomotion + perception + planner) is **not** a controller in this doc. It is an `AutonomyController` defined in [`composite_robot_architecture.md`](./composite_robot_architecture.md) that satisfies the same `Controller` protocol.
+Multi-system autonomy is not another special case here. It is a controller defined in [`composite_robot_architecture.md`](./composite_robot_architecture.md) that satisfies the same `Controller` protocol.
 
----
+## Async Integration
 
-## 7. Async Application Integration?
+`RobotRuntime` should stay synchronous unless a concrete integration proves otherwise. A fixed-rate control loop is easier to test, profile, and fail safely when each tick is a normal blocking function call with bounded work.
 
-The existing `RobotControlWorker` is fully async. `RobotRuntime` is sync. The two coexist via the `Robot` adapter boundary.
-
-### Rule
+The rule is about the control loop boundary, not about forbidding async work behind components:
 
 ```text
-async stays at application/adapter boundaries
-Controller.update() stays synchronous and non-blocking
+application async      Studio events, UI commands, mode orchestration
+policy async           InferenceExecution + ActionQueue
+robot/env async        Robot adapter boundary
+runtime tick           synchronous Controller.update() call with bounded work
 ```
 
-### Two Acceptable Patterns
+Studio can remain async. Teleop, HIL, DAgger, recording commands, websocket events, and model loading can all stay in Studio orchestration. The runtime only needs the current controller, the latest observation, and a bounded action path.
 
-**Pattern 1: Run RobotRuntime in a worker thread/process.**
+Remote inference fits the same model. `RemoteExecution.maybe_request()` submits or polls bounded work, pushes completed chunks into `ActionQueue`, and returns without waiting for the remote server on every tick.
 
-```text
-RobotControlWorker (async)
-  websocket / queue events
-  load/unload commands
-  spawns thread:
-    RobotRuntime.run(...)            # sync loop in its own thread
-  uses thread-safe runtime methods to inject mid-loop commands (see §9)
-```
+### Pattern 1: Run `RobotRuntime` in a Worker
 
-**Pattern 2: Wrap async robot/environment IO behind a synchronous adapter.**
+This is the recommended migration path for Studio.
 
 ```text
 RobotControlWorker (async)
-  drives an AsyncEnvironmentRobot adapter:
-    background task continuously calls EnvironmentIntegration.get_observation
-    caches latest observation in a thread-safe slot
-    send_action enqueues to a bounded queue drained by an async worker
-  exposes synchronous Robot Protocol to RobotRuntime
+  handles websocket and queue events
+  loads and unloads controllers or models
+  owns teleop/HIL/DAgger mode orchestration
+  spawns a thread or process
+    RobotRuntime.run(...)
 ```
 
-The first pattern is recommended for the initial migration because it preserves Studio's existing async event handling unchanged. The second pattern is more invasive but allows native single-process operation.
+### Pattern 2: Wrap Async IO Behind a Sync Robot Adapter
 
-For the leader/follower `goal_time` budget used by Trossen teleop today, the adapter is responsible for translating `send_action(np.ndarray)` into the timed async call. `RobotRuntime` does not need to know.
+```text
+RobotControlWorker (async)
+  drives an async environment integration
+  background task fetches observations
+  adapter caches latest observation
+  adapter queues outgoing actions
+  RobotRuntime sees a synchronous Robot interface
+```
 
-### What `Controller.update()` MUST NOT do
+Use this pattern only when keeping the runtime in-process is worth the adapter complexity.
 
-- Block on network IO without a timeout
-- Block on device reads without a cached fallback
-- Call `await` (it is sync)
-- Hold the GIL for longer than one tick budget
+### What `Controller.update()` Must Not Do
 
-Controllers that need slow IO (device reads, network calls) must buffer or poll internally. A teleop controller should read device state in a background thread and return the latest cached value from `update()`. This keeps the runtime tick predictable and decouples the loop rate from device latency.
+- Block on unbounded network IO.
+- Block on device reads without a cached fallback.
+- Call `await`.
+- Hold the GIL longer than the tick budget.
 
----
+Controllers that depend on slow IO should buffer internally and return the latest available value.
 
-## 8. Interfaces
+## Interfaces
 
-### 8.1 RobotRuntime
+### RobotRuntime
 
 ```python
 class RobotRuntime:
@@ -451,54 +514,7 @@ class RobotRuntime:
     def from_config(cls, path: str | Path) -> "RobotRuntime": ...
 ```
 
-Loop body:
-
-```python
-while running:
-    try:
-        observation = robot.get_observation()
-    except Exception:
-        break  # robot IO failure -> safe shutdown
-
-    observation = merge_camera_observations(observation, cameras)
-    observation = add_runtime_observation_fields(
-        observation, timestamp=clock.now(),
-        frame_index=frame_index, episode_index=episode_index,
-    )
-    callbacks.on_observation(observation)
-
-    try:
-        action = controller.update(observation)
-    except Exception as e:
-        callbacks.on_error(e, observation)
-        action = last_safe_action  # hold position; transient failure
-
-    action = callbacks.before_send_action(action, observation)
-
-    if safety is not None:
-        try:
-            action = safety.filter(action, observation)
-        except SafetyViolationError:
-            break  # safety cannot make action safe -> safe shutdown
-
-    try:
-        robot.send_action(action)
-    except Exception:
-        break  # robot IO failure -> safe shutdown
-
-    last_safe_action = action
-    callbacks.on_action_sent(action, observation)
-    sleep_until_next_tick()
-
-# safe shutdown
-controller.stop()
-callbacks.on_stop()
-if return_to_home:
-    robot.go_to_home()
-robot.disconnect()
-```
-
-### 8.2 Controller
+### Controller
 
 ```python
 class Controller(Protocol):
@@ -508,52 +524,58 @@ class Controller(Protocol):
     def reset(self) -> None: ...
 ```
 
-The contract is intentionally small. A controller may be a policy, teleop device, planner, behavior tree, hierarchical autonomy stack, or a composition of other controllers (see Doc B's `AutonomyController`).
+The contract stays small on purpose. A controller may be a policy, teleop source, planner, autonomy stack, or composition of controllers.
 
-`update()` is synchronous and must not block.
-
-### 8.3 RuntimeCallback
+### RuntimeCallback
 
 ```python
 class RuntimeCallback(Protocol):
     def on_start(self) -> None: ...
     def on_observation(self, observation: Mapping[str, Any]) -> None: ...
-    def before_send_action(self, action: RobotAction, observation: Mapping[str, Any]) -> RobotAction: ...
+    def before_send_action(
+        self,
+        action: RobotAction,
+        observation: Mapping[str, Any],
+    ) -> RobotAction: ...
     def on_action_sent(self, action: RobotAction, observation: Mapping[str, Any]) -> None: ...
     def on_error(self, error: Exception, observation: Mapping[str, Any] | None = None) -> None: ...
     def on_user_event(self, event: UserEvent, observation: Mapping[str, Any] | None = None) -> None: ...
     def on_stop(self) -> None: ...
 ```
 
-Callbacks are for **side effects and instrumentation**: recording, highlight capture, telemetry, logging, UI updates, metrics, watchdog notifications.
+Callbacks are for side effects and instrumentation, not regular action arbitration.
 
-Callbacks are **not** the abstraction for action arbitration. If a component regularly decides which action to send, make it a `Controller`.
-
-`before_send_action` may modify the action (for example, an HIL UI override), but the safety layer always runs after callbacks.
-
-### 8.4 SafetyLayer
+### SafetyLayer
 
 ```python
 class SafetyLayer(Protocol):
     def filter(self, action: RobotAction, observation: Mapping[str, Any]) -> RobotAction: ...
 
 class SafetyViolationError(Exception):
-    """Raised by SafetyLayer when an action cannot be made safe."""
+    """Raised when an action cannot be made safe."""
 ```
 
-Safety is separate from callbacks because it is part of the action path with explicit ordering: **after** `callbacks.before_send_action`, **before** `robot.send_action`. Raising `SafetyViolationError` triggers safe shutdown.
+Ordering is explicit:
 
-### 8.5 Error Handling
+```text
+controller -> callbacks.before_send_action -> safety.filter -> robot.send_action
+```
 
-| Source                                     | Behavior                                                        |
-| ------------------------------------------ | --------------------------------------------------------------- |
-| `controller.update()` raises               | log, `on_error`, hold last safe action, continue loop           |
-| `robot.send_action()` raises               | log, `on_error`, stop loop, safe shutdown                       |
-| `SafetyLayer.filter()` raises `SafetyViolationError` | log, `on_error`, stop loop, safe shutdown             |
-| `SafetyLayer.filter()` raises other        | treat as controller error: log, hold position, continue         |
-| `robot.get_observation()` raises           | log, stop loop, safe shutdown                                   |
+## Errors and Shutdown
 
-Safe shutdown:
+### Error Handling
+
+| Source | Runtime behavior |
+| --- | --- |
+| `controller.update()` raises | log, call `on_error`, hold last safe action, continue |
+| `robot.send_action()` raises | log, call `on_error`, stop loop, safe shutdown |
+| `SafetyLayer.filter()` raises `SafetyViolationError` | log, call `on_error`, stop loop, safe shutdown |
+| `SafetyLayer.filter()` raises other exception | treat like controller error |
+| `robot.get_observation()` raises | log, stop loop, safe shutdown |
+
+Controller errors do not stop the loop by default. Robot IO and hard safety failures do.
+
+### Safe Shutdown Order
 
 ```text
 1. controller.stop()
@@ -562,51 +584,41 @@ Safe shutdown:
 4. robot.disconnect()
 ```
 
-Controller errors do not stop the loop by default because transient inference failures (a model worker timeout) should not crash a running robot. Robot IO errors stop the loop because they indicate a hardware failure that retries cannot recover.
+## Mid-Loop Commands
 
----
+`RobotRuntime.run()` is blocking, so application-level commands enter through thread-safe runtime, controller, or callback methods.
 
-## 9. Mid-Loop Commands
+| Operation | Mechanism |
+| --- | --- |
+| stop the loop | `runtime.stop()` sets an atomic flag |
+| swap controller | `runtime.swap_controller(controller)` under a lock |
+| change task | controller-level API |
+| start or stop recording | callback-level API |
+| load model | application constructs a new `PolicyController` and swaps it in |
 
-`RobotRuntime.run()` is a blocking call. The application needs a way to inject commands without an internal event/command queue.
+The runtime does not need an internal command bus for these cases.
 
-| Operation             | Mechanism                                                       |
-| --------------------- | --------------------------------------------------------------- |
-| stop the loop         | `runtime.stop()` sets an atomic flag checked each tick          |
-| swap controller       | `runtime.swap_controller(c)` replaces the reference under a lock|
-| change task           | controller-level method, not a runtime concern                  |
-| start/stop recording  | callback-level method, not a runtime concern                    |
-| load model            | application creates a new `PolicyController` and swaps it in    |
+## Robot IO Data Plane
 
-Thread-safe attribute swaps and atomic flags are sufficient. Application orchestration logic stays in the application.
-
----
-
-## 10. Robot IO Data Plane
-
-Some robots need hardware IO faster than the runtime loop. A Trossen leader/follower pair may need a 100 Hz teleoperation loop while inference and UI run at 30 Hz.
-
-The `Robot` adapter hides this:
+Some robots need higher-rate hardware IO than the runtime loop.
 
 ```text
 RobotRuntime (30 Hz)
-  robot.get_observation()   reads latest state from internal buffer
-  robot.send_action(action) writes latest action to internal buffer
+  robot.get_observation()   reads latest buffered state
+  robot.send_action(action) writes latest buffered action
         |
         v
 Robot adapter (internal)
-  high-rate thread/process (100 Hz)
-  reads/writes hardware at device rate
-  bridges via shared buffers
+  high-rate thread or process (for example 100 Hz)
+  talks to hardware at device rate
+  bridges with shared buffers
 ```
 
-`RobotRuntime` does not need to know the transport. The `Robot` interface is the boundary. Do not add transport, data plane, or control port abstractions to the framework until at least two robot integrations need the same reusable implementation.
+The `Robot` adapter hides transport details. Do not introduce framework-level transport abstractions until multiple integrations need the same reusable shape.
 
----
+## PolicyRuntime Factory
 
-## 11. PolicyRuntime: Convenience Factory
-
-`PolicyRuntime` is **not** a second runtime. It is a one-line factory over `RobotRuntime + PolicyController`.
+`PolicyRuntime` is not a separate runtime. It is a convenience factory.
 
 ```python
 def PolicyRuntime(
@@ -630,14 +642,17 @@ def PolicyRuntime(
     )
 ```
 
-Simple policy API stays:
+Two equivalent entry points:
 
 ```python
-runtime = PolicyRuntime(robot=robot, model=model, execution=SyncInferenceExecution(mode="chunk"), fps=30)
+runtime = PolicyRuntime(
+    robot=robot,
+    model=model,
+    execution=SyncInferenceExecution(mode="chunk"),
+    fps=30,
+)
 runtime.run(duration_s=60)
 ```
-
-General API also available:
 
 ```python
 runtime = RobotRuntime(
@@ -649,13 +664,9 @@ runtime = RobotRuntime(
 runtime.run()
 ```
 
----
+## Config and CLI
 
-## 12. Config And CLI
-
-### Config Examples
-
-Policy rollout:
+### Config Example: Policy Rollout
 
 ```yaml
 runtime:
@@ -676,7 +687,7 @@ runtime:
           init_args: { mode: chunk }
 ```
 
-Teleop recording:
+### Config Example: Teleop Recording
 
 ```yaml
 runtime:
@@ -696,7 +707,7 @@ runtime:
         init_args: { output_dir: ./datasets/teleop_run_001 }
 ```
 
-HIL with async process inference:
+### Config Example: HIL with Process Inference
 
 ```yaml
 runtime:
@@ -720,9 +731,9 @@ runtime:
           class_path: physicalai.runtime.TeleopController
 ```
 
-### CLI
+### CLI Boundary
 
-Runtime CLI lives in the `physicalai` distribution, not in the training distribution:
+Runtime commands live in the runtime distribution:
 
 ```toml
 [project.scripts]
@@ -733,7 +744,7 @@ run   = "physicalai.cli.run:register"
 serve = "physicalai.cli.serve:register"
 ```
 
-Training commands plug in from the training distribution:
+Training commands come from the training distribution:
 
 ```toml
 [project.entry-points."physicalai.cli.subcommands"]
@@ -744,95 +755,83 @@ predict   = "physicalai.train.cli:register_predict"
 benchmark = "physicalai.benchmark.cli:register"
 ```
 
-This keeps `physicalai run` usable on inference hosts without Torch or Lightning.
+Example runtime invocation:
 
 ```bash
 physicalai run --config so101_act.yaml --duration-s 60
 ```
 
----
+## Benchmarking Boundary
 
-## 13. Benchmarking vs Runtime
+`physicalai.benchmark` is not a second production runtime.
 
-`physicalai.benchmark` evaluates policies across gyms/tasks; it is **not** a second runtime. It owns episode aggregation, success rate, reward, episode length, average FPS, optional video, and JSON/CSV export. It calls `model.select_action()` directly.
+| Concern | `Benchmark` | `RobotRuntime` |
+| --- | --- | --- |
+| task suite and gym orchestration | yes | no |
+| episode aggregation and metrics | yes | no |
+| result export and video | yes | no |
+| robot and camera lifecycle | no | yes |
+| fixed-FPS robot loop | no | yes |
+| runtime-owned action queue | no | yes |
+| async, process, or remote inference scheduling | no | yes |
 
-| Concern                                 | `Benchmark` | `RobotRuntime` |
-| --------------------------------------- | ----------- | -------------- |
-| Task suite / gym orchestration          | yes         | no             |
-| Episode aggregation, success metrics    | yes         | no             |
-| Video / result export                   | yes         | no             |
-| Robot/camera connection lifecycle       | no          | yes            |
-| FPS-controlled robot loop               | no          | yes            |
-| Runtime-owned action queue              | no          | yes            |
-| Async/process/remote inference scheduling | no        | yes            |
+`Benchmark` can call `model.select_action()` directly. It should not reimplement the production robot loop.
 
-Do not make `Benchmark` a second implementation of the production robot loop.
+## Naming and Boundaries
 
----
+### Recommended Names
 
-## 14. Naming
+| Name | Recommendation | Reason |
+| --- | --- | --- |
+| `RobotRuntime` | preferred top-level name | it owns the robot loop |
+| `Controller` | preferred action-selection abstraction | it covers policy, teleop, HIL, DAgger, and autonomy |
+| `PolicyController` | preferred policy adapter | it wraps inference components |
+| `PolicyRuntime` | convenience factory | it keeps the policy-only API simple |
+| `InferenceExecution` | preferred over `Execution` | it names the sync-async boundary clearly |
+| `RobotAction` | preferred runtime output name | it matches `Robot.send_action()` |
+| `ActionSource` | avoid | it suggests no lifecycle |
+| `RobotCommand` | defer | it may be useful later if actions become typed objects |
 
-| Name                  | Recommendation                | Reason                                                        |
-| --------------------- | ----------------------------- | ------------------------------------------------------------- |
-| `RobotRuntime`        | preferred top-level name      | owns the robot loop, not only policy inference                |
-| `Controller`          | preferred action-selection abstraction | covers policy, teleop, planner, HIL, DAgger, autonomy |
-| `PolicyController`    | preferred policy adapter      | wraps `InferenceModel`, `InferenceExecution`, `ActionQueue`   |
-| `PolicyRuntime`       | convenience factory           | one-line API for policy-only deployment                       |
-| `InferenceExecution`  | preferred over `Execution`    | precise; the only sync/async boundary                         |
-| `RobotAction`         | preferred runtime output name | matches `Robot.send_action()`                                 |
-| `ActionSource`        | avoid                         | implies emit-only without lifecycle                           |
-| `RobotCommand`        | defer                         | useful later if actions become typed command objects          |
-| `ControlRuntime`      | acceptable but broader        | could describe non-robot control loops                        |
+### Still Out of Scope
 
----
+The following remain intentionally outside this document:
 
-## 15. What This Doc Does NOT Define
+- `AutonomyController`, `RuntimeSubsystem`, and `Blackboard`.
+- Multi-rate scheduling, degrade behavior, and `ActionArbiter`.
+- ROS 2, GXF, and behavior tree interop.
+- Framework-level transport abstractions.
+- Typed action classes until there is a concrete consumer.
 
-The following are intentionally out of scope and live in [`composite_robot_architecture.md`](./composite_robot_architecture.md):
+The following are also intentionally deferred until a concrete need appears:
 
-- `AutonomyController` (multi-system controller that implements `Controller`)
-- `RuntimeSubsystem` protocol and lifecycle
-- `Blackboard`, freshness/TTL/deadline semantics
-- Multi-rate scheduling, degrade behavior
-- `ActionArbiter`, effector-scoped actions
-- ROS 2 / GXF / behavior tree interop
+- `HILController` and `DAggerController` implementations.
+- Separate runtime context or tick objects.
+- An internal event bus.
 
-The following are intentionally deferred until a concrete consumer needs them:
+## Implementation Status
 
-- `HILController`, `DAggerController` (designs above; implementations on demand)
-- Typed `RobotAction` classes (see [`../robot-interface.md`](../robot-interface.md))
-- Separate runtime context/tick objects
-- `RobotTransport` / `RobotIODataPlane` / `RobotControlPort` abstractions, until two robot integrations need them
-- Advanced event bus
+1. `InferenceModel.predict_action_chunk()` and `close()` are implemented.
+2. `RobotRuntime`, `Controller`, `PolicyController`, `RuntimeCallback`, `ActionQueue`, `SyncInferenceExecution`, and the `PolicyRuntime` factory are implemented.
+3. `AsyncInferenceExecution(transport="thread")`, `FallbackAction`, and `runtime.warmup()` are implemented and validated on SO-101 + MolmoAct2 at 2 Hz.
+4. `RTCQueueMerger` and delay tracking are next runtime-side extensions.
+5. `RemoteExecution`, `PolicyServer`, and `physicalai serve` are defined in [`policy_server_design.md`](./policy_server_design.md).
+6. `SafetyLayer` lands when there is a concrete consumer for action filtering.
+7. Composite runtime constructs land with the first concrete humanoid or multi-system integration.
 
----
-
-## 16. Implementation Phases
-
-1. ✅ `InferenceModel.predict_action_chunk()` and `close()`.
-2. ✅ `RobotRuntime`, `Controller`, `PolicyController`, `RuntimeCallback`, `ActionQueue`, `SyncInferenceExecution`, `PolicyRuntime` factory, validation.
-3. ✅ `AsyncInferenceExecution(transport=thread)` + `FallbackAction` + `runtime.warmup()`. Validated on SO-101 + MolmoAct2 at 2 Hz. `transport=process` deferred (YAGNI).
-4. RTC delay tracking and `RTCQueueMerger`.
-5. `RemoteExecution`, `PolicyServer`, `physicalai serve` (see [`policy_server_design.md`](./policy_server_design.md)).
-6. `SafetyLayer` and `SafetyViolationError`, when a first consumer needs action filtering.
-7. Doc B implementation (`AutonomyController`, `RuntimeSubsystem`, `Blackboard`, `ActionArbiter`) once a humanoid integration is concrete.
-
----
-
-## 17. Decision Summary
+## Decision Summary
 
 ```text
 robot loop ownership      RobotRuntime
 action selection          Controller
 policy inference          PolicyController + InferenceExecution
-sync/async boundary       InferenceExecution (sync | async-thread | async-process | remote)
+sync or async boundary    InferenceExecution
 per-sample data           observation mapping with conventional keys
-side effects              RuntimeCallback (no arbitration)
-safety enforcement        SafetyLayer (after callbacks, before send_action)
-error recovery            controller errors hold position; robot/safety errors stop loop
+side effects              RuntimeCallback
+safety enforcement        SafetyLayer after callbacks, before send_action
+error recovery            controller errors hold position; robot and safety errors stop loop
 application commands      thread-safe methods on runtime, controller, and callbacks
-async studio worker       wraps RobotRuntime in a thread, OR async behind Robot adapter
-multi-system autonomy     AutonomyController in composite_robot_architecture.md
+async studio worker       wrap RobotRuntime in a worker, or keep async behind Robot adapter
+multi-system autonomy     defined separately in composite_robot_architecture.md
 ```
 
-This design keeps the policy deployment path simple while leaving room for full robot control systems without turning callbacks into an implicit control architecture and without forcing the loop to become async.
+This design keeps the production robot loop small and predictable. It leaves room for richer controllers and remote inference without turning callbacks into a hidden control architecture and without forcing the loop itself to become async.
