@@ -11,7 +11,7 @@ rather than hand-mirrored constructor kwargs.
 
 Two access tiers:
 
-- **Named wrappers** (the eight in :data:`SUPPORTED_POLICIES`) get one-line
+- **Named wrappers** (the nine in :data:`SUPPORTED_POLICIES`) get one-line
   factory classes for ergonomic use. The subset listed in
   :data:`VALIDATED_EQUIVALENCE_POLICIES` carries a hard equivalence guarantee
   enforced by the test suite; the remainder (currently ``groot``, ``xvla``)
@@ -72,6 +72,7 @@ from physicalai.policies.lerobot.aliases import (
     XVLA,
     Diffusion,
     Groot,
+    MolmoAct2,
     PI0Fast,
     SmolVLA,
 )
@@ -84,6 +85,7 @@ SUPPORTED_POLICIES: tuple[str, ...] = (
     "act",
     "diffusion",
     "groot",
+    "molmoact2",
     "pi0",
     "pi05",
     "pi0_fast",
@@ -123,7 +125,7 @@ Membership implies a hard guarantee: any wrapper change that breaks equivalence
 must show up as a failing test in ``library/tests/unit/policies/test_lerobot.py``
 or ``library/tests/integration/test_lerobot_wrapper_equivalence.py``.
 
-Policies in :data:`SUPPORTED_POLICIES` but not here (``groot``, ``xvla``) are
+Policies in :data:`SUPPORTED_POLICIES` but not here (``groot``, ``molmoact2``, ``xvla``) are
 named for API ergonomics but cannot currently be validated end-to-end — see the
 ``Known limitations`` section in their alias docstrings and the
 ``_EQUIVALENCE_XFAIL_REASONS`` table in the integration test for details.
@@ -133,6 +135,7 @@ _NAMED_WRAPPERS: tuple[type[NamedLeRobotPolicy], ...] = (
     ACT,
     Diffusion,
     Groot,
+    MolmoAct2,
     PI0,
     PI05,
     PI0Fast,
@@ -153,6 +156,7 @@ __all__ = [
     "Diffusion",
     "Groot",
     "LeRobotPolicy",
+    "MolmoAct2",
     "NamedLeRobotPolicy",
     "PI0Fast",
     "SmolVLA",

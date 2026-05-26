@@ -209,6 +209,9 @@ class ExportablePolicyMixin:
             checkpoint["hparams_name"] = "kwargs"
             checkpoint["hyper_parameters"] = dict(self.hparams)
 
+        if hasattr(self, "on_save_checkpoint"):
+            self.on_save_checkpoint(checkpoint)
+
         # nosemgrep: trailofbits.python.pickles-in-pytorch.pickles-in-pytorch
         torch.save(checkpoint, str(model_path))  # nosec B614
 

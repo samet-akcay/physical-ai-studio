@@ -41,7 +41,7 @@ pytest.importorskip("lerobot", reason="LeRobot not installed")
 DATASET_REPO_ID = "lerobot/aloha_sim_insertion_human"
 
 # VLA policies that need smaller batch/episode counts for GPU memory
-_VLA_POLICIES = {"pi0", "pi05", "pi0_fast", "groot"}
+_VLA_POLICIES = {"pi0", "pi05", "pi0_fast", "groot", "molmoact2"}
 
 
 def _empty_accelerator_cache(device: torch.device) -> None:
@@ -56,6 +56,7 @@ def _empty_accelerator_cache(device: torch.device) -> None:
 # xfail so test output stays honest and any future fix raises XPASS.
 _EQUIVALENCE_XFAIL_REASONS: dict[str, str] = {
     "groot": "hardcodes flash_attention_2 in eagle2_hg_model (upstream lerobot)",
+    "molmoact2": "requires a MolmoAct2 checkpoint configuration and large VLA runtime",
     "xvla": "requires explicit `vision_config` kwarg, not derivable from dataset",
 }
 
