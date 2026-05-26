@@ -415,6 +415,56 @@ Trainer.from_config(
 
 All four forms hit the same parser and produce the same instantiated objects.
 
+### Polymorphic Children in Tier 1 (Callbacks, Loggers)
+
+Tier 1 typed configs hold polymorphic children (`callbacks: list[Callback]`,
+`logger: Logger | list[Logger]`) as **live instances**, not as `{class_path,
+init_args}` wrappers.
+
+```python
+from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping
+from lightning.pytorch.loggers import TensorBoardLogger
+from physicalai.train.callbacks import IterationTimer
+
+config = TrainingConfig(
+    trainer=TrainerConfig(
+        max_epochs=10,
+        callbacks=[
+            ModelCheckpoint(save_top_k=3, monitor="val/loss"),
+            EarlyStopping(monitor="val/loss", patience=5),
+            IterationTimer(),
+        ],
+        logger=TensorBoardLogger(save_dir="logs", name="exp1"),
+    ),
+    model=Pi05Config(chunk_size=50),
+    data=LeRobotDataConfig(repo_id="physical-ai/example"),
+)
+Trainer.from_config(config).fit()
+```
+
+jsonargparse recognizes already-instantiated objects at class-typed leaves and
+passes them through `parser.instantiate()` unchanged. No wrapper type, no
+`class_path` strings in Python. Python users write Python; YAML users write
+`class_path` / `init_args`. Each path uses its native idiom.
+
+This matches Lightning's `Trainer(callbacks=..., logger=...)` ergonomics and
+the imperative assembly the Studio backend already does in
+`application/backend/src/workers/training_worker.py`.
+
+**Serialization rule.** `to_config()` MUST use `parser.dump(...)` to round-trip
+typed configs. Do NOT use `dataclasses.asdict(config)`:
+
+- `asdict` recursively flattens dataclass fields and strips class identity from
+  non-dataclass children. A `ModelCheckpoint` instance becomes an opaque value
+  with no `class_path`, breaking subclass dispatch on reload.
+- `parser.dump` walks the parser schema and emits `class_path` / `init_args`
+  for every polymorphic leaf, preserving round-trip identity.
+
+```python
+trainer = Trainer.from_config(config)
+trainer.to_config("training.reproduced.yaml")   # parser.dump under the hood
+```
+
 Runtime config:
 
 ```yaml
