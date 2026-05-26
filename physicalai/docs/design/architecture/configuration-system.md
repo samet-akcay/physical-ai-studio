@@ -5,7 +5,7 @@
 PhysicalAI should support the same workflows from Python, YAML, CLI, and Studio
 APIs.
 
-The configuration system should make these paths equivalent:
+The configuration system makes these paths equivalent:
 
 ```python
 trainer = Trainer.from_config("training.yaml")
@@ -13,7 +13,7 @@ trainer.fit()
 ```
 
 ```bash
-physicalai-train fit --config training.yaml
+physicalai fit --config training.yaml
 ```
 
 ```python
@@ -39,36 +39,45 @@ physicalai run --config runtime.yaml
 
 ## Direction
 
-The configuration backbone is **jsonargparse + dataclasses / Pydantic**, not a
-custom config layer.
+The configuration backbone is **jsonargparse**. Constructor signatures are the
+schema. Typed dataclasses are optional ergonomic wrappers, not a requirement.
 
-- Each class is its own schema. Constructor signatures (with dataclass /
-  Pydantic args where appropriate) are the source of truth.
-- jsonargparse handles YAML loading, CLI parsing, `class_path` / `init_args`
-  dispatch, and recursive instantiation.
-- `physicalai.config` provides a thin convenience surface on top:
-  - `FromConfig` / `@from_config` for class-level `cls.from_config(...)` sugar.
-  - `instantiate_obj` / `instantiate_obj_from_dict` for programmatic use.
+- Each class is its own schema. jsonargparse introspects constructors directly;
+  no inheritance, decorators, or special types are required for a class to be
+  configurable.
+- jsonargparse handles YAML loading, CLI parsing, recursive instantiation, and
+  subclass resolution (including short-name lookup against the typed base
+  class).
+- Typed config dataclasses (e.g. `Pi05Config`, `TrainingConfig`) are added per
+  class **only** when the public Python SDK or Studio benefits from typed
+  construction. They do not replace constructor introspection.
 - Workflow orchestrators (`Trainer`, `PolicyRuntime`, `InferenceModel`) own
   `from_config(...)` and `to_config()` entry points. Internally they wrap a
   jsonargparse parser.
-- `library/src/physicalai/config/base.py::Config` shrinks to a checkpoint
-  serialization helper (`to_dict` / `from_dict` for torch `weights_only=True`
-  round-tripping). `to_jsonargparse` / `save` / `load` are removed.
-- `ComponentSpec` stays scoped to `physicalai.inference.manifest` and is used
-  only inside `Manifest`. It is not promoted as a public training / runtime
-  primitive; jsonargparse's native `class_path` / `init_args` covers that
-  ground.
+- `physicalai.config.FromConfig` extends `jsonargparse.FromConfigMixin` with
+  dataclass and Pydantic adapters. It provides the `cls.from_config(...)`
+  classmethod surface for known target classes.
+- The custom `instantiate_obj` / `instantiate_obj_from_dict` helpers are
+  removed. All programmatic instantiation goes through jsonargparse (directly,
+  or via `cls.from_config(...)`).
+- `library/src/physicalai/config/base.py::Config` is removed. Every method it
+  provided (`save`, `load`, `to_dict`, `from_dict`, `to_jsonargparse`) has a
+  one-line jsonargparse or stdlib replacement, and the unified base no longer
+  earns its keep.
+- `ComponentSpec` stays in `physicalai.inference.manifest` for now. The
+  long-term goal (Phase 8) is to delete it: the manifest becomes a typed
+  dataclass whose fields use jsonargparse subclass typing, and short-name
+  resolution replaces the bespoke `type` registry.
 
 ## Big Picture
 
 The system has three data layers and one execution layer.
 
 ```text
-Class schema (constructor + dataclass/Pydantic args)
+Class schema (constructor signature, optionally with a typed dataclass)
   typed constructor arguments for one class
 
-Workflow config (YAML / dict / jsonargparse Namespace)
+Workflow config (YAML / dict / dataclass / jsonargparse Namespace)
   user-authored workflow graph before execution
 
 Manifest (exported package metadata)
@@ -81,8 +90,8 @@ Orchestrator
 Examples:
 
 ```text
-Pi05 / Pi05Config        -> constructor args for Pi05
-TrainingConfig           -> model + data + trainer (YAML or dataclass)
+Pi05 / Pi05Config        -> constructor args for Pi05 (Pi05Config optional)
+TrainingConfig           -> model + data + trainer (YAML, dict, or dataclass)
 Manifest                 -> exported artifacts + runtime metadata
 Trainer                  -> orchestrates training
 InferenceModel           -> loads model artifacts and computes actions
@@ -95,6 +104,156 @@ Passive data objects do not execute workflows. Orchestrators do.
 trainer = Trainer.from_config("training.yaml")
 trainer.fit()
 ```
+
+## Authoring Tiers
+
+A single jsonargparse parser supports three authoring tiers. All three produce
+the same instantiated objects.
+
+### Tier 0 — Bare class, no config wrapper
+
+The default for slots whose concrete class is fixed by the parser. jsonargparse
+introspects the constructor; no dataclass needed.
+
+```python
+class Trainer:
+    def __init__(self, max_epochs: int = 10, accelerator: str = "auto") -> None:
+        ...
+
+parser.add_class_arguments(Trainer, "trainer")
+```
+
+YAML (flat, no `class_path` / `init_args`):
+
+```yaml
+trainer:
+  max_epochs: 10
+  accelerator: gpu
+```
+
+CLI:
+
+```bash
+--trainer.max_epochs 10 --trainer.accelerator gpu
+```
+
+Dict:
+
+```python
+parser.parse_object({"trainer": {"max_epochs": 10}})
+```
+
+Use Tier 0 for slots that always resolve to one concrete class — in physicalai
+that is essentially just `trainer`. Slots that select between alternative
+implementations (e.g. `model`, `data`, `callbacks`, `runner`, `preprocessors`)
+are Tier 2, not Tier 0.
+
+### Tier 1 — Typed config dataclass (icing)
+
+For classes that are part of the public Python API or that Studio constructs
+programmatically, add a typed config dataclass.
+
+```python
+@dataclass
+class Pi05Config:
+    chunk_size: int = 50
+    n_action_steps: int = 50
+
+class Pi05(FromConfig):
+    def __init__(self, chunk_size: int = 50, n_action_steps: int = 50) -> None:
+        ...
+```
+
+All three forms now work:
+
+```python
+Pi05.from_config(Pi05Config(chunk_size=50))   # typed dataclass
+Pi05.from_config({"chunk_size": 50})           # dict
+Pi05.from_config("pi05.yaml")                  # YAML
+```
+
+Tier 1 adds:
+
+- IDE autocomplete and static type checking at call sites.
+- A canonical object Studio backends can construct without dict gymnastics.
+- A shared schema for SDK examples and Studio payload mapping.
+
+Tier 1 is **independent of Tier 0 vs Tier 2 slot selection**. A `Pi05Config`
+dataclass is useful for typed Python construction (`Pi05.from_config(cfg)`),
+but the orchestrator's `model` slot is still Tier 2 because the parser must be
+able to choose between Pi05, ACT, SmolVLA, etc. The dataclass is a convenience
+for direct class consumption, not a way to make polymorphic slots flat.
+
+It does not change the YAML / CLI / dict paths, which still work via Tier 0
+constructor introspection.
+
+### Tier 2 — Polymorphic selection
+
+When the choice of class is part of the configuration, type the slot with the
+**base class** and let jsonargparse resolve the concrete class by short name.
+
+```python
+parser.add_subclass_arguments(LightningModule, "model")
+```
+
+When jsonargparse knows the expected base type, it walks importable subclasses
+and resolves a bare class name automatically. Two forms are supported.
+
+**Tier 2a — bare short name (when no init args are needed).**
+
+```yaml
+model: Pi05
+```
+
+```bash
+--model Pi05
+```
+
+The most compact form. Works whenever no init arguments need to be set.
+
+**Tier 2b — nested form (when init args are needed).**
+
+```yaml
+model:
+  class_path: Pi05            # short name, not dotted path
+  init_args:
+    chunk_size: 50
+```
+
+```bash
+--model Pi05 --model.chunk_size 50
+```
+
+`class_path` accepts a bare short name (`Pi05`) as long as exactly one
+importable subclass of `LightningModule` matches. The dotted path
+(`physicalai.policies.pi05.Pi05`) is required only to disambiguate when two
+subclasses share the same short name (e.g. a vendor fork).
+
+YAML does not allow a scalar value to also carry child keys, so a flat shape
+like `model: Pi05` with sibling `chunk_size: 50` indented underneath is not
+expressible without a custom YAML tag. The Tier 2b nested form is the canonical
+way to combine class selection with init args.
+
+For short-name resolution to work, the subclass must be importable at the time
+the parser runs. Built-in classes are imported eagerly from package
+`__init__.py`; third-party classes register through Python entry points or are
+imported explicitly by the caller.
+
+### Tier choice per slot
+
+| Slot kind                                                              | Tier   |
+| ---------------------------------------------------------------------- | ------ |
+| Concrete class fixed by the parser (e.g. `trainer`)                    | Tier 0 |
+| Same as Tier 0 but exposed for typed Python construction               | Tier 0 + Tier 1 dataclass |
+| Slot selecting between alternative subclasses (e.g. `model`, `data`, `callbacks`, `runner`, `preprocessors`) | Tier 2 |
+
+In physicalai, the only training-side Tier 0 slot is `trainer`. Every policy
+slot (`model`), datamodule slot (`data`), callback list, runner, preprocessor,
+and postprocessor is Tier 2 because the codebase ships multiple
+implementations.
+
+Tier 1 is orthogonal: a Tier 2 slot can still have per-class typed dataclasses
+(`Pi05Config`, `ACTConfig`, ...) that Studio and SDK users construct directly.
 
 ## Core Concepts
 
@@ -112,119 +271,108 @@ class Pi05:
         self.n_action_steps = n_action_steps
 ```
 
-YAML form (jsonargparse subclass syntax):
+Validation lives in `__init__` / `__post_init__`. There is no project-wide
+`Config` base class for typed constructor schemas.
 
-```yaml
-class_path: physicalai.policies.pi05.Pi05
-init_args:
-  chunk_size: 50
-  n_action_steps: 50
-```
+### FromConfig
 
-When a constructor takes a typed structured argument, a dataclass (or Pydantic
-model) is used purely as the type for that argument.
+`FromConfig` is a thin extension of `jsonargparse.FromConfigMixin` that adds
+dataclass and Pydantic adapters on top of jsonargparse's built-in
+`from_config(path | dict)` support.
 
 ```python
-@dataclass
-class Pi05Hyperparams:
-    chunk_size: int = 50
-    n_action_steps: int = 50
+# library/src/physicalai/config/mixin.py
+from jsonargparse import FromConfigMixin
 
-class Pi05:
-    def __init__(self, hparams: Pi05Hyperparams) -> None:
-        ...
+class FromConfig(FromConfigMixin):
+    """jsonargparse FromConfigMixin + dataclass/Pydantic adapters."""
+
+    @classmethod
+    def from_config(cls, config):
+        if dataclasses.is_dataclass(config) and not isinstance(config, type):
+            config = dataclasses.asdict(config)
+        elif isinstance(config, BaseModel):
+            config = config.model_dump()
+        return super().from_config(config)   # parent handles str | PathLike | dict
 ```
 
-jsonargparse handles parsing nested dicts / YAML into the dataclass. Validation
-lives in `__init__` / `__post_init__`.
+What the parent (`jsonargparse.FromConfigMixin`) provides:
 
-There is no project-wide `Config` base class for typed constructor schemas.
+- `cls.from_config(path | dict)` classmethod.
+- Subclass dispatch via `{class_path, init_args}` (including bare short names).
+- Recursive nested instantiation.
+- `__from_config_init_defaults__` for overriding constructor defaults from a
+  config file at subclass creation time.
 
-### FromConfig Sugar
+What this extension adds:
 
-`FromConfig` (and `@from_config`) provide ergonomic class-level constructors
-for code that has a known target class.
-
-```python
-class Pi05(FromConfig):
-    def __init__(self, chunk_size: int = 50, n_action_steps: int = 50) -> None:
-        ...
-```
+- Dataclass argument support (Tier 1 typed configs).
+- Pydantic model argument support.
 
 Usage:
 
 ```python
 Pi05.from_config({"chunk_size": 50})
 Pi05.from_config("pi05.yaml")
-Pi05.from_dict({"class_path": "pkg.Pi05Plus", "init_args": {...}})
-Pi05.from_pydantic(cfg)
-Pi05.from_dataclass(cfg)
+Pi05.from_config(Pi05Config(chunk_size=50))
+Pi05.from_config({"class_path": "Pi05Plus", "init_args": {...}})
 ```
 
-These remain in `library/src/physicalai/config/mixin.py` and are used for
-LeRobot wrappers, `Pi05`, `SmolVLA`, and similar classes. They are convenience,
-not infrastructure: anything they do can also be done by constructing a
-jsonargparse parser explicitly.
+Used by LeRobot wrappers, `Pi05`, `SmolVLA`, and similar policy classes, plus
+any orchestrator that wants a single ergonomic Python entry point.
 
-Their internals may later be reimplemented on top of jsonargparse so the
-project has a single instantiation backend with two surfaces:
+### Checkpoint Serialization
 
-```text
-jsonargparse parser     -> CLI + Trainer.from_config(...)
-FromConfig classmethods -> cls.from_config(...) sugar
-```
+There is no shared `Config` base class. Classes that need checkpoint
+round-tripping (e.g. for torch `load(..., weights_only=True)`) implement their
+own two-line `to_dict` / `from_dict`, or use `dataclasses.asdict` and
+`cls(**data)` directly.
 
-Until then, `instantiate_obj_from_dict` (in `physicalai.config.instantiate`)
-is the shared recursion / dispatch helper.
-
-### Checkpoint Config Helper
-
-The remaining role of `library/src/physicalai/config/base.py::Config` is
-checkpoint serialization for torch `load(..., weights_only=True)`.
+For YAML / dict / dataclass I/O, jsonargparse owns serialization:
 
 ```python
-class Config:
-    def to_dict(self) -> dict[str, Any]: ...
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Self: ...
+cfg = parser.parse_path("training.yaml")
+parser.dump(cfg, "training.reproduced.yaml")
 ```
 
-`to_jsonargparse`, `save`, and `load` are removed. YAML I/O goes through
-jsonargparse (`parser.dump`, `parser.parse_path`). If no class needs the
-checkpoint round trip beyond `dataclasses.asdict` / `cls(**data)`, this base
-can be dropped entirely.
+`parser.dump` correctly handles nested `class_path` / `init_args` shapes that
+`dataclasses.asdict` cannot.
 
 ### Workflow Configs
 
 A workflow config is a user-authored configuration before execution. It is
-expressed in YAML (or an equivalent dict) and parsed by jsonargparse.
+expressed in YAML / dict / dataclass and parsed by jsonargparse.
 
 Training config:
 
 ```yaml
 # training.yaml
-trainer:
-  class_path: physicalai.train.Trainer
-  init_args:
-    max_epochs: 10
-    accelerator: gpu
-    devices: 1
-    callbacks:
-      - class_path: physicalai.train.callbacks.ProgressCallback
-        init_args: {}
+trainer:                              # Tier 0 — concrete Trainer class
+  max_epochs: 10
+  accelerator: gpu
+  devices: 1
+  callbacks:                          # Tier 2 — Callback subclasses
+    - ProgressCallback                # 2a: short name, no init args
+    - class_path: ModelCheckpoint     # 2b: short name + init args
+      init_args:
+        save_top_k: 3
 
-model:
-  class_path: physicalai.policies.pi05.Pi05
+model:                                # Tier 2 — LightningModule subclass
+  class_path: Pi05                    # one of: Pi05, ACT, SmolVLA, Pi0, GR00T, ...
   init_args:
     chunk_size: 50
     n_action_steps: 50
 
-data:
-  class_path: physicalai.data.LeRobotDataModule
+data:                                 # Tier 2 — LightningDataModule subclass
+  class_path: LeRobotDataModule       # one of: LeRobotDataModule, custom modules
   init_args:
     repo_id: physical-ai/example
 ```
+
+Only `trainer` is flat (Tier 0). `model`, `data`, and `callbacks` are
+polymorphic slots and carry `class_path:`. Class names are short — jsonargparse
+resolves them against the typed base class (`LightningModule`,
+`LightningDataModule`, `Callback`) by walking importable subclasses.
 
 Python equivalent (preferred entry point):
 
@@ -232,51 +380,53 @@ Python equivalent (preferred entry point):
 Trainer.from_config("training.yaml").fit()
 ```
 
-Programmatic equivalent (dict form, e.g. from Studio):
+Typed dataclass equivalent (Tier 1):
+
+```python
+config = TrainingConfig(
+    trainer=TrainerConfig(max_epochs=10),
+    model=Pi05Config(chunk_size=50),
+    data=LeRobotDataConfig(repo_id="physical-ai/example"),
+)
+Trainer.from_config(config).fit()
+```
+
+The typed form carries class identity in the Python type system itself
+(`Pi05Config` ↔ `Pi05`); the YAML form carries it in `class_path`. Both reach
+the same parser.
+
+Dict equivalent (e.g. from Studio):
 
 ```python
 Trainer.from_config(
     {
-        "trainer": {
-            "class_path": "physicalai.train.Trainer",
-            "init_args": {"max_epochs": 10, "callbacks": [...]},
-        },
+        "trainer": {"max_epochs": 10},
         "model": {
-            "class_path": "physicalai.policies.pi05.Pi05",
+            "class_path": "Pi05",
             "init_args": {"chunk_size": 50},
         },
         "data": {
-            "class_path": "physicalai.data.LeRobotDataModule",
+            "class_path": "LeRobotDataModule",
             "init_args": {"repo_id": "physical-ai/example"},
         },
     }
 ).fit()
 ```
 
-A typed `TrainingConfig` dataclass may be added later as a Python convenience
-for SDK users, but it is not required by the architecture. The canonical
-representation is the YAML / dict shape that jsonargparse parses.
+All four forms hit the same parser and produce the same instantiated objects.
 
 Runtime config:
 
 ```yaml
 # runtime.yaml
 runtime:
-  class_path: physicalai.runtime.PolicyRuntime
-  init_args:
-    fps: 30
-    robot:
-      class_path: physicalai.robot.so101.SO101
-      init_args:
-        port: /dev/ttyACM0
-    model:
-      class_path: physicalai.inference.InferenceModel
-      init_args:
-        path: ./exports/act_policy
-    execution:
-      class_path: physicalai.runtime.SyncExecution
-      init_args:
-        mode: chunk
+  fps: 30
+  robot:
+    port: /dev/ttyACM0
+  model:
+    path: ./exports/act_policy
+  execution:
+    mode: chunk
 ```
 
 ```python
@@ -289,35 +439,47 @@ Each orchestrator owns its workflow config shape. There is no shared
 ### Manifest
 
 A manifest describes an exported package and lives in
-`physicalai.inference.manifest`. It is the only place `ComponentSpec` is used
-as a public type.
+`physicalai.inference.manifest`.
+
+Today, the manifest uses a custom `ComponentSpec` schema with `type` /
+`class_path` / `init_args` / `artifact` fields. The long-term target (Phase 8)
+is a typed dataclass whose fields use jsonargparse subclass typing, with bare
+short names in YAML:
 
 ```yaml
+# manifest.yaml — Phase 8 target shape
 format: policy_package
 version: "1.0"
 
 policy:
   name: pi05
   source:
-    class_path: physicalai.policies.pi05.Pi05
+    class_path: Pi05
 
 model:
   artifacts:
     openvino: pi05.xml
   runner:
-    type: action_chunking
-    chunk_size: 50
+    class_path: ActionChunkingRunner
+    init_args:
+      chunk_size: 50
   preprocessors:
-    - type: normalize
-      artifact: stats.safetensors
+    - class_path: Normalize
+      init_args:
+        stats_path: stats.safetensors
 
 hardware:
   robots:
-    - name: main
-      type: SO101
+    - class_path: SO101
+      init_args:
+        port: /dev/ttyACM0
 ```
 
-Workflow config and manifest are related but not identical.
+No `type:` field. No dotted paths (unless disambiguation is needed). The same
+parser code instantiates the manifest as instantiates training / runtime
+configs.
+
+Workflow config and manifest remain conceptually distinct:
 
 ```text
 Workflow config
@@ -328,14 +490,81 @@ Manifest
 ```
 
 The manifest can also act as an inference-time config because it already
-contains the necessary `class_path` / registry data:
+contains the necessary class references:
 
 ```python
 model = InferenceModel.from_config("export/manifest.json")
 ```
 
-Schema convergence with workflow configs may happen later. Initially the
-boundary is kept clear: configs express intent, manifests describe artifacts.
+## Parser Construction
+
+A single generic builder produces parsers for all subcommands, mirroring the
+LightningCLI pattern: shared base + per-method customization.
+
+```python
+def _build_parser_base() -> ArgumentParser:
+    """Shared schema: trainer + model + data + callbacks."""
+    parser = ArgumentParser()
+    parser.add_class_arguments(Trainer, "trainer")
+    parser.add_subclass_arguments(LightningModule, "model")
+    parser.add_subclass_arguments(LightningDataModule, "data")
+    return parser
+
+def _build_subcommand_parser(method: str) -> ArgumentParser:
+    """Shared base + method-specific arguments via add_method_arguments."""
+    parser = _build_parser_base()
+    parser.add_method_arguments(Trainer, method, skip=_SKIP_BY_METHOD[method])
+    return parser
+
+def _build_main_parser() -> ArgumentParser:
+    main = ArgumentParser()
+    subs = main.add_subcommands()
+    for method in ("fit", "validate", "test", "predict"):
+        subs.add_subcommand(method, _build_subcommand_parser(method))
+    return main
+```
+
+`Trainer.from_config(source, method="fit")` reuses the same builder:
+
+```python
+@classmethod
+def from_config(cls, source, method: str = "fit") -> "Trainer":
+    parser = _build_subcommand_parser(method)
+    cfg = _parse(parser, source)              # path | dict | dataclass | Namespace
+    instantiated = parser.instantiate(cfg)
+    trainer = instantiated.trainer
+    trainer._configured_model = instantiated.model
+    trainer._configured_datamodule = instantiated.data
+    return trainer
+```
+
+`_parse` dispatches by source type:
+
+```python
+def _parse(parser, source):
+    if isinstance(source, (str, Path)):
+        return parser.parse_path(str(source))
+    if dataclasses.is_dataclass(source) and not isinstance(source, type):
+        return parser.parse_object(dataclasses.asdict(source))
+    if isinstance(source, BaseModel):
+        return parser.parse_object(source.model_dump())
+    if isinstance(source, dict):
+        return parser.parse_object(source)
+    return source                             # already a Namespace
+```
+
+### Per-Distribution Parsers
+
+`physicalai` and `physicalai` ship as two distributions with two main
+parsers. Each follows the same shared-base + per-subcommand pattern.
+
+| Distribution                  | Subcommands                                    | Builder                          |
+| ----------------------------- | ---------------------------------------------- | -------------------------------- |
+| `library` (torch + Lightning) | `fit`, `validate`, `test`, `predict`, `export` | `_build_training_subparser(...)` |
+| `physicalai` (torch-free)     | `run`, `serve`, `infer`, `inspect-manifest`    | `_build_runtime_subparser(...)`  |
+
+Each has its own `_build_parser_base()` because the shared schema differs
+(training: trainer + model + data; runtime: robot + model + execution).
 
 ## End-to-End Pipelines
 
@@ -349,32 +578,27 @@ trainer.fit()
 Internally:
 
 ```python
-parser = _build_fit_parser()       # jsonargparse parser
+parser = _build_subcommand_parser("fit")
 cfg = parser.parse_path("training.yaml")
-instantiated = parser.instantiate_classes(cfg)
-
+instantiated = parser.instantiate(cfg)
 trainer = instantiated.trainer
-model = instantiated.model
-data = instantiated.datamodule
-
-trainer._configured_model = model
-trainer._configured_datamodule = data
+trainer._configured_model = instantiated.model
+trainer._configured_datamodule = instantiated.data
 return trainer
 ```
 
-`fit()` then defaults to the bound `model` / `datamodule` when not given
-explicit arguments.
+`fit()` defaults to the bound `model` / `datamodule` when not given explicit
+arguments.
 
 ### Training From CLI
 
 ```bash
-physicalai-train fit --config training.yaml
-physicalai-train fit \
-  --trainer physicalai.train.Trainer \
+physicalai fit --config training.yaml
+physicalai fit \
   --trainer.max_epochs 10 \
-  --model physicalai.policies.pi05.Pi05 \
+  --model Pi05 \
   --model.chunk_size 50 \
-  --data physicalai.data.LeRobotDataModule \
+  --data LeRobotDataModule \
   --data.repo_id physical-ai/example
 ```
 
@@ -383,8 +607,8 @@ of the training schema.
 
 ### Training From Studio
 
-The application layer converts the API payload to the dict shape
-`Trainer.from_config` accepts.
+The application layer converts the API payload to the form
+`Trainer.from_config` accepts (dict, or a typed `TrainingConfig` if available).
 
 ```python
 def handle_train_job(payload: TrainJobPayload) -> None:
@@ -397,8 +621,8 @@ trainer if the library can own that orchestration.
 
 ```text
 Studio payload
-    -> application mapper (dict)
-    -> Trainer.from_config(dict)
+    -> application mapper (dict or TrainingConfig)
+    -> Trainer.from_config(...)
     -> Trainer.fit
 ```
 
@@ -426,8 +650,8 @@ Trainer.from_config("training.yaml").to_config()
 # returns full training config (trainer + model + data)
 ```
 
-The serialized output uses the same jsonargparse-compatible
-`class_path` / `init_args` shape as the input YAML.
+The serialized output uses the same shape as the input — flat for Tier 0 / 1
+classes, `class_path` / `init_args` for Tier 2 selections.
 
 ### Inference From Manifest
 
@@ -436,7 +660,7 @@ model = InferenceModel.from_config("export/manifest.json")
 action = model.select_action(observation)
 ```
 
-Internal shape:
+Before Phase 8 (current state):
 
 ```python
 manifest = Manifest.load("export/manifest.json")
@@ -452,8 +676,17 @@ model = InferenceModel(
 )
 ```
 
-`instantiate_component` (already in `physicalai.inference.component_factory`)
-handles registry mode (`type: ...`) and direct class mode (`class_path: ...`).
+After Phase 8 (target state):
+
+```python
+parser = _build_inference_parser()
+cfg = parser.parse_path("export/manifest.json")
+instantiated = parser.instantiate(cfg)
+model = InferenceModel(**instantiated.model.as_dict())
+```
+
+`ComponentSpec`, `instantiate_component`, and `ComponentRegistry` are deleted.
+Manifest YAML uses jsonargparse-native subclass typing with bare short names.
 
 ### Robot Runtime From YAML
 
@@ -469,21 +702,21 @@ physicalai run --config runtime.yaml --duration-s 60
 
 ### FromConfig
 
-`FromConfig` is class-level construction sugar.
+`FromConfig` is class-level construction sugar (extends
+`jsonargparse.FromConfigMixin`).
 
 ```python
-class FromConfig:
+class FromConfig(jsonargparse.FromConfigMixin):
     @classmethod
     def from_config(cls, config) -> Self: ...
-    @classmethod
-    def from_yaml(cls, path) -> Self: ...
-    @classmethod
-    def from_dict(cls, data) -> Self: ...
-    @classmethod
-    def from_pydantic(cls, cfg) -> Self: ...
-    @classmethod
-    def from_dataclass(cls, cfg) -> Self: ...
 ```
+
+Accepted `config` types:
+
+- `str | PathLike` — YAML / JSON config file path.
+- `dict` — already-parsed config dict.
+- `dataclass instance` — Tier 1 typed config.
+- `pydantic.BaseModel` — Tier 1 typed config.
 
 Used by:
 
@@ -491,20 +724,8 @@ Used by:
 - `Pi05`, `SmolVLA`, and similar policy classes.
 - Any orchestrator that wants a single ergonomic Python entry point.
 
-Orchestrators may override `from_config` to bind subcomponents:
-
-```python
-class Trainer(FromConfig):
-    @classmethod
-    def from_config(cls, config) -> "Trainer":
-        parser = _build_fit_parser()
-        cfg = _parse(parser, config)            # path / dict / Namespace
-        instantiated = parser.instantiate_classes(cfg)
-        trainer = instantiated.trainer
-        trainer._configured_model = instantiated.model
-        trainer._configured_datamodule = instantiated.datamodule
-        return trainer
-```
+Orchestrators override `from_config` to bind subcomponents through the shared
+parser (see [Parser Construction](#parser-construction)).
 
 `fit()` remains the public execution API:
 
@@ -533,21 +754,21 @@ produces a manifest, not a workflow config.
 policy.export("export/", backend="openvino")
 ```
 
-### Instantiation Helpers
+### Instantiation
 
-`physicalai.config` exposes:
+There is no custom `instantiate_obj` / `instantiate_obj_from_dict` helper.
+Programmatic instantiation goes through one of two paths:
+
+1. **Class-targeted** — `cls.from_config(config)` for code that knows the
+   target class.
+2. **Parser-driven** — `parser.parse_object(data); parser.instantiate(cfg)` for
+   code that builds a multi-component workflow.
+
+Both paths use jsonargparse internally. `physicalai.config` re-exports:
 
 ```python
-from physicalai.config import (
-    FromConfig,
-    from_config,           # decorator form
-    instantiate_obj,       # programmatic single object
-)
+from physicalai.config import FromConfig
 ```
-
-These wrap jsonargparse / `instantiate_obj_from_dict`. Users with a known
-target class can stay inside this surface; users authoring full workflows
-should go through the orchestrator's `from_config`.
 
 ## CLI Parity
 
@@ -573,7 +794,7 @@ physicalai
   serve
   inspect-manifest
 
-physicalai-train (library distribution)
+physicalai (library distribution)
   fit
   validate
   test
@@ -598,114 +819,163 @@ fit = "physicalai.train.cli:register_fit"
 ```text
 physicalai/                                    (torch-free)
   config/
-    FromConfig
-    from_config (decorator)
-    instantiate_obj
-    instantiate_obj_from_dict
+    FromConfig                  (extends jsonargparse.FromConfigMixin)
   inference/
-    manifest.py            (ComponentSpec, Manifest)
-    component_factory.py   (instantiate_component)
+    manifest.py                 (ComponentSpec, Manifest — until Phase 8)
+    component_factory.py        (instantiate_component — until Phase 8)
     InferenceModel
   runtime/
     PolicyRuntime
-  cli/                     (jsonargparse-based)
+  cli/                          (jsonargparse-based)
 
 library/                                       (torch + Lightning)
   config/
-    base.py                (Config: to_dict/from_dict for checkpoints)
-    instantiate.py
-    mixin.py               (FromConfig re-export / training-side helpers)
+    mixin.py                    (FromConfig re-export)
   train/
     Trainer
-    cli.py                 (jsonargparse fit/validate/test/predict)
+    parser.py                   (_build_parser_base, _build_subcommand_parser)
+    cli.py                      (jsonargparse fit/validate/test/predict)
   export/
     manifest builders
 ```
 
-`ComponentSpec` stays in `physicalai.inference.manifest`. It is not re-exported
-from `physicalai.config`.
+Note: `library/src/physicalai/config/base.py` is **removed** in Phase 1. There
+is no shared `Config` base class on the library side.
 
 ## Design Rules
 
-1. Constructor signatures (with dataclass / Pydantic args) are the schema.
-2. jsonargparse is the parsing + instantiation backbone for YAML, CLI, and
-   dict inputs.
-3. `FromConfig` and `@from_config` are Python convenience for known target
-   classes.
-4. Orchestrators (`Trainer`, `PolicyRuntime`, `InferenceModel`) own
+1. Constructor signatures are the schema. Typed config dataclasses are optional
+   ergonomic wrappers, not a requirement.
+2. jsonargparse is the parsing + instantiation backbone for YAML, CLI, dict,
+   and dataclass inputs.
+3. A single generic parser builder (`_build_parser_base` +
+   `_build_subcommand_parser(method)`) feeds every subcommand. No per-method
+   bespoke parsers.
+4. `FromConfig` extends `jsonargparse.FromConfigMixin`. No parallel
+   instantiation backend.
+5. Orchestrators (`Trainer`, `PolicyRuntime`, `InferenceModel`) own
    `from_config(...)` and `to_config()`.
-5. Workflow YAML uses jsonargparse subclass syntax (`class_path` /
-   `init_args`).
-6. `ComponentSpec` is internal to `Manifest`. Do not promote it as a public
-   training / runtime config primitive.
-7. `Config` base (library side) is checkpoint-only or removed.
-8. Keep torch and Lightning out of the `physicalai` runtime package.
-9. Inbound config is generic; outbound config is explicit.
-10. Application payload translation lives in the application layer; reusable
+6. Polymorphic slots (`model`, `data`, `callbacks`, `runner`, `preprocessors`,
+   `postprocessors`, `robots`, `cameras`) carry `class_path:` (Tier 2). Flat
+   YAML applies only to slots bound to a single concrete class (`trainer`).
+   Short names are used in `class_path`; dotted paths are reserved for
+   disambiguation.
+7. No custom `instantiate_obj` / `instantiate_obj_from_dict`. Programmatic
+   instantiation goes through `cls.from_config(...)` or a jsonargparse parser.
+8. There is no shared `Config` base class. Per-class checkpoint serialization is
+   handled with two-line `to_dict` / `from_dict` or `dataclasses.asdict` +
+   `cls(**data)`.
+9. Keep torch and Lightning out of the `physicalai` runtime package.
+10. Inbound config is generic; outbound config is explicit.
+11. Application payload translation lives in the application layer; reusable
     workflow logic lives in the library / runtime layer.
+12. Built-in subclasses of base-typed slots (models, runners, preprocessors,
+    callbacks, robots) are imported eagerly from their package `__init__.py`
+    so jsonargparse short-name resolution works without user setup.
 
 ## Migration Plan
 
-### Phase 1: Shrink `Config` Base
+### Phase 1: Adopt `jsonargparse.FromConfigMixin`; Delete `Config` Base
 
-- Remove `to_jsonargparse`, `save`, `load` from
-  `library/src/physicalai/config/base.py`.
-- Keep `to_dict` / `from_dict` only if needed for checkpoint round-tripping;
-  otherwise drop the class entirely.
-- Update `library/tests/unit/config/test_config.py` to drop tests for removed
-  methods.
+- Reimplement `library/src/physicalai/config/mixin.py::FromConfig` as a thin
+  extension of `jsonargparse.FromConfigMixin` that adds dataclass / Pydantic
+  adapters.
+- Delete `library/src/physicalai/config/base.py` (`Config` class).
+- For any class that still needs checkpoint round-tripping, inline a two-line
+  `to_dict` / `from_dict` on that class, or use `dataclasses.asdict` +
+  `cls(**data)`.
+- Remove `Config` from `physicalai.config.__init__` re-exports.
+- Delete `library/tests/unit/config/test_config.py` (covers the removed base).
 
-### Phase 2: `Trainer.from_config` / `to_config`
+### Phase 2: Delete Custom Instantiation Helpers
 
-- Implement `_build_fit_parser()` in `library/src/physicalai/train/trainer.py`
-  using jsonargparse, exposing `trainer`, `model`, `datamodule`.
-- Implement `Trainer.from_config(source: str | Path | dict)` wrapping that
-  parser.
+- Delete `library/src/physicalai/config/instantiate.py`
+  (`instantiate_obj`, `instantiate_obj_from_dict`).
+- Migrate any remaining callers to `cls.from_config(...)` or a direct
+  jsonargparse parser call.
+- Remove these symbols from `physicalai.config.__init__`.
+
+### Phase 3: Generic Parser Builder + `Trainer.from_config` / `to_config`
+
+- Implement `_build_parser_base()` and `_build_subcommand_parser(method)` in
+  `library/src/physicalai/train/parser.py` using jsonargparse.
+- Implement `Trainer.from_config(source, method="fit")` accepting path / dict /
+  dataclass / Pydantic / Namespace.
 - Implement `Trainer.to_config()` returning the highest-level reproducible
   config: full workflow when `from_config` constructed it, trainer-only
   otherwise.
 - `fit()` defaults to bound `model` / `datamodule` when none is passed.
 
-### Phase 3: Studio Integration
+### Phase 4: YAML Migration For Existing Configs
 
-- Add `studio_payload_to_training_config(payload) -> dict` mapper in the
-  application layer (or `TrainingConfig.from_studio_payload(...)` if a typed
-  dataclass is introduced).
+- Convert `library/configs/*.yaml` (training, benchmark) to the canonical
+  shape:
+  - Flat (Tier 0) for `trainer`.
+  - Tier 2 with short-name `class_path:` for `model`, `data`, `callbacks`,
+    and any other polymorphic slot.
+  - Drop dotted paths; rely on short-name resolution against the typed base
+    class.
+
+### Phase 5: Studio Integration
+
+- Decide between dict mapper (`studio_payload_to_training_config`) and typed
+  mapper (Tier 1 `TrainingConfig`). Implement chosen path in the application
+  layer.
 - Refactor `application/backend/src/workers/training_worker.py` to call
   `Trainer.from_config(config).fit()`.
 
-### Phase 4: CLI
+### Phase 6: CLI
 
 - Add jsonargparse-based CLI entry points in `physicalai/`
-  (`run`, `serve`, `infer`, `inspect-manifest`).
-- Add `physicalai-train` CLI in `library/`
+  (`run`, `serve`, `infer`, `inspect-manifest`) using
+  `_build_runtime_subparser(method)`.
+- Add `physicalai` CLI in `library/`
   (`fit`, `validate`, `test`, `predict`, `export`) sharing the parsers used by
   `Trainer.from_config`.
 
-### Phase 5: Runtime / Inference Configs
+### Phase 7: Runtime / Inference `from_config`
 
 - Implement `PolicyRuntime.from_config(...)` and
   `InferenceModel.from_config(...)` using the same jsonargparse pattern.
-- Confirm `Manifest` can be loaded directly by `InferenceModel.from_config`.
+- Confirm `Manifest` can be loaded directly by `InferenceModel.from_config`
+  (still going through `ComponentSpec` at this stage).
 
-### Phase 6: Optional Typed Workflow Configs
+### Phase 8: Delete `ComponentSpec`; Unify Manifest Schema
 
-- Introduce typed `TrainingConfig` / `RuntimeConfig` / `InferenceConfig`
-  dataclasses only when programmatic SDK ergonomics or Studio mapping require
-  them.
-- These wrap the same jsonargparse parser; YAML / dict remains canonical.
+Deferred. Requires a versioned manifest schema bump (manifests are an exported
+artifact format).
+
+- Replace `Manifest` / `ComponentSpec` with typed dataclasses whose
+  runner / preprocessor / postprocessor / robot fields are typed by their base
+  class (e.g. `runner: ActionRunner`, `preprocessors: list[Preprocessor]`).
+- Manifest YAML uses jsonargparse-native subclass syntax with bare short names
+  (`class_path: ActionChunkingRunner`, no dotted path, no `type:` field).
+- Delete `ComponentSpec`, `instantiate_component`, `ComponentRegistry`.
+- `InferenceModel.from_config` loads manifests via `parser.instantiate`.
+- Ensure built-in runners / preprocessors / postprocessors / robots are
+  imported eagerly from their package `__init__.py` so short-name resolution
+  succeeds.
+- Document the manifest schema version bump and provide a migration path for
+  existing exported packages.
+
+### Phase 9 (optional): Typed Workflow Configs (Tier 1)
+
+- Add per-class config dataclasses (`Pi05Config`, `ACTConfig`,
+  `LeRobotDataConfig`, `TrainerConfig`) and aggregate `TrainingConfig` /
+  `RuntimeConfig` / `InferenceConfig` where the public SDK or Studio benefits
+  from typed Python construction.
+- These wrap the same jsonargparse parser; YAML / dict / dataclass forms all
+  remain valid.
 
 ## Open Questions
 
-- Does any existing class need `Config.to_dict` / `from_dict` for checkpoint
-  round-tripping, or can `Config` be removed entirely?
-- Should `FromConfig` internals be reimplemented on top of jsonargparse so
-  there is one instantiation backend, or stay on `instantiate_obj_from_dict`?
 - Should `Trainer.to_config()` return a typed dataclass or the raw
   jsonargparse-compatible dict?
 - Where does `studio_payload_to_training_config` live: application layer only,
   or as a `Trainer.from_studio_payload(...)` classmethod in the library?
-
-The conservative default is: jsonargparse + dataclasses as the backbone,
-`FromConfig` as convenience, `ComponentSpec` scoped to `Manifest`, and typed
-workflow configs introduced only when a concrete need appears.
+- Which classes warrant Tier 1 typed configs from day one
+  (recommendation: every public policy + `Trainer` + datamodules used by
+  Studio)?
+- For Phase 8: should the manifest schema version bump be coordinated with a
+  broader exported-package format change, or shipped as a standalone breaking
+  change?
