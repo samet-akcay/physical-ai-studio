@@ -72,22 +72,6 @@ else:
 
 _WARNED_UNSUPPORTED_NAMES: set[str] = set()
 
-_TORCH_DTYPE_ALIASES: dict[str, torch.dtype] = {
-    "float32": torch.float32,
-    "float16": torch.float16,
-    "bfloat16": torch.bfloat16,
-}
-
-
-def _parse_policy_dtype(dtype_value: str | torch.dtype) -> torch.dtype:
-    if isinstance(dtype_value, torch.dtype):
-        return dtype_value
-    if dtype_value not in _TORCH_DTYPE_ALIASES:
-        msg = f"Unsupported policy dtype {dtype_value!r}; expected one of {sorted(_TORCH_DTYPE_ALIASES)}"
-        raise ValueError(msg)
-    return _TORCH_DTYPE_ALIASES[dtype_value]
-
-
 def _coerce_policy_config_kwargs(
     policy_name: str,
     policy_config: dict[str, Any],
@@ -115,7 +99,18 @@ def _coerce_policy_config_kwargs(
         elif "model_dtype" in field_names:
             coerced["model_dtype"] = dtype_value
         else:
-            module_cast = _parse_policy_dtype(dtype_value)
+            if isinstance(dtype_value, torch.dtype):
+                module_cast = dtype_value
+            else:
+                dtype_aliases = {
+                    "float32": torch.float32,
+                    "float16": torch.float16,
+                    "bfloat16": torch.bfloat16,
+                }
+                if dtype_value not in dtype_aliases:
+                    msg = f"Unsupported policy dtype {dtype_value!r}; expected one of {sorted(dtype_aliases)}"
+                    raise ValueError(msg)
+                module_cast = dtype_aliases[dtype_value]
 
     return coerced, module_cast
 

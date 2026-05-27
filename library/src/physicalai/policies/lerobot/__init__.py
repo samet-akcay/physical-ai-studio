@@ -11,12 +11,12 @@ rather than hand-mirrored constructor kwargs.
 
 Two access tiers:
 
-- **Named wrappers** (the nine in :data:`SUPPORTED_POLICIES`) get one-line
+- **Named wrappers** (:data:`SUPPORTED_POLICIES`) get one-line
   factory classes for ergonomic use. The subset listed in
   :data:`VALIDATED_EQUIVALENCE_POLICIES` carries a hard equivalence guarantee
-  enforced by the test suite; the remainder (currently ``groot``, ``xvla``)
-  are named for API parity but cannot be validated end-to-end yet (see the
-  ``Known limitations`` section in their alias docstrings).
+  enforced by the test suite; the remainder (currently ``groot``,
+  ``molmoact2``, ``xvla``) are named for API parity but are not part of that
+  generic wrapper-vs-native equivalence set.
 - **Universal escape hatch** — :class:`LeRobotPolicy` accepts any
   ``policy_name`` that LeRobot's ``PreTrainedConfig`` registry knows
   (``vqbet``, ``tdmpc``, ``sac``, …). These work best-effort: a one-time
@@ -125,10 +125,9 @@ Membership implies a hard guarantee: any wrapper change that breaks equivalence
 must show up as a failing test in ``library/tests/unit/policies/test_lerobot.py``
 or ``library/tests/integration/test_lerobot_wrapper_equivalence.py``.
 
-Policies in :data:`SUPPORTED_POLICIES` but not here (``groot``, ``molmoact2``, ``xvla``) are
-named for API ergonomics but cannot currently be validated end-to-end — see the
-``Known limitations`` section in their alias docstrings and the
-``_EQUIVALENCE_XFAIL_REASONS`` table in the integration test for details.
+Policies in :data:`SUPPORTED_POLICIES` but not here (``groot``, ``molmoact2``,
+``xvla``) are named for API ergonomics but are not covered by the generic
+wrapper-vs-native equivalence suite. They still require targeted validation.
 """
 
 _NAMED_WRAPPERS: tuple[type[NamedLeRobotPolicy], ...] = (

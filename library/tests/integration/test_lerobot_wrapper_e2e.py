@@ -72,10 +72,8 @@ def _policy_param(policy_name: str) -> Any:
 def _get_policy_kwargs(policy_name: str) -> dict[str, Any]:
     """Kwargs for ``from_dataset`` in this export round-trip test only.
 
-    Production deployment (e.g. MolmoAct2 SO-101 dry-run) uses explicit
-    ``PreTrainedConfig`` / ``from_pretrained`` instead. These overrides exist
-    because this test builds randomly initialized or scaffold policies from
-    dataset metadata, not tuned Hub checkpoints.
+    These overrides exist because this test builds scaffold policies from
+    dataset metadata rather than loading tuned checkpoints.
     """
     if policy_name == "diffusion":
         return {"num_train_timesteps": 10, "num_inference_steps": 5}
@@ -89,7 +87,6 @@ def _get_policy_kwargs(policy_name: str) -> dict[str, Any]:
     if policy_name == "molmoact2":
         return {
             "dtype": "bfloat16",
-            # Match portable torch export (see molmoact2_dry_run.py); not LeRobot defaults.
             "enable_inference_cuda_graph": False,
             "inference_action_mode": "continuous",
         }
@@ -159,7 +156,7 @@ def test_lerobot_wrapper_torch_export_roundtrip(
     export_dir = tmp_path / f"{policy_name}_torch"
     wrapper.export(export_dir, backend="torch")
 
-    assert (export_dir / "metadata.yaml").exists()
+    assert (export_dir / "manifest.json").exists()
     assert any(export_dir.glob("*.pt"))
 
     inference_model = InferenceModel.load(export_dir, device="cuda" if torch.cuda.is_available() else "cpu")
