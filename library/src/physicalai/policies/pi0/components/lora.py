@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -49,4 +49,4 @@ def apply_lora(
         target_modules=list(target_modules),
         bias="none",
     )
-    return cast("nn.Module", get_peft_model(cast("Any", model), lora_config))
+    return get_peft_model(model, lora_config)  # pyrefly: ignore[bad-argument-type]
