@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from unittest.mock import patch
 
 import torch
@@ -15,15 +16,15 @@ from physicalai.policies.lerobot import MolmoAct2, get_lerobot_policy
 from physicalai.policies.lerobot.policy import NamedLeRobotPolicy
 
 
+@dataclass
 class DummyMolmoAct2Config:
-    """Minimal stand-in for LeRobot's MolmoAct2Config."""
+    """Minimal stand-in for LeRobot's MolmoAct2Config (dataclass shape for from_config)."""
 
-    type = "molmoact2"
-
-    def __init__(self, **kwargs: object) -> None:
-        self.kwargs = kwargs
-        self.checkpoint_path = kwargs.get("checkpoint_path", "")
-        self.norm_tag = kwargs.get("norm_tag")
+    checkpoint_path: str = ""
+    norm_tag: str | None = None
+    input_features: dict = field(default_factory=dict)
+    output_features: dict = field(default_factory=dict)
+    type: str = "molmoact2"
 
     def get_optimizer_preset(self):  # noqa: ANN201, PLR6301
         class _Preset:
@@ -63,8 +64,8 @@ def test_get_lerobot_policy_returns_molmoact2_wrapper() -> None:
     assert policy.config is None
 
 
-def test_direct_construction_with_config_initializes_wrapper() -> None:
-    """MolmoAct2(config=...) goes through the standard NamedLeRobotPolicy path."""
+def test_from_config_initializes_wrapper() -> None:
+    """MolmoAct2.from_config(MolmoAct2Config(...)) is the deployment entry point."""
     with (
         patch("physicalai.policies.lerobot.policy.get_policy_class", return_value=DummyMolmoAct2Policy),
         patch(
@@ -77,7 +78,7 @@ def test_direct_construction_with_config_initializes_wrapper() -> None:
             checkpoint_path="allenai/MolmoAct2-SO100_101",
             norm_tag="so100_so101_molmoact2",
         )
-        policy = MolmoAct2(config=config)
+        policy = MolmoAct2.from_config(config)
 
     assert policy.policy_name == "molmoact2"
     assert policy.config is config

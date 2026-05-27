@@ -309,11 +309,8 @@ class TestNamedLeRobotPolicy:
         spec = importlib.util.spec_from_file_location("_lerobot_eq_module", integration_test)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        overlap = set(VALIDATED_EQUIVALENCE_POLICIES) & set(module._EQUIVALENCE_XFAIL_REASONS)
-        assert not overlap, (
-            f"Policies cannot be both VALIDATED and XFAIL: {sorted(overlap)}. "
-            "Either remove from _EQUIVALENCE_XFAIL_REASONS (fix the limitation) "
-            "or remove from VALIDATED_EQUIVALENCE_POLICIES (downgrade the guarantee)."
+        assert set(module.EQUIVALENCE_POLICY_PARAMS) == set(VALIDATED_EQUIVALENCE_POLICIES), (
+            "Integration equivalence suite must track VALIDATED_EQUIVALENCE_POLICIES exactly."
         )
 
     @pytest.mark.parametrize(
@@ -1486,3 +1483,28 @@ class TestMultiStepTrainingTrajectory:
                 atol=1e-6,
                 msg=f"Parameter '{name}' diverged after {self.NUM_STEPS} training steps",
             )
+
+
+class TestCoercePolicyConfigKwargs:
+    """Tests for VLA ``dtype`` convenience mapping in LeRobotPolicy."""
+
+    def test_pi0_keeps_dtype_kwarg(self) -> None:
+        from physicalai.policies.lerobot.policy import _coerce_policy_config_kwargs
+
+        coerced, cast = _coerce_policy_config_kwargs("pi0", {"dtype": "bfloat16", "chunk_size": 10})
+        assert coerced == {"dtype": "bfloat16", "chunk_size": 10}
+        assert cast is None
+
+    def test_molmoact2_maps_dtype_to_model_dtype(self) -> None:
+        from physicalai.policies.lerobot.policy import _coerce_policy_config_kwargs
+
+        coerced, cast = _coerce_policy_config_kwargs("molmoact2", {"dtype": "bfloat16"})
+        assert coerced == {"model_dtype": "bfloat16"}
+        assert cast is None
+
+    def test_smolvla_casts_dtype_to_module(self) -> None:
+        from physicalai.policies.lerobot.policy import _coerce_policy_config_kwargs
+
+        coerced, cast = _coerce_policy_config_kwargs("smolvla", {"dtype": "bfloat16"})
+        assert coerced == {}
+        assert cast is torch.bfloat16

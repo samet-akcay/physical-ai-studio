@@ -57,7 +57,7 @@ def export_model(export_dir: Path) -> None:
         input_features={"observation.state": PolicyFeature(type=FeatureType.STATE, shape=(6,))},
         output_features={"action": PolicyFeature(type=FeatureType.ACTION, shape=(6,))},
     )
-    policy = MolmoAct2(config=config)
+    policy = MolmoAct2.from_config(config)
     policy = policy.to(dtype=torch.bfloat16)
 
     export_dir.mkdir(parents=True, exist_ok=True)

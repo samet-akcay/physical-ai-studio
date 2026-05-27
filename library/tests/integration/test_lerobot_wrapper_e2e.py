@@ -58,7 +58,6 @@ _VLA_POLICIES = {"pi0", "pi05", "pi0_fast", "groot", "smolvla", "molmoact2", "xv
 
 _E2E_XFAIL_REASONS: dict[str, str] = {
     "groot": "hardcodes flash_attention_2 in eagle2_hg_model (upstream lerobot)",
-    "molmoact2": "requires explicit MolmoAct2Config(checkpoint_path=...) not derivable from dataset",
     "xvla": "requires explicit vision_config kwarg not derivable from dataset",
 }
 
@@ -71,6 +70,13 @@ def _policy_param(policy_name: str) -> Any:
 
 
 def _get_policy_kwargs(policy_name: str) -> dict[str, Any]:
+    """Kwargs for ``from_dataset`` in this export round-trip test only.
+
+    Production deployment (e.g. MolmoAct2 SO-101 dry-run) uses explicit
+    ``PreTrainedConfig`` / ``from_pretrained`` instead. These overrides exist
+    because this test builds randomly initialized or scaffold policies from
+    dataset metadata, not tuned Hub checkpoints.
+    """
     if policy_name == "diffusion":
         return {"num_train_timesteps": 10, "num_inference_steps": 5}
     if policy_name == "groot":
@@ -79,6 +85,19 @@ def _get_policy_kwargs(policy_name: str) -> dict[str, Any]:
             "tune_visual": False,
             "tune_projector": True,
             "tune_diffusion_model": False,
+        }
+    if policy_name == "molmoact2":
+        return {
+            "dtype": "bfloat16",
+            # Match portable torch export (see molmoact2_dry_run.py); not LeRobot defaults.
+            "enable_inference_cuda_graph": False,
+            "inference_action_mode": "continuous",
+        }
+    if policy_name == "pi0_fast":
+        return {
+            "dtype": "bfloat16",
+            # Random-init from_dataset cannot emit valid FAST "Action:" tokens.
+            "validate_action_token_prefix": False,
         }
     if policy_name in _VLA_POLICIES:
         return {"dtype": "bfloat16"}

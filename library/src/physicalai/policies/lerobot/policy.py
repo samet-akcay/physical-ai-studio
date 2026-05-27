@@ -18,6 +18,7 @@ in configs.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import warnings
 from pathlib import Path
@@ -70,6 +71,53 @@ else:
 
 
 _WARNED_UNSUPPORTED_NAMES: set[str] = set()
+
+_TORCH_DTYPE_ALIASES: dict[str, torch.dtype] = {
+    "float32": torch.float32,
+    "float16": torch.float16,
+    "bfloat16": torch.bfloat16,
+}
+
+
+def _parse_policy_dtype(dtype_value: str | torch.dtype) -> torch.dtype:
+    if isinstance(dtype_value, torch.dtype):
+        return dtype_value
+    if dtype_value not in _TORCH_DTYPE_ALIASES:
+        msg = f"Unsupported policy dtype {dtype_value!r}; expected one of {sorted(_TORCH_DTYPE_ALIASES)}"
+        raise ValueError(msg)
+    return _TORCH_DTYPE_ALIASES[dtype_value]
+
+
+def _coerce_policy_config_kwargs(
+    policy_name: str,
+    policy_config: dict[str, Any],
+) -> tuple[dict[str, Any], torch.dtype | None]:
+    """Map physical-ai conveniences (``dtype``) to LeRobot config field names.
+
+    Training configs and integration tests often pass ``dtype="bfloat16"`` for
+    VLA policies. LeRobot configs name this field differently (``dtype`` on
+    pi0/pi05, ``model_dtype`` on MolmoAct2) or omit it entirely (SmolVLA).
+    When the target config has no matching field, the dtype is applied to the
+    underlying ``nn.Module`` after construction instead.
+    """
+    if not LEROBOT_AVAILABLE or get_policy_class is None:
+        return policy_config, None
+
+    config_cls = get_policy_class(policy_name).config_class  # type: ignore[attr-defined]
+    field_names = {field.name for field in dataclasses.fields(config_cls)}
+    coerced = dict(policy_config)
+    module_cast: torch.dtype | None = None
+
+    if "dtype" in coerced:
+        dtype_value = coerced.pop("dtype")
+        if "dtype" in field_names:
+            coerced["dtype"] = dtype_value
+        elif "model_dtype" in field_names:
+            coerced["model_dtype"] = dtype_value
+        else:
+            module_cast = _parse_policy_dtype(dtype_value)
+
+    return coerced, module_cast
 
 
 def _warn_if_unsupported_policy(policy_name: str) -> None:
@@ -637,6 +685,10 @@ class LeRobotPolicy(ExportablePolicyMixin, LeRobotFromConfig, Policy):
             # Remove dataset_stats from policy_config if present
             # (it should be passed to policy constructor, not config)
             clean_policy_config = {k: v for k, v in self._policy_config.items() if k != "dataset_stats"}
+            clean_policy_config, module_cast_dtype = _coerce_policy_config_kwargs(
+                self.policy_name,
+                clean_policy_config,
+            )
 
             # Create config dynamically using LeRobot's factory
             config = make_policy_config(
@@ -645,12 +697,16 @@ class LeRobotPolicy(ExportablePolicyMixin, LeRobotFromConfig, Policy):
                 output_features=output_features,
                 **clean_policy_config,
             )
+        else:
+            module_cast_dtype = None
 
         # Get the policy class dynamically
         policy_cls = get_policy_class(self.policy_name)
 
         # Instantiate the LeRobot policy
         policy = policy_cls(config)
+        if module_cast_dtype is not None:
+            policy = policy.to(dtype=module_cast_dtype)
         self.add_module("_lerobot_policy", policy)
 
         # Create preprocessor/postprocessor for normalization
