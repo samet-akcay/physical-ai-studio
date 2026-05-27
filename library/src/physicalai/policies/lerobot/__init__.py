@@ -14,7 +14,6 @@ Installation:
         pip install physicalai-train[lerobot]
 
 Examples:
-
     Load a named wrapper from the HuggingFace Hub::
 
         >>> from physicalai.policies.lerobot import ACT

@@ -6,14 +6,15 @@
 from __future__ import annotations
 
 import importlib
+from contextlib import suppress
 
 from physicalai.policies.lerobot.policy import NamedLeRobotPolicy
 
-try:
+with suppress(ImportError):
     importlib.import_module("lerobot.policies.molmoact2.configuration_molmoact2")
-except ImportError:
-    pass
 
 
 class MolmoAct2(NamedLeRobotPolicy):
+    """Named LeRobot wrapper for MolmoAct2."""
+
     POLICY_NAME = "molmoact2"

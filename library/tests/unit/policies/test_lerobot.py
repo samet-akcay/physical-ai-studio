@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import pathlib
 import tempfile
+from dataclasses import dataclass
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 import torch
@@ -1544,7 +1546,19 @@ class TestCoercePolicyConfigKwargs:
     def test_molmoact2_maps_dtype_to_model_dtype(self) -> None:
         from physicalai.policies.lerobot.policy import _coerce_policy_config_kwargs
 
-        coerced, cast = _coerce_policy_config_kwargs("molmoact2", {"dtype": "bfloat16"})
+        @dataclass
+        class DummyMolmoAct2Config:
+            model_dtype: str = "float32"
+
+        class DummyMolmoAct2Policy:
+            config_class = DummyMolmoAct2Config
+
+        with patch(
+            "physicalai.policies.lerobot.policy.get_policy_class",
+            return_value=DummyMolmoAct2Policy,
+        ):
+            coerced, cast = _coerce_policy_config_kwargs("molmoact2", {"dtype": "bfloat16"})
+
         assert coerced == {"model_dtype": "bfloat16"}
         assert cast is None
 

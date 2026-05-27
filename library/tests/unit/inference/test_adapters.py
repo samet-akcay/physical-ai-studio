@@ -168,11 +168,13 @@ class TestTorchAdapter:
 
     def test_load_rejects_non_policy_class(self, tmp_path: Path) -> None:
         """Test adapter rejects metadata without checkpoint-loading interface."""
-        model_path = tmp_path / "model.pt"
-        metadata_path = tmp_path / "metadata.yaml"
-        model_path.touch()
-        with metadata_path.open("w") as f:
-            f.write("policy_class: builtins.dict\n")
+        model_path = self._write_policy_manifest(tmp_path)
+        manifest_path = tmp_path / "manifest.json"
+        with manifest_path.open() as f:
+            manifest = json.load(f)
+        manifest["policy"]["source"]["class_path"] = "builtins.dict"
+        with manifest_path.open("w") as f:
+            json.dump(manifest, f)
 
         adapter = TorchAdapter()
         with pytest.raises(RuntimeError, match="does not define callable load_from_checkpoint"):
@@ -180,11 +182,7 @@ class TestTorchAdapter:
 
     def test_load_accepts_class_with_checkpoint_loader(self, tmp_path: Path) -> None:
         """Test interface validation accepts classes with load_from_checkpoint."""
-        model_path = tmp_path / "model.pt"
-        metadata_path = tmp_path / "metadata.yaml"
-        model_path.touch()
-        with metadata_path.open("w") as f:
-            f.write("policy_class: physicalai.policies.act.ACT\n")
+        model_path = self._write_policy_manifest(tmp_path)
 
         mock_model = MagicMock()
         mock_model.return_value = torch.tensor([[1.0, 2.0]])

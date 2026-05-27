@@ -22,7 +22,7 @@ from __future__ import annotations
 from physicalai.policies.lerobot.molmoact2 import MolmoAct2
 from physicalai.policies.lerobot.policy import NamedLeRobotPolicy
 
-__all__ = ["ACT", "Diffusion", "Groot", "MolmoAct2", "PI0", "PI05", "PI0Fast", "SmolVLA", "XVLA"]
+__all__ = ["ACT", "PI0", "PI05", "XVLA", "Diffusion", "Groot", "MolmoAct2", "PI0Fast", "SmolVLA"]
 
 
 class ACT(NamedLeRobotPolicy):

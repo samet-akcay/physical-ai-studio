@@ -19,6 +19,7 @@ in configs.
 from __future__ import annotations
 
 import dataclasses
+import importlib
 import logging
 import warnings
 from pathlib import Path
@@ -50,10 +51,6 @@ if TYPE_CHECKING:
 if TYPE_CHECKING or module_available("lerobot"):
     from lerobot.configs.policies import PreTrainedConfig
     from lerobot.configs.types import FeatureType
-    try:
-        from lerobot.utils.feature_utils import dataset_to_policy_features
-    except ImportError:  # pragma: no cover - lerobot <0.5.2 fallback
-        from lerobot.datasets.feature_utils import dataset_to_policy_features
     from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
     from lerobot.policies.factory import get_policy_class, make_policy_config, make_pre_post_processors
 
@@ -70,7 +67,21 @@ else:
     LEROBOT_AVAILABLE = False
 
 
+def _load_dataset_to_policy_features() -> Any:  # noqa: ANN401
+    if not LEROBOT_AVAILABLE:
+        return None
+    try:
+        module = importlib.import_module("lerobot.utils.feature_utils")
+    except ImportError:  # pragma: no cover - lerobot <0.5.2 fallback
+        module = importlib.import_module("lerobot.datasets.feature_utils")
+    return module.dataset_to_policy_features
+
+
+dataset_to_policy_features = _load_dataset_to_policy_features()
+
+
 _WARNED_UNSUPPORTED_NAMES: set[str] = set()
+
 
 def _coerce_policy_config_kwargs(
     policy_name: str,
@@ -83,11 +94,22 @@ def _coerce_policy_config_kwargs(
     pi0/pi05, ``model_dtype`` on MolmoAct2) or omit it entirely (SmolVLA).
     When the target config has no matching field, the dtype is applied to the
     underlying ``nn.Module`` after construction instead.
+
+    Returns:
+        A pair of ``(policy_config, module_cast_dtype)`` where the first value
+        contains config kwargs compatible with the target LeRobot config class
+        and the second is an optional post-construction module dtype cast.
+
+    Raises:
+        ValueError: If ``dtype`` is supplied with an unsupported string value.
     """
     if not LEROBOT_AVAILABLE or get_policy_class is None:
         return policy_config, None
 
-    config_cls = get_policy_class(policy_name).config_class  # type: ignore[attr-defined]
+    policy_cls = get_policy_class(policy_name)
+    config_cls = getattr(policy_cls, "config_class", None)
+    if config_cls is None:
+        return policy_config, None
     field_names = {field.name for field in dataclasses.fields(config_cls)}
     coerced = dict(policy_config)
     module_cast: torch.dtype | None = None
@@ -98,19 +120,18 @@ def _coerce_policy_config_kwargs(
             coerced["dtype"] = dtype_value
         elif "model_dtype" in field_names:
             coerced["model_dtype"] = dtype_value
+        elif isinstance(dtype_value, torch.dtype):
+            module_cast = dtype_value
         else:
-            if isinstance(dtype_value, torch.dtype):
-                module_cast = dtype_value
-            else:
-                dtype_aliases = {
-                    "float32": torch.float32,
-                    "float16": torch.float16,
-                    "bfloat16": torch.bfloat16,
-                }
-                if dtype_value not in dtype_aliases:
-                    msg = f"Unsupported policy dtype {dtype_value!r}; expected one of {sorted(dtype_aliases)}"
-                    raise ValueError(msg)
-                module_cast = dtype_aliases[dtype_value]
+            dtype_aliases = {
+                "float32": torch.float32,
+                "float16": torch.float16,
+                "bfloat16": torch.bfloat16,
+            }
+            if dtype_value not in dtype_aliases:
+                msg = f"Unsupported policy dtype {dtype_value!r}; expected one of {sorted(dtype_aliases)}"
+                raise ValueError(msg)
+            module_cast = dtype_aliases[dtype_value]
 
     return coerced, module_cast
 
