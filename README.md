@@ -112,6 +112,11 @@ For programmatic control over training, benchmarking, and deployment with both A
 pip install physicalai-train
 ```
 
+This installs the runtime package that owns the shared `physicalai`
+executable.
+Studio adds its training and benchmark subcommands through entry points, so
+commands like `physicalai fit` and `physicalai benchmark` still work unchanged.
+
 <details open>
 <summary>Training</summary>
 

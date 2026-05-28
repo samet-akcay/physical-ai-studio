@@ -48,6 +48,10 @@ PhysicalAI Library is a Python SDK for training, evaluating, and deploying Visio
 pip install physicalai-train
 ```
 
+`physicalai-train` installs the runtime package as a dependency. The runtime
+owns the top-level `physicalai` executable, and studio contributes `fit`,
+`validate`, `test`, `predict`, and `benchmark` via entry points.
+
 <details>
 <summary><strong>Prerequisites</strong></summary>
 
