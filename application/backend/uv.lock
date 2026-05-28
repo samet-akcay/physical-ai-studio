@@ -123,6 +123,13 @@ conflicts = [[
     { package = "physical-ai-studio", extra = "xpu" },
 ]]
 
+[options]
+exclude-newer = "2026-05-21T13:09:08.817840817Z"
+exclude-newer-span = "P7D"
+
+[manifest]
+overrides = [{ name = "pytest", specifier = ">=9.0.3" }]
+
 [[package]]
 name = "accelerate"
 version = "1.13.0"
@@ -917,8 +924,7 @@ dependencies = [
     { name = "torch", version = "2.10.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(python_full_version >= '3.15' and platform_machine != 's390x' and extra == 'extra-18-physical-ai-studio-cpu') or (python_full_version < '3.15' and platform_machine != 's390x' and extra == 'extra-18-physical-ai-studio-cpu' and extra == 'extra-18-physical-ai-studio-cuda') or (python_full_version < '3.15' and platform_machine != 's390x' and extra == 'extra-18-physical-ai-studio-cpu' and extra == 'extra-18-physical-ai-studio-xpu') or (python_full_version < '3.15' and platform_machine != 's390x' and extra == 'extra-18-physical-ai-studio-cuda' and extra == 'extra-18-physical-ai-studio-xpu') or (platform_machine == 's390x' and extra == 'extra-18-physical-ai-studio-cpu') or (sys_platform != 'darwin' and extra == 'extra-18-physical-ai-studio-cpu') or (sys_platform != 'darwin' and extra == 'extra-18-physical-ai-studio-cuda' and extra == 'extra-18-physical-ai-studio-xpu') or (extra != 'extra-18-physical-ai-studio-cpu' and extra == 'extra-18-physical-ai-studio-cuda' and extra == 'extra-18-physical-ai-studio-xpu')" },
     { name = "torch", version = "2.10.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "extra == 'extra-18-physical-ai-studio-cuda' or (extra == 'extra-18-physical-ai-studio-cpu' and extra == 'extra-18-physical-ai-studio-xpu')" },
     { name = "torch", version = "2.10.0+xpu", source = { registry = "https://download.pytorch.org/whl/xpu" }, marker = "(python_full_version < '3.15' and platform_machine != 's390x' and sys_platform == 'darwin' and extra == 'extra-18-physical-ai-studio-xpu') or (python_full_version < '3.15' and platform_python_implementation == 'CPython' and sys_platform == 'linux' and extra == 'extra-18-physical-ai-studio-xpu') or (python_full_version >= '3.15' and sys_platform == 'darwin' and extra == 'extra-18-physical-ai-studio-cuda' and extra == 'extra-18-physical-ai-studio-xpu') or (python_full_version >= '3.15' and sys_platform == 'darwin' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda') or (python_full_version >= '3.15' and sys_platform == 'linux' and extra == 'extra-18-physical-ai-studio-cuda' and extra == 'extra-18-physical-ai-studio-xpu') or (python_full_version >= '3.15' and sys_platform == 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda') or (platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'extra-18-physical-ai-studio-xpu') or (platform_machine == 's390x' and sys_platform == 'darwin' and extra == 'extra-18-physical-ai-studio-cuda' and extra == 'extra-18-physical-ai-studio-xpu') or (platform_machine == 's390x' and sys_platform == 'darwin' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda') or (platform_machine != 'aarch64' and sys_platform == 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda') or (platform_python_implementation != 'CPython' and sys_platform == 'linux' and extra == 'extra-18-physical-ai-studio-cuda' and extra == 'extra-18-physical-ai-studio-xpu') or (platform_python_implementation != 'CPython' and sys_platform == 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda') or (sys_platform != 'darwin' and sys_platform != 'linux' and extra == 'extra-18-physical-ai-studio-xpu') or (sys_platform != 'darwin' and sys_platform != 'linux' and extra == 'extra-18-physical-ai-studio-cpu' and extra == 'extra-18-physical-ai-studio-cuda') or (sys_platform != 'darwin' and sys_platform != 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda') or (sys_platform == 'darwin' and extra == 'extra-18-physical-ai-studio-cpu' and extra == 'extra-18-physical-ai-studio-cuda') or (sys_platform == 'darwin' and extra == 'extra-18-physical-ai-studio-cpu' and extra == 'extra-18-physical-ai-studio-xpu') or (sys_platform == 'linux' and extra == 'extra-18-physical-ai-studio-cpu' and extra == 'extra-18-physical-ai-studio-cuda') or (sys_platform == 'linux' and extra == 'extra-18-physical-ai-studio-cpu' and extra == 'extra-18-physical-ai-studio-xpu')" },
-    { name = "torchao", version = "0.15.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '4' and platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (python_full_version < '4' and extra == 'extra-18-physical-ai-studio-cpu' and extra == 'extra-18-physical-ai-studio-cuda') or (python_full_version < '4' and extra == 'extra-18-physical-ai-studio-cpu' and extra == 'extra-18-physical-ai-studio-xpu') or (python_full_version < '4' and extra == 'extra-18-physical-ai-studio-cuda' and extra == 'extra-18-physical-ai-studio-xpu') or (platform_machine != 'x86_64' and extra == 'extra-18-physical-ai-studio-cpu' and extra == 'extra-18-physical-ai-studio-cuda') or (platform_machine != 'x86_64' and extra == 'extra-18-physical-ai-studio-cpu' and extra == 'extra-18-physical-ai-studio-xpu') or (platform_machine != 'x86_64' and extra == 'extra-18-physical-ai-studio-cuda' and extra == 'extra-18-physical-ai-studio-xpu') or (platform_python_implementation != 'CPython' and extra == 'extra-18-physical-ai-studio-cpu' and extra == 'extra-18-physical-ai-studio-cuda') or (platform_python_implementation != 'CPython' and extra == 'extra-18-physical-ai-studio-cpu' and extra == 'extra-18-physical-ai-studio-xpu') or (platform_python_implementation != 'CPython' and extra == 'extra-18-physical-ai-studio-cuda' and extra == 'extra-18-physical-ai-studio-xpu') or (sys_platform != 'linux' and extra == 'extra-18-physical-ai-studio-cpu' and extra == 'extra-18-physical-ai-studio-cuda') or (sys_platform != 'linux' and extra == 'extra-18-physical-ai-studio-cpu' and extra == 'extra-18-physical-ai-studio-xpu') or (sys_platform != 'linux' and extra == 'extra-18-physical-ai-studio-cuda' and extra == 'extra-18-physical-ai-studio-xpu')" },
-    { name = "torchao", version = "0.15.0+xpu", source = { registry = "https://download.pytorch.org/whl/xpu" }, marker = "python_full_version < '4' or platform_machine != 'x86_64' or platform_python_implementation != 'CPython' or sys_platform != 'linux' or (extra == 'extra-18-physical-ai-studio-cpu' and extra == 'extra-18-physical-ai-studio-cuda') or (extra == 'extra-18-physical-ai-studio-cpu' and extra == 'extra-18-physical-ai-studio-xpu') or (extra == 'extra-18-physical-ai-studio-cuda' and extra == 'extra-18-physical-ai-studio-xpu')" },
+    { name = "torchao" },
     { name = "typing-extensions" },
 ]
 wheels = [
@@ -1536,11 +1542,11 @@ wheels = [
 
 [[package]]
 name = "idna"
-version = "3.13"
+version = "3.15"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/ce/cc/762dfb036166873f0059f3b7de4565e1b5bc3d6f28a414c13da27e442f99/idna-3.13.tar.gz", hash = "sha256:585ea8fe5d69b9181ec1afba340451fba6ba764af97026f92a91d4eef164a242", size = 194210, upload-time = "2026-04-22T16:42:42.314Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/82/77/7b3966d0b9d1d31a36ddf1746926a11dface89a83409bf1483f0237aa758/idna-3.15.tar.gz", hash = "sha256:ca962446ea538f7092a95e057da437618e886f4d349216d2b1e294abfdb65fdc", size = 199245, upload-time = "2026-05-12T22:45:57.011Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/5d/13/ad7d7ca3808a898b4612b6fe93cde56b53f3034dcde235acb1f0e1df24c6/idna-3.13-py3-none-any.whl", hash = "sha256:892ea0cde124a99ce773decba204c5552b69c3c67ffd5f232eb7696135bc8bb3", size = 68629, upload-time = "2026-04-22T16:42:40.909Z" },
+    { url = "https://files.pythonhosted.org/packages/d2/23/408243171aa9aaba178d3e2559159c24c1171a641aa83b67bdd3394ead8e/idna-3.15-py3-none-any.whl", hash = "sha256:048adeaf8c2d788c40fee287673ccaa74c24ffd8dcf09ffa555a2fbb59f10ac8", size = 72340, upload-time = "2026-05-12T22:45:55.733Z" },
 ]
 
 [[package]]
@@ -2561,7 +2567,7 @@ wheels = [
 [[package]]
 name = "omni-camera"
 version = "0.6.3"
-source = { git = "https://github.com/ArendJanKramer/OmniCamera.git?rev=master#776a1fb9ba6357f18c4159d43babf795153ac483" }
+source = { git = "https://github.com/ArendJanKramer/OmniCamera.git?rev=776a1fb9ba6357f18c4159d43babf795153ac483#776a1fb9ba6357f18c4159d43babf795153ac483" }
 
 [[package]]
 name = "oneccl"
@@ -2983,6 +2989,7 @@ dependencies = [
     { name = "sqlalchemy" },
     { name = "sse-starlette" },
     { name = "tenacity" },
+    { name = "torchao" },
     { name = "types-aiofiles" },
     { name = "websockets" },
 ]
@@ -3040,7 +3047,7 @@ requires-dist = [
     { name = "loguru", specifier = ">=0.7.3" },
     { name = "numpy" },
     { name = "opencv-python" },
-    { name = "physicalai", extras = ["so101", "trossen"], editable = "../../physicalai" },
+    { name = "physicalai", extras = ["so101", "trossen"], git = "https://github.com/openvinotoolkit/physicalai.git?branch=main" },
     { name = "physicalai-train", extras = ["pi0", "smolvla"], editable = "../../library" },
     { name = "pydantic", specifier = ">=2.12,<2.13" },
     { name = "pydantic-settings", specifier = ">=2.10.1" },
@@ -3054,6 +3061,7 @@ requires-dist = [
     { name = "torch", marker = "extra == 'cpu'", specifier = "<2.11", index = "https://download.pytorch.org/whl/cpu", conflict = { package = "physical-ai-studio", extra = "cpu" } },
     { name = "torch", marker = "extra == 'cuda'", specifier = "<2.11", index = "https://download.pytorch.org/whl/cu128", conflict = { package = "physical-ai-studio", extra = "cuda" } },
     { name = "torch", marker = "extra == 'xpu'", specifier = "<2.11", index = "https://download.pytorch.org/whl/xpu", conflict = { package = "physical-ai-studio", extra = "xpu" } },
+    { name = "torchao", specifier = "===0.15.0", index = "https://pypi.org/simple" },
     { name = "torchvision", marker = "extra == 'cpu'", specifier = "<0.26.0", index = "https://download.pytorch.org/whl/cpu", conflict = { package = "physical-ai-studio", extra = "cpu" } },
     { name = "torchvision", marker = "extra == 'cuda'", specifier = "<0.26.0", index = "https://download.pytorch.org/whl/cu128", conflict = { package = "physical-ai-studio", extra = "cuda" } },
     { name = "torchvision", marker = "extra == 'xpu'", specifier = "<0.26.0", index = "https://download.pytorch.org/whl/xpu", conflict = { package = "physical-ai-studio", extra = "xpu" } },
@@ -3081,17 +3089,17 @@ lint = [
 [[package]]
 name = "physicalai"
 version = "0.1.0"
-source = { editable = "../../physicalai" }
+source = { git = "https://github.com/openvinotoolkit/physicalai.git?branch=main#2b3a4ba7d4ff06389c710a7c51843669b884f106" }
 dependencies = [
     { name = "loguru" },
     { name = "num2words" },
     { name = "numpy" },
-    { name = "omni-camera" },
     { name = "onnxruntime" },
     { name = "opencv-python-headless" },
     { name = "openvino" },
     { name = "openvino-tokenizers" },
     { name = "pydantic" },
+    { name = "pynokhwa" },
     { name = "pyturbojpeg", marker = "sys_platform == 'linux' or (extra == 'extra-18-physical-ai-studio-cpu' and extra == 'extra-18-physical-ai-studio-cuda') or (extra == 'extra-18-physical-ai-studio-cpu' and extra == 'extra-18-physical-ai-studio-xpu') or (extra == 'extra-18-physical-ai-studio-cuda' and extra == 'extra-18-physical-ai-studio-xpu')" },
     { name = "pyyaml" },
     { name = "safetensors" },
@@ -3104,52 +3112,6 @@ so101 = [
 ]
 trossen = [
     { name = "trossen-arm" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "feetech-servo-sdk", marker = "extra == 'so101'" },
-    { name = "ipykernel", marker = "extra == 'notebooks'" },
-    { name = "loguru", specifier = ">=0.7" },
-    { name = "matplotlib", marker = "extra == 'notebooks'" },
-    { name = "matplotlib-inline", marker = "extra == 'notebooks'" },
-    { name = "mypy", marker = "extra == 'tests'" },
-    { name = "num2words", specifier = ">=0.5.14,<0.6.0" },
-    { name = "numpy", specifier = ">=1.24" },
-    { name = "omni-camera", git = "https://github.com/ArendJanKramer/OmniCamera.git?rev=master" },
-    { name = "onnxruntime" },
-    { name = "opencv-python-headless" },
-    { name = "opencv-python-headless", marker = "extra == 'basler'" },
-    { name = "openvino", specifier = ">=2026.0" },
-    { name = "openvino-tokenizers", specifier = ">=2026.0" },
-    { name = "physicalai", extras = ["abb"], marker = "extra == 'robots'" },
-    { name = "physicalai", extras = ["basler"], marker = "extra == 'capture'" },
-    { name = "physicalai", extras = ["franka"], marker = "extra == 'robots'" },
-    { name = "physicalai", extras = ["genicam"], marker = "extra == 'capture'" },
-    { name = "physicalai", extras = ["realsense"], marker = "extra == 'capture'" },
-    { name = "physicalai", extras = ["so101"], marker = "extra == 'robots'" },
-    { name = "physicalai", extras = ["trossen"], marker = "extra == 'robots'" },
-    { name = "physicalai", extras = ["ur"], marker = "extra == 'robots'" },
-    { name = "pydantic", specifier = ">=2.5" },
-    { name = "pypylon", marker = "extra == 'basler'" },
-    { name = "pyrealsense2", marker = "sys_platform != 'darwin' and extra == 'realsense'" },
-    { name = "pyrealsense2-macosx", marker = "sys_platform == 'darwin' and extra == 'realsense'" },
-    { name = "pytest", marker = "extra == 'tests'" },
-    { name = "pyturbojpeg", marker = "sys_platform == 'linux'", specifier = "<2" },
-    { name = "pyyaml", specifier = ">=6.0" },
-    { name = "safetensors", specifier = ">=0.4.3,<1.0.0" },
-    { name = "transformers", specifier = ">=5.3.0,<5.4.0" },
-    { name = "trossen-arm", marker = "extra == 'trossen'", specifier = ">=1.9.0" },
-]
-provides-extras = ["tests", "notebooks", "realsense", "basler", "genicam", "capture", "ur", "abb", "franka", "trossen", "so101", "robots"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "mypy" },
-    { name = "prek" },
-    { name = "pyrefly" },
-    { name = "pytest" },
-    { name = "ruff" },
 ]
 
 [[package]]
@@ -3211,7 +3173,7 @@ requires-dist = [
     { name = "openvino-tokenizers", specifier = ">=2026.0" },
     { name = "peft", marker = "extra == 'groot'", specifier = ">=0.13.0,<1.0.0" },
     { name = "peft", marker = "extra == 'pi0'", specifier = ">=0.13.0,<1.0.0" },
-    { name = "physicalai", editable = "../../physicalai" },
+    { name = "physicalai", git = "https://github.com/openvinotoolkit/physicalai.git?branch=main" },
     { name = "physicalai-train", extras = ["groot"], marker = "extra == 'all'" },
     { name = "physicalai-train", extras = ["libero"], marker = "extra == 'all'" },
     { name = "physicalai-train", extras = ["pi0"], marker = "extra == 'all'" },
@@ -3760,6 +3722,24 @@ wheels = [
 ]
 
 [[package]]
+name = "pynokhwa"
+version = "0.1.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/77/ea/0867e2865edfcfb853e719cc295169164e7bf38e42cde4b81dc4c07e9eb7/pynokhwa-0.1.2.tar.gz", hash = "sha256:37199a2bc3fa8f55439c4d812e8e81a135e8f2ea329aa332380dffda48ec4578", size = 27818, upload-time = "2026-04-30T12:07:45.79Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b8/1d/0331f266bcb1e8c4a3b2d83c241dbf700e86ba222618709a0e8bf3f4d444/pynokhwa-0.1.2-cp313-cp313t-macosx_10_12_x86_64.whl", hash = "sha256:182535f97d5a3d4a8b3651d7a82bb7764efb7b0858270964b442ce0ba60b848b", size = 550520, upload-time = "2026-04-30T12:07:30.809Z" },
+    { url = "https://files.pythonhosted.org/packages/af/ea/f7710d52c62605066c022551ac9925f054c68964fde1c5986885d54c7310/pynokhwa-0.1.2-cp313-cp313t-macosx_11_0_arm64.whl", hash = "sha256:735d9e06d2144c12b0558bd18ce7f50a154507d2418d0406529a3be7247b7bf2", size = 539635, upload-time = "2026-04-30T12:07:32.42Z" },
+    { url = "https://files.pythonhosted.org/packages/84/69/a47bd9d8b9203f1dde19c70b0c62535ba619f93925f5d4a3fe048d7a765c/pynokhwa-0.1.2-cp313-cp313t-manylinux_2_34_x86_64.whl", hash = "sha256:0929b3fcc033ee425038f69959c0954ccbadadfb36c14b6d4522254ea5343bd0", size = 560427, upload-time = "2026-04-30T12:07:34.24Z" },
+    { url = "https://files.pythonhosted.org/packages/ec/d9/b64f46e4d06dc384162bdce0256c6d36c6b31e5fbc84efcfb52bff2724dc/pynokhwa-0.1.2-cp313-cp313t-win32.whl", hash = "sha256:10cae3d2ada8921435dbb3cd9e40578044c33f067294b004cb228681f5adc8d7", size = 345641, upload-time = "2026-04-30T12:07:35.503Z" },
+    { url = "https://files.pythonhosted.org/packages/e3/ce/f353145bc0bda4935a7f4beaeb986f541d806d1337febcefde30fa26d397/pynokhwa-0.1.2-cp313-cp313t-win_amd64.whl", hash = "sha256:c238e3f3062a36fb44b94c2684b0dcd71f7ab8a5c5708c49c41e8fca9cd1fcb5", size = 366395, upload-time = "2026-04-30T12:07:36.963Z" },
+    { url = "https://files.pythonhosted.org/packages/c9/45/48e976301d4297e26e877068db473bb8cdce1c24e9875941cc6a767874d2/pynokhwa-0.1.2-cp39-abi3-macosx_10_12_x86_64.whl", hash = "sha256:fc00a5988b9f09e39a5ae759ac4af50e5aedeb70c2b0aea193fe95479904b9c6", size = 558548, upload-time = "2026-04-30T12:07:38.5Z" },
+    { url = "https://files.pythonhosted.org/packages/08/aa/aa01376c8367cb5da0e9736fe54dea1407b1a2b51194d2662187861695fc/pynokhwa-0.1.2-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:bdeb200a4dd5aca87510a3ff7600a298c98f86557ea6525093e0ae2576ea81e4", size = 551674, upload-time = "2026-04-30T12:07:40.16Z" },
+    { url = "https://files.pythonhosted.org/packages/ca/83/d896ee47a4f7c368e8125e1b1c68e7708f438e5b41bcb2ff8379b252305f/pynokhwa-0.1.2-cp39-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:751452ab0c9cbb4bec0435d2f19b07c4a0f2cbc86729064ca61b8082482dce1b", size = 564507, upload-time = "2026-04-30T12:07:41.409Z" },
+    { url = "https://files.pythonhosted.org/packages/c8/ea/c05eadb04dad027d5395f4b281a2dbf7b697313630852c0f8e76c70fd863/pynokhwa-0.1.2-cp39-abi3-win32.whl", hash = "sha256:35b12ea111ef66b2f5c0f4bb79ff985d97e3caa93374732547571dbb09d7358e", size = 350172, upload-time = "2026-04-30T12:07:42.884Z" },
+    { url = "https://files.pythonhosted.org/packages/9e/d8/e8a0740aa357ac67af1696006185dc113f2276dc3cccf8ff87abe195957b/pynokhwa-0.1.2-cp39-abi3-win_amd64.whl", hash = "sha256:cbb1c909d0f840f4201755f726861a835f50a3bf5f114bcb534f61239a01e5df", size = 371499, upload-time = "2026-04-30T12:07:44.135Z" },
+]
+
+[[package]]
 name = "pynput"
 version = "1.8.1"
 source = { registry = "https://pypi.org/simple" }
@@ -3979,7 +3959,7 @@ wheels = [
 
 [[package]]
 name = "pytest"
-version = "8.4.2"
+version = "9.0.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-18-physical-ai-studio-cpu' and extra == 'extra-18-physical-ai-studio-cuda') or (extra == 'extra-18-physical-ai-studio-cpu' and extra == 'extra-18-physical-ai-studio-xpu') or (extra == 'extra-18-physical-ai-studio-cuda' and extra == 'extra-18-physical-ai-studio-xpu')" },
@@ -3988,9 +3968,9 @@ dependencies = [
     { name = "pluggy" },
     { name = "pygments" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a3/5c/00a0e072241553e1a7496d638deababa67c5058571567b92a7eaa258397c/pytest-8.4.2.tar.gz", hash = "sha256:86c0d0b93306b961d58d62a4db4879f27fe25513d4b969df351abdddb3c30e01", size = 1519618, upload-time = "2025-09-04T14:34:22.711Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/7d/0d/549bd94f1a0a402dc8cf64563a117c0f3765662e2e668477624baeec44d5/pytest-9.0.3.tar.gz", hash = "sha256:b86ada508af81d19edeb213c681b1d48246c1a91d304c6c81a427674c17eb91c", size = 1572165, upload-time = "2026-04-07T17:16:18.027Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a8/a4/20da314d277121d6534b3a980b29035dcd51e6744bd79075a6ce8fa4eb8d/pytest-8.4.2-py3-none-any.whl", hash = "sha256:872f880de3fc3a5bdc88a11b39c9710c3497a547cfa9320bc3c5e62fbf272e79", size = 365750, upload-time = "2025-09-04T14:34:20.226Z" },
+    { url = "https://files.pythonhosted.org/packages/d4/24/a372aaf5c9b7208e7112038812994107bc65a84cd00e0354a88c2c77a617/pytest-9.0.3-py3-none-any.whl", hash = "sha256:2c5efc453d45394fdd706ade797c0a81091eccd1d6e4bccfcd476e2b8e0ab5d9", size = 375249, upload-time = "2026-04-07T17:16:16.13Z" },
 ]
 
 [[package]]
@@ -5373,132 +5353,9 @@ wheels = [
 name = "torchao"
 version = "0.15.0"
 source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version >= '4' and platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux'",
-]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/57/2d/472b9362dceae05a4599e2b94f86e69a29c0e20964a6af84f34f6ead5938/torchao-0.15.0-cp310-abi3-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:1cbe813201314ba6329a650a76944502f3e8ec4b1b44523f3f48676810d8d1f6", size = 7163930, upload-time = "2025-12-18T23:14:41.876Z" },
     { url = "https://files.pythonhosted.org/packages/f6/3b/6b9d5618720f63dbc2e2509cd6b57aae9c0d61b738d1d2172f4d5d9efaab/torchao-0.15.0-py3-none-any.whl", hash = "sha256:3f3812676048ef8a2a0e9d492d12d8971ba7a7ebb16f54aa56f690414e130d2c", size = 1080679, upload-time = "2025-12-18T23:14:43.807Z" },
-]
-
-[[package]]
-name = "torchao"
-version = "0.15.0+xpu"
-source = { registry = "https://download.pytorch.org/whl/xpu" }
-resolution-markers = [
-    "(python_full_version >= '3.15' and python_full_version < '4' and platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra == 'extra-18-physical-ai-studio-xpu') or (python_full_version >= '3.15' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra == 'extra-18-physical-ai-studio-xpu') or (python_full_version >= '3.15' and platform_machine == 'x86_64' and platform_python_implementation != 'CPython' and sys_platform == 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra == 'extra-18-physical-ai-studio-xpu')",
-    "python_full_version >= '3.15' and platform_machine != 's390x' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra == 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version >= '3.15' and platform_machine != 's390x' and sys_platform == 'emscripten' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra == 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version >= '3.15' and platform_machine == 's390x' and sys_platform == 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra == 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version >= '3.15' and platform_machine == 's390x' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra == 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version >= '3.15' and platform_machine == 's390x' and sys_platform == 'emscripten' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra == 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.14.*' and platform_machine != 's390x' and sys_platform == 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra == 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.13.*' and platform_machine != 's390x' and sys_platform == 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra == 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version < '3.13' and platform_machine != 's390x' and sys_platform == 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra == 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.14.*' and platform_machine != 's390x' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra == 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.13.*' and platform_machine != 's390x' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra == 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version < '3.13' and platform_machine != 's390x' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra == 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.14.*' and platform_machine != 's390x' and sys_platform == 'emscripten' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra == 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.13.*' and platform_machine != 's390x' and sys_platform == 'emscripten' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra == 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version < '3.13' and platform_machine != 's390x' and sys_platform == 'emscripten' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra == 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.14.*' and platform_machine == 's390x' and sys_platform == 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra == 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.13.*' and platform_machine == 's390x' and sys_platform == 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra == 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version < '3.13' and platform_machine == 's390x' and sys_platform == 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra == 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.14.*' and platform_machine == 's390x' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra == 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.13.*' and platform_machine == 's390x' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra == 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version < '3.13' and platform_machine == 's390x' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra == 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.14.*' and platform_machine == 's390x' and sys_platform == 'emscripten' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra == 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.13.*' and platform_machine == 's390x' and sys_platform == 'emscripten' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra == 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version < '3.13' and platform_machine == 's390x' and sys_platform == 'emscripten' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra == 'extra-18-physical-ai-studio-xpu'",
-    "(python_full_version >= '3.15' and python_full_version < '4' and platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra == 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu') or (python_full_version >= '3.15' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra == 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu') or (python_full_version >= '3.15' and platform_machine == 'x86_64' and platform_python_implementation != 'CPython' and sys_platform == 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra == 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu')",
-    "python_full_version >= '3.15' and platform_machine != 's390x' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra == 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version >= '3.15' and platform_machine != 's390x' and sys_platform == 'emscripten' and extra != 'extra-18-physical-ai-studio-cpu' and extra == 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version >= '3.15' and platform_machine == 's390x' and sys_platform == 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra == 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version >= '3.15' and platform_machine == 's390x' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra == 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version >= '3.15' and platform_machine == 's390x' and sys_platform == 'emscripten' and extra != 'extra-18-physical-ai-studio-cpu' and extra == 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.14.*' and platform_machine != 's390x' and sys_platform == 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra == 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.13.*' and platform_machine != 's390x' and sys_platform == 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra == 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version < '3.13' and platform_machine != 's390x' and sys_platform == 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra == 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.14.*' and platform_machine != 's390x' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra == 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.13.*' and platform_machine != 's390x' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra == 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version < '3.13' and platform_machine != 's390x' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra == 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.14.*' and platform_machine != 's390x' and sys_platform == 'emscripten' and extra != 'extra-18-physical-ai-studio-cpu' and extra == 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.13.*' and platform_machine != 's390x' and sys_platform == 'emscripten' and extra != 'extra-18-physical-ai-studio-cpu' and extra == 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version < '3.13' and platform_machine != 's390x' and sys_platform == 'emscripten' and extra != 'extra-18-physical-ai-studio-cpu' and extra == 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.14.*' and platform_machine == 's390x' and sys_platform == 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra == 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.13.*' and platform_machine == 's390x' and sys_platform == 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra == 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version < '3.13' and platform_machine == 's390x' and sys_platform == 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra == 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.14.*' and platform_machine == 's390x' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra == 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.13.*' and platform_machine == 's390x' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra == 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version < '3.13' and platform_machine == 's390x' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra == 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.14.*' and platform_machine == 's390x' and sys_platform == 'emscripten' and extra != 'extra-18-physical-ai-studio-cpu' and extra == 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.13.*' and platform_machine == 's390x' and sys_platform == 'emscripten' and extra != 'extra-18-physical-ai-studio-cpu' and extra == 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version < '3.13' and platform_machine == 's390x' and sys_platform == 'emscripten' and extra != 'extra-18-physical-ai-studio-cpu' and extra == 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "(python_full_version >= '3.15' and python_full_version < '4' and platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu') or (python_full_version >= '3.15' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'linux' and extra == 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu') or (python_full_version >= '3.15' and platform_machine == 'x86_64' and platform_python_implementation != 'CPython' and sys_platform == 'linux' and extra == 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu')",
-    "python_full_version >= '3.15' and platform_machine != 's390x' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra == 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version >= '3.15' and platform_machine != 's390x' and sys_platform == 'emscripten' and extra == 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version >= '3.15' and platform_machine == 's390x' and sys_platform == 'linux' and extra == 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version >= '3.15' and platform_machine == 's390x' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra == 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version >= '3.15' and platform_machine == 's390x' and sys_platform == 'emscripten' and extra == 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.14.*' and platform_machine != 's390x' and sys_platform == 'linux' and extra == 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.13.*' and platform_machine != 's390x' and sys_platform == 'linux' and extra == 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version < '3.13' and platform_machine != 's390x' and sys_platform == 'linux' and extra == 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.14.*' and platform_machine != 's390x' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra == 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.13.*' and platform_machine != 's390x' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra == 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version < '3.13' and platform_machine != 's390x' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra == 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.14.*' and platform_machine != 's390x' and sys_platform == 'emscripten' and extra == 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.13.*' and platform_machine != 's390x' and sys_platform == 'emscripten' and extra == 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version < '3.13' and platform_machine != 's390x' and sys_platform == 'emscripten' and extra == 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.14.*' and platform_machine == 's390x' and sys_platform == 'linux' and extra == 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.13.*' and platform_machine == 's390x' and sys_platform == 'linux' and extra == 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version < '3.13' and platform_machine == 's390x' and sys_platform == 'linux' and extra == 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.14.*' and platform_machine == 's390x' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra == 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.13.*' and platform_machine == 's390x' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra == 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version < '3.13' and platform_machine == 's390x' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra == 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.14.*' and platform_machine == 's390x' and sys_platform == 'emscripten' and extra == 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.13.*' and platform_machine == 's390x' and sys_platform == 'emscripten' and extra == 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version < '3.13' and platform_machine == 's390x' and sys_platform == 'emscripten' and extra == 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version >= '3.15' and platform_machine != 's390x' and sys_platform == 'darwin' and extra == 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version >= '3.15' and platform_machine == 's390x' and sys_platform == 'darwin' and extra == 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.14.*' and platform_machine != 's390x' and sys_platform == 'darwin' and extra == 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.13.*' and platform_machine != 's390x' and sys_platform == 'darwin' and extra == 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version < '3.13' and platform_machine != 's390x' and sys_platform == 'darwin' and extra == 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.14.*' and platform_machine == 's390x' and sys_platform == 'darwin' and extra == 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.13.*' and platform_machine == 's390x' and sys_platform == 'darwin' and extra == 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version < '3.13' and platform_machine == 's390x' and sys_platform == 'darwin' and extra == 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "(python_full_version >= '3.15' and python_full_version < '4' and platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu') or (python_full_version >= '3.15' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu') or (python_full_version >= '3.15' and platform_machine == 'x86_64' and platform_python_implementation != 'CPython' and sys_platform == 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu')",
-    "python_full_version >= '3.15' and platform_machine != 's390x' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version >= '3.15' and platform_machine != 's390x' and sys_platform == 'emscripten' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version >= '3.15' and platform_machine == 's390x' and sys_platform == 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version >= '3.15' and platform_machine == 's390x' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version >= '3.15' and platform_machine == 's390x' and sys_platform == 'emscripten' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "(python_full_version == '3.14.*' and platform_machine != 'aarch64' and platform_machine != 's390x' and sys_platform == 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu') or (python_full_version == '3.14.*' and platform_machine == 'aarch64' and platform_python_implementation != 'CPython' and sys_platform == 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu')",
-    "(python_full_version == '3.13.*' and platform_machine != 'aarch64' and platform_machine != 's390x' and sys_platform == 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu') or (python_full_version == '3.13.*' and platform_machine == 'aarch64' and platform_python_implementation != 'CPython' and sys_platform == 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu')",
-    "(python_full_version < '3.13' and platform_machine != 'aarch64' and platform_machine != 's390x' and sys_platform == 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu') or (python_full_version < '3.13' and platform_machine == 'aarch64' and platform_python_implementation != 'CPython' and sys_platform == 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu')",
-    "python_full_version == '3.14.*' and platform_machine != 's390x' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.13.*' and platform_machine != 's390x' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version < '3.13' and platform_machine != 's390x' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.14.*' and platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.13.*' and platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version < '3.13' and platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.14.*' and platform_machine != 's390x' and sys_platform == 'darwin' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.13.*' and platform_machine != 's390x' and sys_platform == 'darwin' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version < '3.13' and platform_machine != 's390x' and sys_platform == 'darwin' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.14.*' and platform_machine != 's390x' and sys_platform == 'emscripten' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.13.*' and platform_machine != 's390x' and sys_platform == 'emscripten' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version < '3.13' and platform_machine != 's390x' and sys_platform == 'emscripten' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.14.*' and platform_machine == 's390x' and sys_platform == 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.13.*' and platform_machine == 's390x' and sys_platform == 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version < '3.13' and platform_machine == 's390x' and sys_platform == 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.14.*' and platform_machine == 's390x' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.13.*' and platform_machine == 's390x' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version < '3.13' and platform_machine == 's390x' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.14.*' and platform_machine == 's390x' and sys_platform == 'emscripten' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version == '3.13.*' and platform_machine == 's390x' and sys_platform == 'emscripten' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-    "python_full_version < '3.13' and platform_machine == 's390x' and sys_platform == 'emscripten' and extra != 'extra-18-physical-ai-studio-cpu' and extra != 'extra-18-physical-ai-studio-cuda' and extra != 'extra-18-physical-ai-studio-xpu'",
-]
-wheels = [
-    { url = "https://download.pytorch.org/whl/xpu/torchao-0.15.0%2Bxpu-py3-none-any.whl", hash = "sha256:d80ff70b66fa18ca6f84086a27d0ea08bcb16eb7e0ee05ff38771c29f3c156d8", upload-time = "2025-12-18T23:11:13Z" },
 ]
 
 [[package]]

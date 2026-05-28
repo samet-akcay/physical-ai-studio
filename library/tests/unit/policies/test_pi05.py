@@ -760,6 +760,7 @@ class TestSampleInput:
         class _Stub:
             def __init__(self, stats: dict) -> None:
                 self._dataset_stats = stats
+                self.enable_rtc = False
                 # sample_input only reads device from this module's parameters.
                 self.paligemma_with_expert = torch.nn.Linear(1, 1)
 
@@ -935,6 +936,11 @@ class TestPi05FineTuning:
         """Test pretrained_name_or_path is excluded from saved hyperparameters."""
         policy = Pi05()
         assert "pretrained_name_or_path" not in policy.hparams
+
+    def test_save_hyperparameters_ignores_compile_model(self) -> None:
+        """Test compile_model is excluded from saved hyperparameters."""
+        policy = Pi05(compile_model=True)
+        assert "compile_model" not in policy.hparams
 
     def test_update_preprocessor_stats(self) -> None:
         """Test _update_preprocessor_stats rebuilds preprocessors with new stats."""
