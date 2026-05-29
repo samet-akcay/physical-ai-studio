@@ -13,6 +13,7 @@ import pytest
 from jsonargparse import ArgumentParser
 
 from physicalai.cli import benchmark as benchmark_module
+from physicalai.cli import export as export_module
 from physicalai.cli import fit as fit_module
 from physicalai.cli import predict as predict_module
 from physicalai.cli import test as test_module
@@ -29,6 +30,7 @@ _SUBCOMMAND_MODULES = {
     "test": test_module,
     "predict": predict_module,
     "benchmark": benchmark_module,
+    "export": export_module,
 }
 
 
@@ -123,7 +125,7 @@ class TestDispatch:
 
         with (
             patch.object(parser, "instantiate_classes", return_value=MagicMock(benchmark=fake_benchmark)),
-            patch("physicalai.cli.benchmark._load_policy", return_value=(fake_policy, "cpu")),
+            patch("physicalai.cli.benchmark.load_policy", return_value=(fake_policy, "cpu")),
             patch("builtins.print"),
         ):
             exit_code = benchmark_module.run(parser, cfg)
@@ -134,3 +136,21 @@ class TestDispatch:
         fake_results.to_csv.assert_called_once_with(tmp_path / "results.csv")
         for gym in fake_benchmark.gyms:
             gym.close.assert_called_once_with()
+
+    def test_export_dispatch_calls_policy_export(self) -> None:
+        parser = export_module.register().parser
+        cfg = parser.parse_args(
+            [
+                "--policy=physicalai.policies.ACT",
+                "--ckpt_path=checkpoints/best.ckpt",
+                "--backend=openvino",
+                "--output_dir=exports/act",
+            ],
+        )
+        fake_policy = MagicMock()
+
+        with patch("physicalai.cli.export.load_policy", return_value=(fake_policy, "cpu")):
+            exit_code = export_module.run(parser, cfg)
+
+        assert exit_code == 0
+        fake_policy.export.assert_called_once_with("exports/act", backend="openvino")

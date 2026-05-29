@@ -113,9 +113,9 @@ pip install physicalai-train
 ```
 
 This installs the runtime package that owns the shared `physicalai`
-executable.
-Studio adds its training and benchmark subcommands through entry points, so
-commands like `physicalai fit` and `physicalai benchmark` still work unchanged.
+executable. Studio adds its training, benchmark, and export subcommands through
+entry points, so commands like `physicalai fit`, `physicalai benchmark`, and
+`physicalai export` work through the shared host.
 
 <details open>
 <summary>Training</summary>

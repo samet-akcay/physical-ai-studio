@@ -7,6 +7,7 @@ Command-line interface built on jsonargparse and the shared `physicalai` host.
 - Runtime-owned `physicalai` console script
 - Studio subcommand entry points in `physicalai.cli.subcommands`
 - YAML/JSON config files with CLI overrides
+- Export commands backed by the policy `export()` contract
 - Type validation from type hints
 - Dynamic class loading via `class_path`
 

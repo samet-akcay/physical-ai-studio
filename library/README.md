@@ -50,7 +50,7 @@ pip install physicalai-train
 
 `physicalai-train` installs the runtime package as a dependency. The runtime
 owns the top-level `physicalai` executable, and studio contributes `fit`,
-`validate`, `test`, `predict`, and `benchmark` via entry points.
+`validate`, `test`, `predict`, `benchmark`, and `export` via entry points.
 
 <details>
 <summary><strong>Prerequisites</strong></summary>
@@ -183,8 +183,11 @@ policy.export("./exports", backend="openvino")
 ## CLI
 
 ```bash
-# CLI coming soon - use Python API for now
-# See API section above for export usage
+physicalai export \
+    --policy physicalai.policies.ACT \
+    --ckpt_path checkpoints/model.ckpt \
+    --backend openvino \
+    --output_dir ./exports
 ```
 
 ### Supported Backends

@@ -71,6 +71,8 @@ physicalai fit          # Train model
 physicalai validate     # Run validation
 physicalai test         # Run testing
 physicalai predict      # Run predictions
+physicalai benchmark    # Run benchmark evaluation
+physicalai export       # Export policy artifacts
 ```
 
 ## Configuration Flow

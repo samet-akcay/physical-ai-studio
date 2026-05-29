@@ -56,4 +56,4 @@ graph LR
 
 The studio CLI acts as a thin orchestration layer. The runtime package owns the
 top-level `physicalai` binary, and studio contributes `fit`, `validate`, `test`,
-`predict`, and `benchmark` via entry points.
+`predict`, `benchmark`, and `export` via entry points.
