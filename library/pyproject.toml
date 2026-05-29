@@ -186,7 +186,7 @@ explicit = false
 # PyTorch sources configuration
 [tool.uv.sources]
 # Temporary pin to the shared CLI runtime commit until the runtime PR merges.
-physicalai = { git = "https://github.com/openvinotoolkit/physicalai.git", rev = "fae519a" }
+physicalai = { git = "https://github.com/openvinotoolkit/physicalai.git", rev = "0555ac5" }
 torch = [
     { index = "pytorch-cpu", extra = "cpu" },
     { index = "pytorch-cu128", extra = "cu128" },
