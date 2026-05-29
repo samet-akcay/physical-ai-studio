@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, cast
 
 from jsonargparse import ActionConfigFile, ArgumentParser, Namespace
 from physicalai.cli._spec import SubcommandSpec  # noqa: PLC2701
@@ -81,7 +81,8 @@ def run(parser: ArgumentParser, cfg: Namespace) -> int:
     Returns:
         Process exit code.
     """
-    benchmark = parser.instantiate_classes(Namespace(benchmark=cfg.benchmark)).benchmark
+    instantiated = cast(Namespace, parser.instantiate_classes(Namespace(benchmark=cfg.benchmark)))
+    benchmark = instantiated.benchmark
     policy, device = load_policy(cfg.policy, cfg.ckpt_path)
 
     logger.info("Benchmark: %s", benchmark)

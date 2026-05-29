@@ -185,8 +185,8 @@ explicit = false
 
 # PyTorch sources configuration
 [tool.uv.sources]
-# TODO(#450): Replace with published package once physicalai is back in its own repo.
-physicalai = { git = "https://github.com/openvinotoolkit/physicalai.git", branch = "main" }
+# Temporary pin to the shared CLI runtime commit until the runtime PR merges.
+physicalai = { git = "https://github.com/openvinotoolkit/physicalai.git", rev = "fae519a" }
 torch = [
     { index = "pytorch-cpu", extra = "cpu" },
     { index = "pytorch-cu128", extra = "cu128" },

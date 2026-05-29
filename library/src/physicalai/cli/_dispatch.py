@@ -6,14 +6,14 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, cast
 
 from jsonargparse import ActionConfigFile, ArgumentParser, Namespace
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-_SKIP_BY_METHOD: Final[dict[str, set[str]]] = {
+_SKIP_BY_METHOD: Final[dict[str, set[int | str]]] = {
     "fit": {"self", "model", "train_dataloaders", "val_dataloaders", "datamodule"},
     "validate": {"self", "model", "dataloaders", "datamodule"},
     "test": {"self", "model", "dataloaders", "datamodule"},
@@ -39,7 +39,7 @@ def _build_lightning_parser(method_name: str) -> ArgumentParser:
     parser.add_subclass_arguments(Policy, "model", required=True)
     parser.add_subclass_arguments(DataModule, "data", required=True)
     parser.add_class_arguments(Trainer, "trainer")
-    parser.add_method_arguments(Trainer, method_name, method_name, skip=_SKIP_BY_METHOD[method_name])
+    parser.add_method_arguments(Trainer, method_name, method_name, skip=cast(set[int | str], _SKIP_BY_METHOD[method_name]))
     return parser
 
 
