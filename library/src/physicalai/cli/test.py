@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from physicalai.cli._spec import SubcommandSpec  # noqa: PLC2701
 
 from physicalai.cli._dispatch import _build_lightning_parser, _dispatch  # noqa: PLC2701
+from physicalai.cli._help import print_trainer_help  # noqa: PLC2701
 
 if TYPE_CHECKING:
     from jsonargparse import ArgumentParser, Namespace
@@ -38,6 +39,11 @@ def run(parser: ArgumentParser, cfg: Namespace) -> int:
         Process exit code.
     """
     return _dispatch("test")(parser, cfg)
+
+
+def print_help(prog: str) -> None:
+    """Print lightweight help without building the full parser."""
+    print_trainer_help(prog, description=HELP, method="test")
 
 
 def register() -> SubcommandSpec:

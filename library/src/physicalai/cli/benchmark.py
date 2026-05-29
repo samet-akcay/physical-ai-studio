@@ -13,6 +13,7 @@ from typing import Protocol, cast
 from jsonargparse import ActionConfigFile, ArgumentParser, Namespace
 from physicalai.cli._spec import SubcommandSpec  # noqa: PLC2701
 
+from physicalai.cli._help import print_benchmark_help  # noqa: PLC2701
 from physicalai.cli._policy import load_policy  # noqa: PLC2701
 
 
@@ -113,6 +114,11 @@ def _write_results(results: _WritableResults, output_dir: str) -> None:
     results.to_json(output_path / "results.json")
     results.to_csv(output_path / "results.csv")
     logger.info("Results saved to %s", output_path)
+
+
+def print_help(prog: str) -> None:
+    """Print lightweight help without building the full parser."""
+    print_benchmark_help(prog, description=HELP)
 
 
 def register() -> SubcommandSpec:

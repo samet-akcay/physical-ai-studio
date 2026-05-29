@@ -11,6 +11,7 @@ import logging
 from jsonargparse import ActionConfigFile, ArgumentParser, Namespace
 from physicalai.cli._spec import SubcommandSpec  # noqa: PLC2701
 
+from physicalai.cli._help import print_export_help  # noqa: PLC2701
 from physicalai.cli._policy import load_policy  # noqa: PLC2701
 
 logger = logging.getLogger(__name__)
@@ -77,6 +78,11 @@ def run(parser: ArgumentParser, cfg: Namespace) -> int:
     policy.export(cfg.output_dir, backend=cfg.backend)
     logger.info("Export saved to %s", cfg.output_dir)
     return 0
+
+
+def print_help(prog: str) -> None:
+    """Print lightweight help without building the full parser."""
+    print_export_help(prog, description=HELP)
 
 
 def register() -> SubcommandSpec:
