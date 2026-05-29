@@ -6,11 +6,11 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
-from jsonargparse import ArgumentParser
+from jsonargparse import ArgumentParser, Namespace
 
 from physicalai.cli import benchmark as benchmark_module
 from physicalai.cli import export as export_module
@@ -21,10 +21,13 @@ from physicalai.cli import validate as validate_module
 from physicalai.cli._spec import SubcommandSpec  # noqa: PLC2701
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from typing import Protocol
+
+    class _CliModule(Protocol):
+        def register(self) -> SubcommandSpec: ...
 
 
-_SUBCOMMAND_MODULES = {
+_SUBCOMMAND_MODULES: dict[str, _CliModule] = {
     "fit": fit_module,
     "validate": validate_module,
     "test": test_module,
@@ -50,7 +53,7 @@ class TestRegister:
     """ST-1 register() returns expected names and specs."""
 
     @pytest.mark.parametrize(("name", "module"), _SUBCOMMAND_MODULES.items())
-    def test_register_returns_subcommand_spec(self, name: str, module: object) -> None:
+    def test_register_returns_subcommand_spec(self, name: str, module: _CliModule) -> None:
         spec = module.register()
         assert isinstance(spec, SubcommandSpec)
         assert spec.name == name
@@ -62,7 +65,7 @@ class TestHelp:
     """ST-2 parsers build and ``--help`` exits cleanly."""
 
     @pytest.mark.parametrize("module", _SUBCOMMAND_MODULES.values())
-    def test_parser_help_exits_zero(self, module: object) -> None:
+    def test_parser_help_exits_zero(self, module: _CliModule) -> None:
         parser = module.register().parser
         with pytest.raises(SystemExit) as exc:
             parser.parse_args(["--help"])
@@ -102,7 +105,7 @@ class TestDispatch:
         datamodule = object()
 
         with patch.object(parser, "instantiate", return_value=MagicMock(trainer=trainer, model=model, data=datamodule)):
-            exit_code = fit_module.run(parser, cfg)
+            exit_code = fit_module.run(cast(ArgumentParser, parser), cast(Namespace, cfg))
 
         assert exit_code == 0
         trainer.fit.assert_called_once_with(model=model, datamodule=datamodule)
@@ -128,7 +131,7 @@ class TestDispatch:
             patch("physicalai.cli.benchmark.load_policy", return_value=(fake_policy, "cpu")),
             patch("builtins.print"),
         ):
-            exit_code = benchmark_module.run(parser, cfg)
+            exit_code = benchmark_module.run(cast(ArgumentParser, parser), cast(Namespace, cfg))
 
         assert exit_code == 0
         fake_benchmark.evaluate.assert_called_once_with(policy=fake_policy)
@@ -150,7 +153,7 @@ class TestDispatch:
         fake_policy = MagicMock()
 
         with patch("physicalai.cli.export.load_policy", return_value=(fake_policy, "cpu")):
-            exit_code = export_module.run(parser, cfg)
+            exit_code = export_module.run(cast(ArgumentParser, parser), cast(Namespace, cfg))
 
         assert exit_code == 0
         fake_policy.export.assert_called_once_with("exports/act", backend="openvino")
