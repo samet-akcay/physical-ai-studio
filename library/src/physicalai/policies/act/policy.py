@@ -10,7 +10,7 @@ from physicalai.inference.data import InferenceFeature, InferenceFeatureDtype, I
 from physicalai.inference.manifest import ComponentSpec
 
 from physicalai.data import Dataset, Feature, FeatureType, NormalizationParameters, Observation
-from physicalai.data.observation import IMAGES, STATE
+from physicalai.data.observation import ACTION, IMAGES, STATE
 from physicalai.export.backends import (
     ExecuTorchExportParameters,
     ExportParameters,
@@ -514,6 +514,35 @@ class ACT(ExportablePolicyMixin, Policy):
         return schema
 
     @property
+    def outputs_schema(self) -> list[InferenceFeature] | None:
+        """Describe the policy's model output for export.
+
+        Returns:
+            A list with a single ``action`` feature of shape
+            ``(chunk_size, *action_feature.shape)``. Returns ``None`` if the
+            underlying model has not been initialized yet.
+
+        Raises:
+            RuntimeError: If the action feature shape is not defined.
+        """
+        if self.model is None:
+            return None
+
+        action_feature = self.model._config.action_feature  # noqa: SLF001
+        if action_feature is None or action_feature.shape is None:
+            msg = "Action feature is not defined in the model configuration."
+            raise RuntimeError(msg)
+
+        return [
+            InferenceFeature(
+                ftype=InferenceFeatureType.ACTION,
+                shape=(self.config.chunk_size, *tuple(action_feature.shape)),
+                name=ACTION,
+                dtype=InferenceFeatureDtype.FLOAT32,
+            ),
+        ]
+
+    @property
     def extra_export_args(self) -> dict[str, ExportParameters]:
         """Additional export arguments for model conversion.
 
@@ -530,14 +559,15 @@ class ACT(ExportablePolicyMixin, Policy):
             )
 
         extra_args: dict[str, ExportParameters] = {}
+        output_names = [feature.name for feature in (self.outputs_schema or [])]
         extra_args["onnx"] = ONNXExportParameters(
             exporter_kwargs={
-                "output_names": ["action"],
+                "output_names": output_names,
             },
             postprocessors_specs=postproc_specs,
         )
         extra_args["openvino"] = OpenVINOExportParameters(
-            outputs=["action"],
+            outputs=output_names,
             export_tokenizer=False,
             compress_to_fp16=False,
             exporter_kwargs={},
