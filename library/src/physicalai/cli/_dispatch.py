@@ -39,7 +39,12 @@ def _build_lightning_parser(method_name: str) -> ArgumentParser:
     parser.add_subclass_arguments(Policy, "model", required=True)
     parser.add_subclass_arguments(DataModule, "data", required=True)
     parser.add_class_arguments(Trainer, "trainer")
-    parser.add_method_arguments(Trainer, method_name, method_name, skip=cast(set[int | str], _SKIP_BY_METHOD[method_name]))
+    parser.add_method_arguments(
+        Trainer,
+        method_name,
+        method_name,
+        skip=cast("set[int | str]", _SKIP_BY_METHOD[method_name]),
+    )
     return parser
 
 
@@ -54,7 +59,7 @@ def _dispatch(method_name: str) -> Callable[[ArgumentParser, Namespace], int]:
     """
 
     def _run(parser: ArgumentParser, cfg: Namespace) -> int:
-        cfg_init = parser.instantiate_classes(cfg)
+        cfg_init = cast("Namespace", parser.instantiate_classes(cfg))
         trainer = cfg_init.trainer
         getattr(trainer, method_name)(model=cfg_init.model, datamodule=cfg_init.data)
         return 0
