@@ -54,7 +54,7 @@ def _dispatch(method_name: str) -> Callable[[ArgumentParser, Namespace], int]:
     """
 
     def _run(parser: ArgumentParser, cfg: Namespace) -> int:
-        cfg_init = parser.instantiate(cfg)
+        cfg_init = parser.instantiate_classes(cfg)
         trainer = cfg_init.trainer
         getattr(trainer, method_name)(model=cfg_init.model, datamodule=cfg_init.data)
         return 0
