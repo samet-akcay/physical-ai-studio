@@ -98,7 +98,7 @@ class ACT(ExportablePolicyMixin, Policy):
         vision_backbone: str = "resnet18",
         pretrained_backbone_weights: str | None = "ResNet18_Weights.IMAGENET1K_V1",
         replace_final_stride_with_dilation: bool = False,
-        image_size: tuple[int, int] = (512, 512),
+        image_size: tuple[int, int] = (384, 384),
         pre_norm: bool = False,
         dim_model: int = 512,
         n_heads: int = 8,
@@ -558,22 +558,33 @@ class ACT(ExportablePolicyMixin, Policy):
                 ),
             )
 
+        preproc_specs = [
+            ComponentSpec(
+                type="resize",
+                image_resolution=self.config.image_size,
+                mode="letterbox",
+            ),
+        ]
+
         extra_args: dict[str, ExportParameters] = {}
         output_names = [feature.name for feature in (self.outputs_schema or [])]
         extra_args["onnx"] = ONNXExportParameters(
             exporter_kwargs={
                 "output_names": output_names,
             },
+            preprocessors_specs=preproc_specs,
             postprocessors_specs=postproc_specs,
         )
         extra_args["openvino"] = OpenVINOExportParameters(
             outputs=output_names,
             export_tokenizer=False,
-            compress_to_fp16=False,
+            compress_to_fp16=True,
             exporter_kwargs={},
+            preprocessors_specs=preproc_specs,
             postprocessors_specs=postproc_specs,
         )
         extra_args["executorch"] = ExecuTorchExportParameters(
+            preprocessors_specs=preproc_specs,
             postprocessors_specs=postproc_specs,
         )
         extra_args["torch"] = TorchExportParameters(
