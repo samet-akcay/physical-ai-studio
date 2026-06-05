@@ -64,7 +64,9 @@ jobs:
           allowed-endpoints: >
             api.github.com:443
             auth.docker.io:443
+            centralus.data.mcr.microsoft.com:443
             eastus.data.mcr.microsoft.com:443
+            endoflife.date:443
             ghcr.io:443
             github.com:443
             hub.docker.com:443
@@ -72,6 +74,12 @@ jobs:
             mcr.microsoft.com:443
             pkg-containers.githubusercontent.com:443
             production.cloudflare.docker.com:443
+            production.cloudfront.docker.com:443
+            download-r2.pytorch.org:443
+            download.pytorch.org:443
+            files.pythonhosted.org:443
+            pypi.org:443
+            registry.npmjs.org:443
             release-assets.githubusercontent.com:443
 
       - name: Checkout
@@ -83,7 +91,7 @@ jobs:
         id: get-github-app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ secrets.RENOVATE_APP_ID }}
+          client-id: ${{ secrets.RENOVATE_APP_ID }}
           private-key: ${{ secrets.RENOVATE_APP_PEM }}
 
       - name: Self-hosted Renovate
