@@ -62,3 +62,8 @@
     --dv-floating-box-shadow: 0 8px 16px rgba(0, 0, 0, 0.3), 0 4px 8px rgba(0, 0, 0, 0.2);
     --dv-overlay-z-index: 999;
 }
+
+// Overwrite z-index of separator so that it doesn't get placed on top of dialogs
+:global(.dv-separator-border) :global(.dv-view:not(:first-child):before) {
+    z-index: 2 !important;
+}
