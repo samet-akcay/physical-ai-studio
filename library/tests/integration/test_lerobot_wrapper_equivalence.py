@@ -33,7 +33,7 @@ from lightning.pytorch.callbacks import Callback
 from physicalai.data import LeRobotDataModule
 from physicalai.data.lerobot import get_delta_timestamps_from_policy
 from physicalai.devices import get_available_device, get_device
-from physicalai.policies.lerobot import SUPPORTED_POLICIES, VALIDATED_EQUIVALENCE_POLICIES, LeRobotPolicy
+from physicalai.policies.lerobot import VALIDATED_EQUIVALENCE_POLICIES, LeRobotPolicy
 from physicalai.train import Trainer
 
 pytest.importorskip("lerobot", reason="LeRobot not installed")
@@ -41,7 +41,7 @@ pytest.importorskip("lerobot", reason="LeRobot not installed")
 DATASET_REPO_ID = "lerobot/aloha_sim_insertion_human"
 
 # VLA policies that need smaller batch/episode counts for GPU memory
-_VLA_POLICIES = {"pi0", "pi05", "pi0_fast", "groot"}
+_VLA_POLICIES = {"pi0", "pi05", "pi0_fast", "smolvla"}
 
 
 def _empty_accelerator_cache(device: torch.device) -> None:
@@ -51,23 +51,8 @@ def _empty_accelerator_cache(device: torch.device) -> None:
     elif device.type == "xpu" and hasattr(torch, "xpu") and hasattr(torch.xpu, "empty_cache"):
         torch.xpu.empty_cache()
 
-# Per-policy reasons why wrapper-vs-native equivalence cannot be validated.
-# Named (in SUPPORTED_POLICIES) but not yet validated end-to-end: registered as
-# xfail so test output stays honest and any future fix raises XPASS.
-_EQUIVALENCE_XFAIL_REASONS: dict[str, str] = {
-    "groot": "hardcodes flash_attention_2 in eagle2_hg_model (upstream lerobot)",
-    "xvla": "requires explicit `vision_config` kwarg, not derivable from dataset",
-}
 
-
-def _policy_param(policy_name: str):
-    reason = _EQUIVALENCE_XFAIL_REASONS.get(policy_name)
-    if reason is not None:
-        return pytest.param(policy_name, marks=pytest.mark.xfail(strict=False, reason=reason))
-    return policy_name
-
-
-ALL_POLICIES_PARAMS = [_policy_param(p) for p in SUPPORTED_POLICIES]
+EQUIVALENCE_POLICY_PARAMS = list(VALIDATED_EQUIVALENCE_POLICIES)
 
 
 def _vla_cpu_skip(policy_name: str) -> None:
@@ -465,7 +450,7 @@ def _assert_loss_decreases(losses: list[float], policy_name: str, label: str) ->
 # Tier 1: Fast-dev-run — single step, all policies, CI
 # ---------------------------------------------------------------------------- #
 class TestFastDevRunEquivalence:
-    @pytest.fixture(params=ALL_POLICIES_PARAMS)
+    @pytest.fixture(params=EQUIVALENCE_POLICY_PARAMS)
     def policy_name(self, request: pytest.FixtureRequest) -> str:
         name = str(request.param)
         _vla_cpu_skip(name)
@@ -490,7 +475,7 @@ class TestFastDevRunEquivalence:
 class TestMultiStepTrainerEquivalence:
     NUM_STEPS = 10
 
-    @pytest.fixture(params=ALL_POLICIES_PARAMS)
+    @pytest.fixture(params=EQUIVALENCE_POLICY_PARAMS)
     def policy_name(self, request: pytest.FixtureRequest) -> str:
         name = str(request.param)
         _vla_cpu_skip(name)
@@ -514,7 +499,7 @@ class TestMultiStepTrainerEquivalence:
 # Catches optimizer-independent wrapper bugs that loss-only checks miss.
 # ---------------------------------------------------------------------------- #
 class TestGradientEquivalence:
-    @pytest.fixture(params=ALL_POLICIES_PARAMS)
+    @pytest.fixture(params=EQUIVALENCE_POLICY_PARAMS)
     def policy_name(self, request: pytest.FixtureRequest) -> str:
         name = str(request.param)
         _vla_cpu_skip(name)
@@ -529,8 +514,15 @@ class TestGradientEquivalence:
         wrapper = wrapper.to(device)
         wrapper.train()
 
+        param_dtype = next(wrapper.lerobot_policy.parameters()).dtype
+        use_low_precision = param_dtype in (torch.bfloat16, torch.float16)
+
         torch.manual_seed(0)
-        wrapper_loss, _ = wrapper(_clone_batch(batch))
+        if use_low_precision:
+            with torch.autocast(device_type=device.type, dtype=param_dtype):
+                wrapper_loss, _ = wrapper(_clone_batch(batch))
+        else:
+            wrapper_loss, _ = wrapper(_clone_batch(batch))
         wrapper_loss.backward()
         wrapper_grads = {
             n: p.grad.detach().cpu().clone()
@@ -540,7 +532,11 @@ class TestGradientEquivalence:
 
         torch.manual_seed(0)
         preprocessed = wrapper._preprocessor(_clone_batch(batch))
-        native_out = native(preprocessed)
+        if use_low_precision:
+            with torch.autocast(device_type=device.type, dtype=param_dtype):
+                native_out = native(preprocessed)
+        else:
+            native_out = native(preprocessed)
         native_loss = native_out[0] if isinstance(native_out, tuple) else native_out
         native_loss.backward()
         native_grads = {
@@ -571,7 +567,7 @@ class TestGradientEquivalence:
 class TestWeightEquivalenceAfterTraining:
     NUM_STEPS = 10
 
-    @pytest.fixture(params=ALL_POLICIES_PARAMS)
+    @pytest.fixture(params=EQUIVALENCE_POLICY_PARAMS)
     def policy_name(self, request: pytest.FixtureRequest) -> str:
         name = str(request.param)
         _vla_cpu_skip(name)
@@ -617,7 +613,7 @@ class TestWeightEquivalenceAfterTraining:
 class TestRegressionTraining:
     NUM_STEPS = 50
 
-    @pytest.fixture(params=ALL_POLICIES_PARAMS)
+    @pytest.fixture(params=EQUIVALENCE_POLICY_PARAMS)
     def policy_name(self, request: pytest.FixtureRequest) -> str:
         name = str(request.param)
         _vla_cpu_skip(name)
