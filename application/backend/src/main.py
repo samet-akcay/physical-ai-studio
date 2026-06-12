@@ -29,7 +29,7 @@ from api.robots import router as project_robots_router
 from api.settings import router as settings_router
 from api.system import system_router
 from api.webui import SPAStaticFiles
-from core import lifespan
+from core.lifecycle import lifespan
 from exception_handlers import register_application_exception_handlers
 from middleware.upload_size_guard import upload_size_guard_middleware
 from settings import get_settings
