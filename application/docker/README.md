@@ -6,12 +6,24 @@ Docker container with support for CPU, Intel XPU, and NVIDIA CUDA hardware.
 
 ## Prerequisites
 
-- [**Docker Engine**](https://docs.docker.com/engine/install/ubuntu/) 24+ with **Docker Compose** v2
+- [**Docker Engine**](https://docs.docker.com/engine/install/ubuntu/) 24.0+ with **Docker Compose** v2.24.0+
 - A supported hardware backend:
   - **CPU** — any x86_64 system (default)
   - **Intel XPU** — Intel discrete/integrated GPU with Level Zero drivers on the host
   - **NVIDIA CUDA** — NVIDIA GPU with the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) installed
 - Robot hardware (optional): USB serial ports (`/dev/ttyACM*`), USB cameras (`/dev/video*`), or Intel RealSense cameras
+
+Check your installed versions with:
+
+```bash
+docker version
+docker compose version
+```
+
+Docker Compose v2.24.0+ is required because `docker-compose.yaml` uses long-form
+`env_file` entries with `required: false`. Older Compose versions may not pass
+`.env` values into the running container, which can break proxy-dependent model
+training even when `.env` looks correct on the host.
 
 ## Quick Start
 
@@ -269,3 +281,33 @@ NO_PROXY=localhost,127.0.0.1
 ```
 
 These are passed to both the Docker build process and the running container.
+
+If training fails with a network error such as `urlopen error [Errno 99] Cannot assign requested address`, first verify that the proxy settings are visible to Docker Compose and to the running container:
+
+```bash
+# Run from application/docker/
+grep -i proxy .env
+docker compose --profile cuda config | grep -i proxy
+docker exec physical-ai-studio-cuda env | grep -i proxy
+```
+
+Use the matching service name for your profile: `physical-ai-studio-cpu`, `physical-ai-studio-xpu`, or `physical-ai-studio-cuda`.
+
+If the values appear in `.env` but not in `docker compose ... config`, check your Docker Compose version and upgrade to v2.24.0+.
+
+If the values appear in `docker compose ... config` but not inside the running container, recreate the container after upgrading Docker Compose:
+
+```bash
+docker compose --profile cuda up -d --force-recreate
+```
+
+For corporate proxies, configure both uppercase and lowercase variables when required by your environment:
+
+```bash
+HTTP_PROXY=http://proxy.example.com:8080
+HTTPS_PROXY=http://proxy.example.com:8080
+NO_PROXY=localhost,127.0.0.1,::1
+http_proxy=http://proxy.example.com:8080
+https_proxy=http://proxy.example.com:8080
+no_proxy=localhost,127.0.0.1,::1
+```

@@ -13,8 +13,15 @@ Use our native setup if you are planning to contribute to the project and want t
 
 ## Install with Docker (recommended)
 
-Install [Docker Engine](https://docs.docker.com/engine/install/ubuntu/) 24+ with Docker Compose v2.
+Install [Docker Engine](https://docs.docker.com/engine/install/ubuntu/) 24.0+ with Docker Compose v2.24.0+.
 For hardware-specific setup, see the [Docker README](../docker/README.md).
+
+Check your installed versions with:
+
+```bash
+docker version
+docker compose version
+```
 
 Then from `application/docker/`:
 

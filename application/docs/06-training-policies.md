@@ -19,9 +19,56 @@ First, choose the model policy. We currently support:
 - SmolVLA
 - Pi0.5
 
+Some policies download assets from Hugging Face Hub during setup or training. Configure `HF_TOKEN` before training Hub-backed policies such as SmolVLA or Pi0.5, especially on shared networks or when using gated/private models.
+
 Depending on the amount of VRAM available on your GPU, you may need to adjust the advanced settings.
 These settings include _batch size_, _training steps_, _amount of data workers_, _precision_, and an option to _compile model_ before training.
 You may need to tune these settings to get an optimal result.
+
+## Hugging Face Hub access
+
+If `HF_TOKEN` is not set, the backend uses unauthenticated Hugging Face Hub access and may log a warning. Downloads can fail without a token because of anonymous rate limits or access restrictions on gated/private repositories.
+
+Use a token with read-only model access:
+
+- Required: `Read` permission for model repositories.
+- Not required: `Write` or admin permissions.
+- For gated/private models, use a Hugging Face account that has access to those repositories.
+- For fine-grained tokens, grant read access to the specific model repositories you plan to use.
+
+To create a token:
+
+1. Sign in to [huggingface.co](https://huggingface.co/).
+2. Open **Settings** -> **Access Tokens**.
+3. Create a new token.
+4. Set permissions to read-only model access.
+5. Copy the token value.
+
+For Docker deployments, add the token to `application/docker/.env`:
+
+```env
+HF_TOKEN=hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+```
+
+Then recreate or start the Docker stack from `application/docker/`:
+
+```bash
+docker compose up -d --force-recreate
+```
+
+For native backend deployments, add the token to `application/backend/.env`:
+
+```env
+HF_TOKEN=hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+```
+
+Then start the backend from `application/backend/`:
+
+```bash
+./run.sh
+```
+
+Never commit real tokens to source control. Store them only in local `.env` files or your secret manager, and rotate the token immediately if it is exposed.
 
 ## Monitor training progress
 
@@ -44,6 +91,23 @@ If a training job takes too long, you can interrupt it. This stores a checkpoint
 
 When training finishes we export the model to all its supported backends: [PyTorch](https://github.com/pytorch/pytorch), [OpenVINO](https://github.com/openvinotoolkit/openvino), [ONNX](https://github.com/onnx/onnx) and [ExecuTorch](https://github.com/pytorch/executorch).
 Download the model and then use [OpenVINO PhysicalAI](https://github.com/openvinotoolkit/physicalai) to deploy it on your hardware.
+
+## Troubleshooting training network errors
+
+If training fails with a network error such as `urlopen error [Errno 99] Cannot assign requested address`, verify that the running container has the expected proxy configuration. Some training paths and model policies may contact external services such as Hugging Face Hub.
+
+From `application/docker/`, check the host `.env`, the rendered Compose configuration, and the running container environment:
+
+```bash
+grep -i proxy .env
+docker compose config | grep -i proxy
+```
+
+If proxy values are present in `.env` but missing from `docker compose ... config` or from the running container, upgrade to Docker Compose v2.24.0+ and recreate the container:
+
+```bash
+docker compose up -d --force-recreate
+```
 
 ## Next
 
