@@ -46,7 +46,7 @@ dataset -> Observation -> train -> benchmark -> export -> manifest -> InferenceM
 
 The loop exists. This quarter is about scaling it to more SOTA policies, stronger benchmarks, more robots, and more cameras, while making the evidence measurable.
 
-The strongest platform differentiator is not just another policy implementation. It is the ability to take modern VLA / WAM policies and make them:
+Our strongest platform differentiator is not just another policy implementation. It is the ability to take modern VLA / WAM policies and make them:
 
 - trainable in Studio,
 - exportable to deployment backends,
@@ -122,13 +122,12 @@ Definition of done for a Q3 policy:
 
 ### 2. Scale up robot and camera support
 
-The runtime needs to run on more embodiments. This is not optional polish; it is part of the quarter goal.
-
-Target outcome:
+The runtime needs to run on more embodiments. Our target outcome:
 
 - Existing robots remain stable: SO-101, Trossen WidowX-AI, bimanual Trossen.
+  - Bimanual solution is to be scaled with a generic solution.
 - Add at least two new robot families in wave 1: Unitree and Seeed.
-- Add at least one industrial/research arm in wave 2: UR or Franka.
+- Add at least one industrial/research arm in wave 2: UR or Franka. --This is subject to the robots we will be ordering and receiving on time.
 - Finish IP camera support.
 - Decide whether to implement or remove placeholder support for ABB / GenICam.
 - Each supported robot has a minimal real-eval task.
@@ -137,7 +136,7 @@ Target outcome:
 
 The paper and internal roadmap need evidence, not just feature lists.
 
-Required measurements:
+The following list is our required measurements:
 
 - PyTorch vs exported backend parity.
 - Latency and throughput by backend and device.
