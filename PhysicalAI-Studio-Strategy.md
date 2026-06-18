@@ -12,7 +12,7 @@ Paper deadlines: **ICRA 16 Sep, ICLR 25 Sep, CVPR 14 Nov**
 
 ## Quarter Scope
 
-The Q3 goal is to **close the end-to-end train-to-deploy loop for VLA and WAM policies across as many supported robots and cameras as possible**.
+The Q3 goal is to **scale and harden the existing end-to-end train-to-deploy loop for VLA and WAM policies across as many supported robots and cameras as possible**.
 
 In scope:
 
@@ -44,7 +44,7 @@ The repo already has most of the spine:
 dataset -> Observation -> train -> benchmark -> export -> manifest -> InferenceModel.load -> PolicyRuntime -> robot
 ```
 
-This quarter is about making that spine reliable, broad, and measurable.
+The loop exists. This quarter is about scaling it to more SOTA policies, stronger benchmarks, more robots, and more cameras, while making the evidence measurable.
 
 The strongest platform differentiator is not just another policy implementation. It is the ability to take modern VLA / WAM policies and make them:
 
@@ -72,7 +72,11 @@ Already present:
 
 Main gaps:
 
-- Export support is uneven. ACT has broad backend coverage; Pi0 and GR00T are still effectively Torch-only.
+- Export support is uneven. Current backend coverage is:
+  - ACT: Torch, OpenVINO, ONNX, ExecuTorch.
+  - Pi0.5: Torch, OpenVINO. This is the current VLA baseline for us.
+  - SmolVLA: Torch, OpenVINO.
+  - Pi0 and GR00T: effectively Torch-only unless extended.
 - No export-equivalence harness yet.
 - Quantization is limited to FP16 OpenVINO compression; no INT8/PTQ workflow.
 - No shipped WAM policy class yet.
@@ -102,7 +106,7 @@ Main gaps:
 
 ## Q3 Priorities
 
-### 1. Close the train-to-deploy loop
+### 1. Scale and harden the train-to-deploy loop
 
 Every first-party policy in this quarter's plan should be treated as incomplete until it can be exported and validated.
 
@@ -148,7 +152,7 @@ Required measurements:
 | Item | Repo | Output | Owner |
 |---|---|---|---|
 | Export-equivalence harness | train | PyTorch vs Torch/ONNX/OpenVINO/ExecuTorch parity report | TBD |
-| Baseline backend coverage | train | ACT, Pi0, Pi0.5, SmolVLA export coverage improved and documented | TBD |
+| Baseline backend coverage | train | Export matrix documented; Pi0.5 baseline path hardened; Pi0/GR00T gaps scoped | TBD |
 | Adopt stronger sim benchmarks | train | `vla-eval` integration for LIBERO-Pro, SimplerEnv, RoboCasa, CALVIN | TBD |
 | Hardware wave 1 | runtime/backend | Unitree + Seeed support started or completed; IP camera implemented | TBD |
 | Real-hardware eval protocol | runtime/train | One frozen task per robot, common metrics, result format | TBD |
@@ -295,7 +299,7 @@ This can be represented first as a typed recipe/config. The UI can then wrap the
 | Edge deployment is useful | FP16/INT8 latency and quality tradeoff |
 | Policies are not only LIBERO demos | LIBERO-Pro, SimplerEnv, RoboCasa, CALVIN results |
 | Hardware support is real | Success rate and stability across 3-4 robot embodiments |
-| Loop is closed | End-to-end data -> train -> export -> deploy walkthrough |
+| Loop is scaled | End-to-end Pi0.5 baseline plus new SOTA VLA/WAM policies: data -> train -> export -> deploy |
 
 ## Open Decisions
 
@@ -310,7 +314,7 @@ This can be represented first as a typed recipe/config. The UI can then wrap the
 
 Qwen-Robot Suite is a useful reference for the longer-term architecture: manipulation, navigation, and world models as separate capabilities, composed by an agent layer.
 
-That is not the Q3 deliverable. The Q3 deliverable is the lower-level foundation that makes such a system credible: policies that can be trained, exported, validated, quantized, and deployed on real robots.
+That is not the Q3 deliverable. The Q3 deliverable is scaling the existing lower-level foundation that makes such a system credible: more policies that can be trained, exported, validated, quantized, and deployed on real robots.
 
 After Q3, likely next steps are:
 
@@ -321,4 +325,4 @@ After Q3, likely next steps are:
 - Cross-embodiment canonical state/action representation.
 - ROS2 / ZeroMQ nodes and remote inference execution.
 
-The sequencing is intentional: **make train-to-deploy reliable first; compose capabilities after that.**
+The sequencing is intentional: **scale and harden train-to-deploy first; compose capabilities after that.**
