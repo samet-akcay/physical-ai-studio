@@ -21,6 +21,7 @@ In scope:
 - Validate exported models against PyTorch behavior.
 - Add quantization and edge-performance measurements.
 - Expand robot and camera support.
+- Add simulation environment support in the library, surfaced through Studio.
 - Run exported policies through the runtime on real hardware.
 - Provide a minimal one-flow path: dataset -> train -> export -> deploy.
 
@@ -66,7 +67,7 @@ Already present:
 - `Observation` data abstraction with numpy and torch support.
 - `LeRobotDataModule` and batch-first Lightning data flow.
 - Lightning-based training and jsonargparse configs.
-- Benchmark runner with LIBERO and PushT support.
+- Benchmark runner with LIBERO and PushT support, built on the shared `Gym` abstraction.
 - Export mixin for Torch, ONNX, OpenVINO, and ExecuTorch.
 - Studio CLI subcommands: `fit`, `validate`, `test`, `predict`, `benchmark`, `export`.
 
@@ -98,9 +99,9 @@ Already present:
 Main gaps:
 
 - Robot support is narrow for the target scope.
-- UR / ABB / Franka extras are placeholders.
-- No Unitree or Seeed implementation yet.
-- IP camera is a stub; GenICam extra is not implemented.
+- UR / Franka extras are placeholders.
+- No Unitree R1D, Oversonic, or OpenArm2 implementation yet.
+- Q3 camera agenda is UVC, GMSL, MIPI, and GenICam. UVC is supported; GMSL, MIPI, and GenICam need implementation or validation.
 - YAML deploy / `PolicyRuntime.from_config()` flow is not complete.
 - Remote execution and richer telemetry are preview/scaffolding.
 
@@ -125,11 +126,11 @@ Definition of done for a Q3 policy:
 The runtime needs to run on more embodiments. Our target outcome:
 
 - Existing robots remain stable: SO-101, Trossen WidowX-AI, bimanual Trossen.
-  - Bimanual solution is to be scaled with a generic solution.
-- Add at least two new robot families in wave 1: Unitree and Seeed.
-- Add at least one industrial/research arm in wave 2: UR or Franka. --This is subject to the robots we will be ordering and receiving on time.
-- Finish IP camera support.
-- Decide whether to implement or remove placeholder support for ABB / GenICam.
+- Generalize bimanual support where possible instead of treating bimanual Trossen as a one-off.
+- Add the robot families on the Q3 agenda as hardware arrives: UR, Franka, Unitree R1D, Oversonic, and OpenArm2.
+- Prioritize work by delivery date, SDK availability, and whether a safe real-eval task can be defined quickly.
+- Expand camera support for the Q3 agenda: UVC, GMSL, MIPI, and GenICam.
+- Decide whether non-agenda camera paths such as IP camera remain in scope this quarter.
 - Each supported robot has a minimal real-eval task.
 
 ### 3. Measure what matters
@@ -142,6 +143,7 @@ The following list is our required measurements:
 - Latency and throughput by backend and device.
 - Quantized vs non-quantized latency and accuracy.
 - Sim benchmark results on non-saturated tasks.
+- Simulation rollout compatibility for MuJoCo and Isaac Lab targets.
 - Real-hardware success rate and runtime stability.
 
 ## Work Plan
@@ -153,7 +155,7 @@ The following list is our required measurements:
 | Export-equivalence harness | train | PyTorch vs Torch/ONNX/OpenVINO/ExecuTorch parity report | TBD |
 | Baseline backend coverage | train | Export matrix documented; Pi0.5 baseline path hardened; Pi0/GR00T gaps scoped | TBD |
 | Adopt stronger sim benchmarks | train | `vla-eval` integration for LIBERO-Pro, SimplerEnv, RoboCasa, CALVIN | TBD |
-| Hardware wave 1 | runtime/backend | Unitree + Seeed support started or completed; IP camera implemented | TBD |
+| Hardware wave 1 | runtime/backend | First available agenda robots integrated; UVC path validated; GMSL/MIPI/GenICam scoped | TBD |
 | Real-hardware eval protocol | runtime/train | One frozen task per robot, common metrics, result format | TBD |
 | Dataset freeze plan | train/backend | Dataset collection cutoff and model evaluation schedule | TBD |
 
@@ -163,7 +165,8 @@ The following list is our required measurements:
 |---|---|---|---|
 | INT8/PTQ quantization | train/runtime | Calibration workflow, backend support matrix, latency/accuracy curves | TBD |
 | First-party policy builds | train | 4+ VLA/WAM policies implemented and exportable | TBD |
-| Hardware wave 2 | runtime/backend | UR or Franka support; backend setup/calibration path | TBD |
+| Hardware wave 2 | runtime/backend | Remaining agenda robots integrated; backend setup/calibration paths | TBD |
+| Simulation env support | train/backend | MuJoCo adapter/benchmark path; Isaac Lab adapter design or first task | TBD |
 | Policy I/O standardization | train/runtime | Consistent input/output feature schema for UI, export, runtime | TBD |
 | One-flow loop UX | backend/ui/cli | dataset -> train -> export -> deploy recipe/config path | TBD |
 | GR00T cleanup | train/backend | GR00T wired into backend/UI; N1.7 refactor plan or implementation | TBD |
@@ -175,7 +178,7 @@ The following list is our required measurements:
 | `PolicyRuntime.from_config()` | runtime | YAML deploy path works reliably |
 | Dataset quality/versioning | train/backend | Dataset versioning or quality report tooling |
 | World-model data format | train | Minimal WAM data contract for DreamZero-class models |
-| One heavier sim | train | Isaac-sim or equivalent for one flagship policy, if feasible |
+| Isaac Lab hardening | train/backend | One selected Isaac Lab task runnable through benchmark flow, if feasible |
 
 ## Policy Implementation Plan
 
@@ -204,16 +207,20 @@ Implementation order for each model:
 |---|---|---|---|
 | Robot | SO-101 | Existing | Keep stable; include in eval |
 | Robot | Trossen WidowX-AI | Existing | Keep stable; include in eval |
-| Robot | Bimanual Trossen | Existing | Include if tasks are ready |
-| Robot | Unitree | Missing | Wave 1 target |
-| Robot | Seeed arm | Missing | Wave 1 target |
-| Robot | UR or Franka | Placeholder/missing | Wave 2 target; choose one |
-| Robot | ABB | Placeholder | Implement or remove placeholder |
-| Camera | UVC/V4L2 | Existing | Validate across robot setups |
-| Camera | RealSense | Existing | Validate RGBD path |
-| Camera | Basler | Existing | Validate industrial-camera path |
-| Camera | IP camera | Stub | Wave 1 target |
-| Camera | GenICam | Placeholder | Implement or remove placeholder |
+| Robot | Bimanual Trossen | Existing | Keep available; generalize bimanual handling where possible |
+| Robot | Unitree R1D | Missing | Agenda target; prioritize by hardware arrival |
+| Robot | UR | Placeholder/missing | Agenda target |
+| Robot | Franka | Placeholder/missing | Agenda target |
+| Robot | Oversonic | Missing | Agenda target |
+| Robot | OpenArm2 | Missing | Agenda target |
+| Robot | ABB | Placeholder | Not on Q3 agenda; remove placeholder unless owned |
+| Camera | UVC/V4L2 | Existing | Baseline camera path; validate across robot setups |
+| Camera | GMSL | Missing | Agenda target; define backend and hardware requirements |
+| Camera | MIPI | Missing | Agenda target; define backend and hardware requirements |
+| Camera | GenICam | Placeholder/missing | Agenda target; implement or validate with target camera |
+| Camera | RealSense | Existing | Keep available as RGBD path, but not the main Q3 agenda |
+| Camera | Basler | Existing | Keep available; likely covered through GenICam path if applicable |
+| Camera | IP camera | Stub | Non-agenda; defer unless explicitly needed |
 
 For each new robot, deliver:
 
@@ -246,6 +253,47 @@ Track but do not reimplement this quarter:
 - RoboChallenge / Table30
 - MolmoSpaces
 - DexBench
+
+## Simulation Environment Support
+
+Simulation support should live in `physicalai-train` first and be surfaced by Studio. The library already has the core shape:
+
+```text
+Gym adapter -> Observation -> evaluate_policy -> Benchmark -> results/video
+```
+
+Existing pieces:
+
+- `physicalai.gyms.Gym` defines the simulator interface: `reset`, `step`, `render`, `close`, `sample_action`, `to_observation`.
+- `GymnasiumGym` already adapts Gymnasium-style environments into `Observation`.
+- `Benchmark` already evaluates either a PyTorch `Policy` or exported `InferenceModel` over a list of gyms.
+- LIBERO and PushT are examples of specialized benchmark wrappers around this path.
+
+What is needed for MuJoCo:
+
+- Add a MuJoCo/Gymnasium task adapter where generic `GymnasiumGym` is not enough.
+- Normalize MuJoCo observations into `Observation.state`, `Observation.images`, and `Observation.extra`.
+- Define task success extraction through `info["success"]`, `info["is_success"]`, or task-specific keys.
+- Add a `MuJoCoBenchmark` wrapper that creates the task list and sets default episode counts, seeds, and max steps.
+- Add optional dependency extra, for example `physicalai-train[mujoco]`.
+
+What is needed for Isaac Lab:
+
+- Add an Isaac Lab-specific `Gym` adapter. Do not rely on generic `GymnasiumGym` unless the target Isaac tasks cleanly expose the Gymnasium API.
+- Handle vectorized GPU environments explicitly. Isaac observations/actions may already be batched and device-resident.
+- Convert camera tensors, robot state, task language, rewards, and success flags into the existing `Observation` contract.
+- Add an `IsaacLabBenchmark` wrapper for selected tasks, with clear install and launch requirements.
+- Keep Isaac behind an optional extra, for example `physicalai-train[isaac]`, because dependencies and runtime requirements are heavy.
+
+Studio should not own simulator semantics. Studio should:
+
+- list available simulation environments,
+- launch benchmark or rollout jobs,
+- pass config to the library benchmark classes,
+- store generated metrics, videos, and datasets,
+- show results in the UI.
+
+The library remains the source of truth for simulator adapters, rollout logic, benchmark protocols, and dataset conversion.
 
 ## Export and Quantization Plan
 
@@ -289,7 +337,7 @@ select/import dataset
 
 This can be represented first as a typed recipe/config. The UI can then wrap the same recipe as a guided flow.
 
-## Evidence For The Paper
+## Evidence for the Paper
 
 | Claim | Evidence |
 |---|---|
@@ -297,14 +345,17 @@ This can be represented first as a typed recipe/config. The UI can then wrap the
 | Runtime is practical | Latency/throughput on CPU/GPU/NPU/CUDA where available |
 | Edge deployment is useful | FP16/INT8 latency and quality tradeoff |
 | Policies are not only LIBERO demos | LIBERO-Pro, SimplerEnv, RoboCasa, CALVIN results |
+| Simulation support is reusable | MuJoCo/Isaac Lab tasks run through the same `Gym` -> `Benchmark` path |
 | Hardware support is real | Success rate and stability across 3-4 robot embodiments |
 | Loop is scaled | End-to-end Pi0.5 baseline plus new SOTA VLA/WAM policies: data -> train -> export -> deploy |
 
 ## Open Decisions
 
 - E4 model: RLDX-1 or Qwen-RobotManip?
-- Industrial arm: UR or Franka?
-- ABB and GenICam: implement this quarter or remove placeholders?
+- Hardware sequencing: which agenda robots arrive first, and who owns each driver?
+- ABB: remove placeholder unless someone owns it this quarter?
+- Camera sequencing: which GMSL/MIPI/GenICam devices arrive first, and who owns each path?
+- Simulation sequencing: MuJoCo first and Isaac Lab second, or parallel owners?
 - Minimum robot count for paper table: 3 or 4 embodiments?
 - DreamZero/WAM data format: can it fit `LeRobotDataModule`, or do we need a new format?
 - Owners for each P0 item.
