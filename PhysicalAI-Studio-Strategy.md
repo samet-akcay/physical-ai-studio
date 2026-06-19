@@ -39,7 +39,7 @@ Out:
 - Agentic orchestration.
 - Navigation/VLN.
 - ROS2 / ZeroMQ.
-- RL / DAgger, except WAM data decisions.
+- RL / DAgger, except generic data-contract decisions.
 
 ## Current State
 
@@ -123,7 +123,7 @@ Gaps:
 |---|---|---|
 | Runtime config | runtime | YAML deploy path |
 | Dataset quality | train/backend | Quality/version report |
-| WAM data | train | DreamZero-class data contract |
+| Data contract | train | Generic `Observation` contract for VLA/WAM |
 | Isaac Lab | train/backend | One task through benchmark flow |
 
 ## Model Plan
@@ -299,7 +299,7 @@ Implement recipe/config first, UI second.
 - Camera order/owners: GMSL, MIPI, GenICam.
 - Simulation owners: MuJoCo, Isaac Lab.
 - Paper robot count: 3 or 4?
-- DreamZero data: `LeRobotDataModule` or new format?
+- Data contract: extend `Observation`/`LeRobotDataModule` or add a new generic format?
 - P0 owners.
 
 ## Later
