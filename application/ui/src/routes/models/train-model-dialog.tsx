@@ -28,7 +28,7 @@ import { SchemaDeviceInfo, SchemaTrainJob as SchemaJob, SchemaModel } from '../.
 import { useProject } from '../../features/projects/use-project';
 import { InlineAlert } from '../../features/robots/setup-wizard/shared/inline-alert';
 
-import classes from './train-model-dialog.module.scss';
+import classes from './train-model-dialog.module.css';
 
 export type SchemaTrainJob = Omit<SchemaJob, 'payload'> & {
     payload: SchemaJob['payload'];
@@ -476,7 +476,7 @@ export const TrainModelDialog = ({ baseModel, close, defaultMaxSteps = 10000 }: 
                 <Button variant='secondary' onPress={() => close(undefined)}>
                     Cancel
                 </Button>
-                <Button variant='accent' onPress={save}>
+                <Button variant='accent' onPress={save} isDisabled={!selectedDataset || !selectedPolicy}>
                     Train
                 </Button>
             </ButtonGroup>

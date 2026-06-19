@@ -1,11 +1,12 @@
 import { Heading, IllustratedMessage, Item, TabList, TabPanels, Tabs, View } from '@geti-ui/ui';
 
 import { SchemaModel } from '../../api/openapi-spec';
+import { ModelDetails } from '../../features/models/details/model-details';
 import { ModelFormats } from '../../features/models/formats/model-formats';
 import { ReactComponent as EmptyIllustration } from './../../assets/illustration.svg';
 import { MetricsContent } from './metrics';
 
-import classes from './model-row-content.module.scss';
+import classes from './model-row-content.module.css';
 
 const ComingSoon = () => {
     return (
@@ -41,7 +42,7 @@ export const ModelRowContent = ({ model }: ModelRowContentProps) => {
                         <ComingSoon />
                     </Item>
                     <Item key='training_details'>
-                        <ComingSoon />
+                        <ModelDetails model={model} />
                     </Item>
                 </TabPanels>
             </Tabs>

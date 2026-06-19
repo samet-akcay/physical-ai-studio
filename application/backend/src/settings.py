@@ -49,7 +49,6 @@ class Settings(BaseSettings):
     openapi_url: str = "/api/openapi.json"
     debug: bool = Field(default=False, alias="DEBUG")
     environment: Literal["dev", "prod"] = "dev"
-    data_dir: Path = Field(default=Path("data"), alias="DATA_DIR")
     storage_dir: Path = Field(default_factory=get_default_storage_dir, alias="STORAGE_DIR")
     static_files_dir: str | None = Field(default=None, alias="STATIC_FILES_DIR")
 
@@ -81,6 +80,11 @@ class Settings(BaseSettings):
     def datasets_dir(self) -> Path:
         """Storage directory for datasets."""
         return self.storage_dir / "datasets"
+
+    @property
+    def data_dir(self) -> Path:
+        """Storage directory for application data."""
+        return self.storage_dir / "data"
 
     @property
     def snapshot_dir(self) -> Path:
@@ -116,8 +120,8 @@ class Settings(BaseSettings):
     db_echo: bool = Field(default=False, alias="DB_ECHO")
 
     # Alembic
-    alembic_config_path: str = "src/alembic.ini"
-    alembic_script_location: str = "src/alembic"
+    alembic_config_path: str = Field(default="src/alembic.ini", alias="ALEMBIC_CONFIG_PATH")
+    alembic_script_location: str = Field(default="src/alembic", alias="ALEMBIC_SCRIPT_LOCATION")
 
     # Proxy settings
     no_proxy: str = Field(default="localhost,127.0.0.1,::1", alias="no_proxy")

@@ -1,4 +1,18 @@
-import { ActionButton, Button, Flex, Grid, Item, Key, Menu, MenuTrigger, ProgressBar, Text, View } from '@geti-ui/ui';
+import {
+    ActionButton,
+    AlertDialog,
+    Button,
+    DialogTrigger,
+    Flex,
+    Grid,
+    Item,
+    Key,
+    Menu,
+    MenuTrigger,
+    ProgressBar,
+    Text,
+    View,
+} from '@geti-ui/ui';
 import { MoreMenu } from '@geti-ui/ui/icons';
 
 import { $api } from '../../api/client';
@@ -9,7 +23,7 @@ import { SingleBadge, SplitBadge } from './split-badge.component';
 import { SchemaTrainJob } from './train-model-dialog';
 import { durationBetween, elapsedSince } from './utils';
 
-import classes from './model-table.module.scss';
+import classes from './model-table.module.css';
 
 export const TrainingHeader = () => {
     return (
@@ -124,9 +138,22 @@ export const TrainingRow = ({
                         <Text>{trainJob.payload.policy.toUpperCase()}</Text>
                         <View>
                             {trainJob.status === 'running' && (
-                                <Button variant='secondary' onPress={onInterrupt}>
-                                    Interrupt
-                                </Button>
+                                <DialogTrigger>
+                                    <Button variant='secondary'>Stop</Button>
+                                    <AlertDialog
+                                        onPrimaryAction={onInterrupt}
+                                        title='Stop training?'
+                                        variant='destructive'
+                                        primaryActionLabel='Stop'
+                                        cancelLabel='Cancel'
+                                    >
+                                        Stop training for {trainJob.payload.model_name}?
+                                        <br />
+                                        <br />
+                                        Your model checkpoint will be saved at the current step. You cannot resume this
+                                        run.
+                                    </AlertDialog>
+                                </DialogTrigger>
                             )}
                         </View>
                         <View justifySelf={'end'}>
