@@ -1,328 +1,268 @@
 # PhysicalAI Studio Q3 Strategy
 
-This document aligns the `physicalai-train` and `physicalai` runtime teams for this quarter.
+Align `physicalai-train` and `physicalai` runtime for Q3.
 
-Companion tracking files:
+Sources: [`policies.csv`](./policies.csv), [`benchmark.csv`](./benchmark.csv), [`PhysicalAI-Studio-Feature-Improvements.md`](./PhysicalAI-Studio-Feature-Improvements.md)
 
-- [`policies.csv`](./policies.csv)
-- [`benchmark.csv`](./benchmark.csv)
-- [`PhysicalAI-Studio-Feature-Improvements.md`](./PhysicalAI-Studio-Feature-Improvements.md)
+Deadlines: **ICRA 16 Sep, ICLR 25 Sep, CVPR 14 Nov**
 
-Paper deadlines: **ICRA 16 Sep, ICLR 25 Sep, CVPR 14 Nov**
+## Goal
 
-## Quarter Scope
+Maximize high-value VLA/WAM model coverage. Each model must be trained, benchmarked, exported, parity-tested, runtime-loaded, and deployed when hardware is available.
 
-The Q3 goal is to **scale and harden the existing end-to-end train-to-deploy loop for VLA and WAM policies across as many supported robots and cameras as possible**.
-
-In scope:
-
-- Train and benchmark first-party VLA / WAM policies.
-- Export policies to deployable formats: Torch, ONNX, OpenVINO, ExecuTorch where feasible.
-- Validate exported models against PyTorch behavior.
-- Add quantization and edge-performance measurements.
-- Expand robot and camera support.
-- Add simulation environment support in the library, surfaced through Studio.
-- Run exported policies through the runtime on real hardware.
-- Provide a minimal one-flow path: dataset -> train -> export -> deploy.
-
-Out of scope for Q3:
-
-- Agentic orchestration / RobotClaw-style planner.
-- Navigation as a separate VLN pillar.
-- Full manipulation/navigation/world-model service separation.
-- ROS2 / ZeroMQ runtime nodes.
-- RL / DAgger track, except where needed to unblock WAM data design.
-
-These are longer-term directions and are summarized at the end.
-
-## Working Thesis
-
-PhysicalAI Studio should be the open route from robot data to a model running on real hardware.
-
-The repo already has most of the spine:
+Existing loop:
 
 ```text
 dataset -> Observation -> train -> benchmark -> export -> manifest -> InferenceModel.load -> PolicyRuntime -> robot
 ```
 
-The loop exists. This quarter is about scaling it to more SOTA policies, stronger benchmarks, more robots, and more cameras, while making the evidence measurable.
+Q3 success: Pi0.5 baseline plus `policies.csv` Build P1/P2 models reach this loop or are explicitly blocked.
 
-Our strongest platform differentiator is not just another policy implementation. It is the ability to take modern VLA / WAM policies and make them:
+## Scope
 
-- trainable in Studio,
-- exportable to deployment backends,
-- validated numerically,
-- quantized where useful,
-- runnable in real time,
-- usable across multiple robots and cameras.
+In:
+
+- Build P1/P2 VLA/WAM policies.
+- Per-model benchmark coverage.
+- Torch, ONNX, OpenVINO, ExecuTorch export where supported.
+- PyTorch/export parity.
+- INT8/PTQ workflow.
+- Stronger sim benchmarks.
+- MuJoCo and Isaac Lab via `physicalai-train`.
+- Robots: UR, Franka, Unitree R1D, Oversonic, OpenArm2.
+- Cameras: UVC, GMSL, MIPI, GenICam.
+- Real-hardware eval.
+- Minimal dataset -> train -> export -> deploy flow.
+
+Out:
+
+- Agentic orchestration.
+- Navigation/VLN.
+- ROS2 / ZeroMQ.
+- RL / DAgger, except WAM data decisions.
 
 ## Current State
 
 ### `physicalai-train`
 
-Already present:
+Exists:
 
-- First-party policies: ACT, Pi0, Pi0.5, SmolVLA, GR00T-N1.5.
-- LeRobot policy wrappers for additional LeRobot models.
-- `Observation` data abstraction with numpy and torch support.
-- `LeRobotDataModule` and batch-first Lightning data flow.
-- Lightning-based training and jsonargparse configs.
-- Benchmark runner with LIBERO and PushT support, built on the shared `Gym` abstraction.
-- Export mixin for Torch, ONNX, OpenVINO, and ExecuTorch.
-- Studio CLI subcommands: `fit`, `validate`, `test`, `predict`, `benchmark`, `export`.
+- Policies: ACT, Pi0, Pi0.5, SmolVLA, GR00T-N1.5.
+- LeRobot wrappers.
+- `Observation`, `LeRobotDataModule`, Lightning training.
+- LIBERO/PushT via `Gym`.
+- Export mixin: Torch, ONNX, OpenVINO, ExecuTorch.
+- CLI: `fit`, `validate`, `test`, `predict`, `benchmark`, `export`.
 
-Main gaps:
+Gaps:
 
-- Export support is uneven. Current backend coverage is:
+- Model coverage: Build P1/P2 models are not end-to-end.
+- E2E path lacks broad coverage: train -> benchmark -> export -> parity -> runtime load -> sim/real eval.
+- Export matrix:
   - ACT: Torch, OpenVINO, ONNX, ExecuTorch.
-  - Pi0.5: Torch, OpenVINO. This is the current VLA baseline for us.
+  - Pi0.5: Torch, OpenVINO. Current VLA baseline.
   - SmolVLA: Torch, OpenVINO.
-  - Pi0 and GR00T: effectively Torch-only unless extended.
-- No export-equivalence harness yet.
-- Quantization is limited to FP16 OpenVINO compression; no INT8/PTQ workflow.
-- No shipped WAM policy class yet.
-- Backend/UI does not expose all policies consistently.
+  - Pi0, GR00T: Torch-only unless extended.
+- Missing: export-equivalence harness, INT8/PTQ, WAM policy, standardized latency/throughput, full backend/UI policy exposure.
 
 ### `physicalai` Runtime
 
-Already present:
+Exists:
 
-- `InferenceModel.load(export_dir)` with manifest-driven loading.
-- OpenVINO and ONNX Runtime adapters.
-- Torch and ExecuTorch adapter extension point from Studio.
-- `PolicyRuntime` with Sync, Async, and RTC execution.
-- Manifest schema for artifacts, pre/post-processing, input/output features, robot/camera metadata.
-- Robot interface and implementations for SO-101 and Trossen WidowX-AI, including bimanual Trossen.
-- Camera support for UVC/V4L2, RealSense, Basler.
-- iceoryx2 shared-memory camera transport.
+- `InferenceModel.load(export_dir)`.
+- OpenVINO, ONNX Runtime.
+- Studio Torch/ExecuTorch adapters.
+- `PolicyRuntime`: Sync, Async, RTC.
+- Manifest schema.
+- Robots: SO-101, Trossen WidowX-AI, bimanual Trossen.
+- Cameras: UVC/V4L2, RealSense, Basler.
+- iceoryx2 camera transport.
 
-Main gaps:
+Gaps:
 
-- Robot support is narrow for the target scope.
-- UR / Franka extras are placeholders.
-- No Unitree R1D, Oversonic, or OpenArm2 implementation yet.
-- Q3 camera agenda is UVC, GMSL, MIPI, and GenICam. UVC is supported; GMSL, MIPI, and GenICam need implementation or validation.
-- YAML deploy / `PolicyRuntime.from_config()` flow is not complete.
-- Remote execution and richer telemetry are preview/scaffolding.
+- Missing robots: UR, Franka, Unitree R1D, Oversonic, OpenArm2.
+- UR/Franka extras are placeholders.
+- Missing/unvalidated cameras: GMSL, MIPI, GenICam.
+- `PolicyRuntime.from_config()` incomplete.
+- Remote execution and telemetry are scaffolding.
 
-## Q3 Priorities
+## Priorities
 
-### 1. Scale and harden the train-to-deploy loop
+1. Model coverage.
+2. E2E validation per model.
+3. Benchmark breadth.
+4. Deployment breadth.
 
-Every first-party policy in this quarter's plan should be treated as incomplete until it can be exported and validated.
-
-Definition of done for a Q3 policy:
-
-- Config / model / policy classes are implemented.
-- Training recipe is available.
-- Benchmark entry is available.
-- Export works for at least the planned backends.
-- Export-equivalence test passes within agreed tolerance.
-- Runtime loading works via `InferenceModel.load(...)`.
-- At least one real-hardware deployment path is tested, where feasible.
-
-### 2. Scale up robot and camera support
-
-The runtime needs to run on more embodiments. Our target outcome:
-
-- Existing robots remain stable: SO-101, Trossen WidowX-AI, bimanual Trossen.
-- Generalize bimanual support where possible instead of treating bimanual Trossen as a one-off.
-- Add the robot families on the Q3 agenda as hardware arrives: UR, Franka, Unitree R1D, Oversonic, and OpenArm2.
-- Prioritize work by delivery date, SDK availability, and whether a safe real-eval task can be defined quickly.
-- Expand camera support for the Q3 agenda: UVC, GMSL, MIPI, and GenICam.
-- Decide whether non-agenda camera paths such as IP camera remain in scope this quarter.
-- Each supported robot has a minimal real-eval task.
-
-### 3. Measure what matters
-
-The paper and internal roadmap need evidence, not just feature lists.
-
-The following list is our required measurements:
-
-- PyTorch vs exported backend parity.
-- Latency and throughput by backend and device.
-- Quantized vs non-quantized latency and accuracy.
-- Sim benchmark results on non-saturated tasks.
-- Simulation rollout compatibility for MuJoCo and Isaac Lab targets.
-- Real-hardware success rate and runtime stability.
-
-## Work Plan
-
-### P0: Required for the quarter
+### P0
 
 | Item | Repo | Output | Owner |
 |---|---|---|---|
-| Export-equivalence harness | train | PyTorch vs Torch/ONNX/OpenVINO/ExecuTorch parity report | TBD |
-| Baseline backend coverage | train | Export matrix documented; Pi0.5 baseline path hardened; Pi0/GR00T gaps scoped | TBD |
-| Adopt stronger sim benchmarks | train | `vla-eval` integration for LIBERO-Pro, SimplerEnv, RoboCasa, CALVIN | TBD |
-| Hardware wave 1 | runtime/backend | First available agenda robots integrated; UVC path validated; GMSL/MIPI/GenICam scoped | TBD |
-| Real-hardware eval protocol | runtime/train | One frozen task per robot, common metrics, result format | TBD |
-| Dataset freeze plan | train/backend | Dataset collection cutoff and model evaluation schedule | TBD |
+| Export parity | train | PyTorch vs exported-backend report | TBD |
+| Model plan | train | Owners and E2E criteria per Build P1/P2 model | TBD |
+| Baseline export | train | Pi0.5 hardened; Pi0/GR00T gaps scoped | TBD |
+| Benchmarks | train | First-party RoboCasa; `vla-eval` plugin | TBD |
+| Hardware wave 1 | runtime/backend | First agenda robots; UVC validated; GMSL/MIPI/GenICam scoped | TBD |
+| Real eval | runtime/train | Frozen task, metrics, result format per robot | TBD |
+| Dataset freeze | train/backend | Collection cutoff and eval schedule | TBD |
 
-### P1: Strong differentiators
+### P1
 
 | Item | Repo | Output | Owner |
 |---|---|---|---|
-| INT8/PTQ quantization | train/runtime | Calibration workflow, backend support matrix, latency/accuracy curves | TBD |
-| First-party policy builds | train | 4+ VLA/WAM policies implemented and exportable | TBD |
-| Hardware wave 2 | runtime/backend | Remaining agenda robots integrated; backend setup/calibration paths | TBD |
-| Simulation env support | train/backend | MuJoCo adapter/benchmark path; Isaac Lab adapter design or first task | TBD |
-| Policy I/O standardization | train/runtime | Consistent input/output feature schema for UI, export, runtime | TBD |
-| One-flow loop UX | backend/ui/cli | dataset -> train -> export -> deploy recipe/config path | TBD |
-| GR00T cleanup | train/backend | GR00T wired into backend/UI; N1.7 refactor plan or implementation | TBD |
+| Policy builds | train | 7 Build P1/P2 models exportable or blocked | TBD |
+| INT8/PTQ | train/runtime | Calibration, support matrix, latency/accuracy | TBD |
+| Hardware wave 2 | runtime/backend | Remaining agenda robots | TBD |
+| Simulation | train/backend | MuJoCo path; Isaac Lab design or first task | TBD |
+| Policy I/O | train/runtime | Shared input/output schema | TBD |
+| One-flow UX | backend/ui/cli | dataset -> train -> export -> deploy recipe | TBD |
+| GR00T | train/backend | N1.7 plan or implementation; backend/UI wiring | TBD |
 
-### P2: If P0/P1 are on track
+### P2
 
 | Item | Repo | Output |
 |---|---|---|
-| `PolicyRuntime.from_config()` | runtime | YAML deploy path works reliably |
-| Dataset quality/versioning | train/backend | Dataset versioning or quality report tooling |
-| World-model data format | train | Minimal WAM data contract for DreamZero-class models |
-| Isaac Lab hardening | train/backend | One selected Isaac Lab task runnable through benchmark flow, if feasible |
+| Runtime config | runtime | YAML deploy path |
+| Dataset quality | train/backend | Quality/version report |
+| WAM data | train | DreamZero-class data contract |
+| Isaac Lab | train/backend | One task through benchmark flow |
 
-## Policy Implementation Plan
+## Model Plan
 
-We expect 4+ dedicated engineers. Each engineer should own one model end-to-end.
+Source: `policies.csv`. One engineer owns each Build P1/P2 model.
 
-| Engineer | Model | Class | Why | Backend target |
+| Owner | Model | Priority | Class | Target backends |
 |---|---|---|---|---|
-| E1 | MolmoAct 2 | VLA | Strong export-value model; LeRobot lacks deployment backends | ONNX + OpenVINO + ExecuTorch |
-| E2 | VLA-JEPA | VLA + latent WM | Good robustness story; lower export complexity if WM is dropped at inference | ONNX + OpenVINO + Torch |
-| E3 | DreamZero | WAM | Adds world-action model class; important for Q3 scope | Torch + ONNX; OpenVINO stretch |
-| E4 | RLDX-1 or Qwen-RobotManip | VLA | RLDX-1 gives tactile/torque axis; Qwen-RobotManip gives direct Qwen-suite relevance | ONNX + OpenVINO |
-| E5+ | GR00T N1.7, Spirit v1.5, or LingBot-VLA | VLA | Prefer finishing GR00T before adding another model if resources are limited | TBD |
+| E1 | MolmoAct 2 | Build P1 | ARM/VLA | ONNX, OpenVINO, ExecuTorch |
+| E2 | RLDX-1 | Build P1 | VLA + tactile/torque | ONNX, OpenVINO |
+| E3 | DreamZero | Build P1 | WAM | Torch, ONNX; OpenVINO stretch |
+| E4 | VLA-JEPA | Build P1 | VLA + latent WM | ONNX, OpenVINO, Torch |
+| E5 | Spirit v1.5 | Build P2 | VLA | ONNX, OpenVINO |
+| E6 | LingBot-VLA | Build P2 | VLA | ONNX, OpenVINO |
+| E7 | Qwen-VLA | Build P2 | VLA | ONNX, OpenVINO |
 
-Implementation order for each model:
+Refactor:
 
-1. Get training/parity running on a known dataset.
-2. Add benchmark entry.
-3. Add export path.
-4. Pass export-equivalence tests.
-5. Load with runtime `InferenceModel.load(...)`.
-6. Run on at least one real robot, where feasible.
-
-## Hardware Scale-Up Plan
-
-| Type | Target | Status | Quarter target |
+| Owner | Model | Priority | Target |
 |---|---|---|---|
-| Robot | SO-101 | Existing | Keep stable; include in eval |
-| Robot | Trossen WidowX-AI | Existing | Keep stable; include in eval |
-| Robot | Bimanual Trossen | Existing | Keep available; generalize bimanual handling where possible |
-| Robot | Unitree R1D | Missing | Agenda target; prioritize by hardware arrival |
-| Robot | UR | Placeholder/missing | Agenda target |
-| Robot | Franka | Placeholder/missing | Agenda target |
-| Robot | Oversonic | Missing | Agenda target |
-| Robot | OpenArm2 | Missing | Agenda target |
-| Robot | ABB | Placeholder | Not on Q3 agenda; remove placeholder unless owned |
-| Camera | UVC/V4L2 | Existing | Baseline camera path; validate across robot setups |
-| Camera | GMSL | Missing | Agenda target; define backend and hardware requirements |
-| Camera | MIPI | Missing | Agenda target; define backend and hardware requirements |
-| Camera | GenICam | Placeholder/missing | Agenda target; implement or validate with target camera |
-| Camera | RealSense | Existing | Keep available as RGBD path, but not the main Q3 agenda |
-| Camera | Basler | Existing | Keep available; likely covered through GenICam path if applicable |
-| Camera | IP camera | Stub | Non-agenda; defer unless explicitly needed |
+| TBD | GR00T N1.7 | Refactor P2 | N1.7, backend/UI, swappable VLM, export gaps |
 
-For each new robot, deliver:
+Evaluate:
 
-- Runtime driver implementing the `Robot` protocol.
-- Backend setup and calibration flow.
-- UI setup path where needed.
-- Minimal smoke test.
-- One real-eval task.
-- Documentation for connection, calibration, and safety limits.
+| Model | Priority | Decision |
+|---|---|---|
+| mimic-video | Evaluate | Openness, weights, benchmark value |
+| LeWorldModel | Evaluate P3 | Planner module or policy |
+| InternVLA-M1 | Evaluate P3 | License, weights, LeRobot status |
+| GigaBrain-0.5M | Evaluate P3 | Open weights/buildability |
+| LingBot-VA | Evaluate P3 | Compare with DreamZero |
+| TD-MPC2 | Evaluate P3 | Defer unless RL enters scope |
+| DreamerV3 | Evaluate P3 | Defer unless RL enters scope |
+| V-JEPA 2/2.1 | Evaluate P3 | Backbone only; track via VLA-JEPA |
+
+Done per model:
+
+1. Training/parity on known data.
+2. Benchmark entry.
+3. Export path.
+4. Export-equivalence pass.
+5. `InferenceModel.load(...)` pass.
+6. Real-robot run when hardware exists.
+
+## Hardware Plan
+
+| Type | Target | Status | Q3 |
+|---|---|---|---|
+| Robot | SO-101 | Existing | Keep/evaluate |
+| Robot | Trossen WidowX-AI | Existing | Keep/evaluate |
+| Robot | Bimanual Trossen | Existing | Generalize bimanual |
+| Robot | Unitree R1D | Missing | Add |
+| Robot | UR | Placeholder/missing | Add |
+| Robot | Franka | Placeholder/missing | Add |
+| Robot | Oversonic | Missing | Add |
+| Robot | OpenArm2 | Missing | Add |
+| Robot | ABB | Placeholder | Remove unless owned |
+| Camera | UVC/V4L2 | Existing | Validate |
+| Camera | GMSL | Missing | Scope/add |
+| Camera | MIPI | Missing | Scope/add |
+| Camera | GenICam | Placeholder/missing | Add/validate |
+| Camera | RealSense | Existing | Keep |
+| Camera | Basler | Existing | Keep; align with GenICam |
+| Camera | IP camera | Stub | Defer unless needed |
+
+New robot acceptance:
+
+- `Robot` driver.
+- Backend setup/calibration.
+- UI setup if needed.
+- Smoke test.
+- Real-eval task.
+- Safety docs.
 
 ## Benchmark Plan
 
-Use external benchmark harnesses where possible. Build only the benchmarks that are unique to our platform.
+First-party:
 
-Adopt:
+- Existing: PushT, LIBERO.
+- Add: RoboCasa.
+- Build: export-equivalence harness, real-hardware eval harness.
 
-- LIBERO-Pro
-- SimplerEnv
-- RoboCasa
-- CALVIN
+Plugin:
 
-Build first-party:
+- Add `vla-eval` plugin, like the LeRobot policy plugin.
+- Goal: run supported `vla-eval` benchmarks off the shelf.
+- Do not reimplement `vla-eval` benchmarks first-party.
 
-- Export-equivalence harness.
-- Real-hardware eval harness.
+Track: RoboArena, RoboChallenge/Table30, MolmoSpaces, DexBench.
 
-Track but do not reimplement this quarter:
+## Simulation Plan
 
-- RoboArena
-- RoboChallenge / Table30
-- MolmoSpaces
-- DexBench
+Library owns simulator semantics. Studio launches and displays jobs.
 
-## Simulation Environment Support
-
-Simulation support should live in `physicalai-train` first and be surfaced by Studio. The library already has the core shape:
+Path:
 
 ```text
 Gym adapter -> Observation -> evaluate_policy -> Benchmark -> results/video
 ```
 
-Existing pieces:
+MuJoCo:
 
-- `physicalai.gyms.Gym` defines the simulator interface: `reset`, `step`, `render`, `close`, `sample_action`, `to_observation`.
-- `GymnasiumGym` already adapts Gymnasium-style environments into `Observation`.
-- `Benchmark` already evaluates either a PyTorch `Policy` or exported `InferenceModel` over a list of gyms.
-- LIBERO and PushT are examples of specialized benchmark wrappers around this path.
+- `physicalai-train[mujoco]`.
+- `MuJoCoGym` if `GymnasiumGym` is insufficient.
+- Observation and success mapping.
+- `MuJoCoBenchmark`.
 
-What is needed for MuJoCo:
+Isaac Lab:
 
-- Add a MuJoCo/Gymnasium task adapter where generic `GymnasiumGym` is not enough.
-- Normalize MuJoCo observations into `Observation.state`, `Observation.images`, and `Observation.extra`.
-- Define task success extraction through `info["success"]`, `info["is_success"]`, or task-specific keys.
-- Add a `MuJoCoBenchmark` wrapper that creates the task list and sets default episode counts, seeds, and max steps.
-- Add optional dependency extra, for example `physicalai-train[mujoco]`.
+- `physicalai-train[isaac]`.
+- `IsaacLabGym`.
+- Batched GPU obs/action handling.
+- Observation and success mapping.
+- `IsaacLabBenchmark`.
+- Install/launch docs.
 
-What is needed for Isaac Lab:
+Studio:
 
-- Add an Isaac Lab-specific `Gym` adapter. Do not rely on generic `GymnasiumGym` unless the target Isaac tasks cleanly expose the Gymnasium API.
-- Handle vectorized GPU environments explicitly. Isaac observations/actions may already be batched and device-resident.
-- Convert camera tensors, robot state, task language, rewards, and success flags into the existing `Observation` contract.
-- Add an `IsaacLabBenchmark` wrapper for selected tasks, with clear install and launch requirements.
-- Keep Isaac behind an optional extra, for example `physicalai-train[isaac]`, because dependencies and runtime requirements are heavy.
+- List envs/tasks.
+- Launch jobs.
+- Pass configs.
+- Store metrics, videos, datasets.
+- Display results.
 
-Studio should not own simulator semantics. Studio should:
+## Export and Quantization
 
-- list available simulation environments,
-- launch benchmark or rollout jobs,
-- pass config to the library benchmark classes,
-- store generated metrics, videos, and datasets,
-- show results in the UI.
+Track: `policy x backend x precision x device x parity status`.
 
-The library remains the source of truth for simulator adapters, rollout logic, benchmark protocols, and dataset conversion.
+Backends: Torch, ONNX, OpenVINO, ExecuTorch.
 
-## Export and Quantization Plan
+Quantization:
 
-Export support should be tracked as a matrix:
+- Keep FP16 OpenVINO.
+- Add NNCF INT8/PTQ.
+- Define calibration input.
+- Report latency/accuracy.
+- Do not default to INT8 until validated.
 
-```text
-policy x backend x precision x device x parity status
-```
-
-Minimum expected backends:
-
-- Torch for development and debugging.
-- ONNX for portability.
-- OpenVINO for Intel edge deployment.
-- ExecuTorch where feasible.
-
-Quantization scope:
-
-- Keep FP16 OpenVINO compression.
-- Add INT8/PTQ workflow, likely NNCF-based.
-- Define calibration data input.
-- Report latency/accuracy tradeoff.
-- Do not make INT8 default until parity and quality are understood.
-
-## One-Flow Loop
-
-The UX goal for this quarter is not an agent. It is a simple, reproducible path from data to deployment.
-
-Target flow:
+## One-Flow UX
 
 ```text
 select/import dataset
@@ -330,49 +270,46 @@ select/import dataset
 -> train
 -> benchmark
 -> export
--> validate exported model
+-> validate export
 -> select robot/cameras
--> deploy with runtime config
+-> deploy
 ```
 
-This can be represented first as a typed recipe/config. The UI can then wrap the same recipe as a guided flow.
+Implement recipe/config first, UI second.
 
-## Evidence for the Paper
+## Paper Evidence
 
 | Claim | Evidence |
 |---|---|
-| Export is reliable | PyTorch vs exported backend parity table |
-| Runtime is practical | Latency/throughput on CPU/GPU/NPU/CUDA where available |
-| Edge deployment is useful | FP16/INT8 latency and quality tradeoff |
-| Policies are not only LIBERO demos | LIBERO-Pro, SimplerEnv, RoboCasa, CALVIN results |
-| Simulation support is reusable | MuJoCo/Isaac Lab tasks run through the same `Gym` -> `Benchmark` path |
-| Hardware support is real | Success rate and stability across 3-4 robot embodiments |
-| Loop is scaled | End-to-end Pi0.5 baseline plus new SOTA VLA/WAM policies: data -> train -> export -> deploy |
+| Export works | PyTorch/export parity |
+| Runtime works | Latency/throughput by device/backend |
+| Edge works | FP16/INT8 latency and quality |
+| Policies generalize | First-party LIBERO/RoboCasa plus `vla-eval` plugin results |
+| Simulation is reusable | MuJoCo/Isaac Lab via `Gym` -> `Benchmark` |
+| Hardware works | Success/stability across 3-4 embodiments |
+| Coverage scaled | Pi0.5 plus 7 Build P1/P2 models end-to-end or blocked |
 
 ## Open Decisions
 
-- E4 model: RLDX-1 or Qwen-RobotManip?
-- Hardware sequencing: which agenda robots arrive first, and who owns each driver?
-- ABB: remove placeholder unless someone owns it this quarter?
-- Camera sequencing: which GMSL/MIPI/GenICam devices arrive first, and who owns each path?
-- Simulation sequencing: MuJoCo first and Isaac Lab second, or parallel owners?
-- Minimum robot count for paper table: 3 or 4 embodiments?
-- DreamZero/WAM data format: can it fit `LeRobotDataModule`, or do we need a new format?
-- Owners for each P0 item.
+- Confirm E1-E7 owners/backups.
+- Assign GR00T owner.
+- Assign Evaluate queue owner.
+- Robot order/owners: UR, Franka, Unitree R1D, Oversonic, OpenArm2.
+- ABB: remove unless owned?
+- Camera order/owners: GMSL, MIPI, GenICam.
+- Simulation owners: MuJoCo, Isaac Lab.
+- Paper robot count: 3 or 4?
+- DreamZero data: `LeRobotDataModule` or new format?
+- P0 owners.
 
-## Longer-Term Direction
+## Later
 
-Qwen-Robot Suite is a useful reference for the longer-term architecture: manipulation, navigation, and world models as separate capabilities, composed by an agent layer.
+- Agentic orchestration.
+- Navigation/VLN.
+- World model as data generator/evaluator.
+- RL / DAgger.
+- Cross-embodiment canonical state/action.
+- ROS2 / ZeroMQ.
+- Remote inference.
 
-That is not the Q3 deliverable. The Q3 deliverable is scaling the existing lower-level foundation that makes such a system credible: more policies that can be trained, exported, validated, quantized, and deployed on real robots.
-
-After Q3, likely next steps are:
-
-- Agentic orchestration layer where a planner calls exported policies as tools.
-- Navigation/VLN policy class and nav-sim integration.
-- World model used as synthetic data engine and evaluator.
-- RL / DAgger data formats and online learning support.
-- Cross-embodiment canonical state/action representation.
-- ROS2 / ZeroMQ nodes and remote inference execution.
-
-The sequencing is intentional: **scale and harden train-to-deploy first; compose capabilities after that.**
+Sequence: **scale train-to-deploy first; compose later.**
