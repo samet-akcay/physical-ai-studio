@@ -1,10 +1,9 @@
 # PhysicalAI Studio Q3 Strategy
 
-Align `physicalai-train` and `physicalai` runtime for Q3.
+This document is to align the team on the execution items of `physicalai-train` and `physicalai` runtime for Q3.
 
-Sources: [`policies.csv`](./policies.csv), [`benchmark.csv`](./benchmark.csv), [`PhysicalAI-Studio-Feature-Improvements.md`](./PhysicalAI-Studio-Feature-Improvements.md)
-
-Deadlines: **ICRA 16 Sep, ICLR 25 Sep, CVPR 14 Nov**
+- Sources: [PAI Feature Tracker for Q3](https://intel-my.sharepoint.com/:x:/p/samet_akcay/IQDD_l82x1_fQ6HCf-bRDq5cAbJDy_bhaqAv7wJQdnR7vUE?e=CaF6My)
+- Deadlines: **ICRA 16 Sep, ICLR 25 Sep, CVPR 14 Nov** or ArXiV in case we miss these previous deadlines.
 
 ## Goal
 
@@ -15,8 +14,6 @@ Existing loop:
 ```text
 dataset -> Observation -> train -> benchmark -> export -> manifest -> InferenceModel.load -> PolicyRuntime -> robot
 ```
-
-Q3 success: Pi0.5 baseline plus `policies.csv` Build P1/P2 models reach this loop or are explicitly blocked.
 
 ## Scope
 
@@ -29,12 +26,12 @@ In:
 - INT8/PTQ workflow.
 - Stronger sim benchmarks.
 - MuJoCo and Isaac Lab via `physicalai-train`.
-- Robots: UR, Franka, Unitree R1D, Oversonic, OpenArm2.
+- Robots: UR, Franka, Unitree R1D, OpenArm2 and Oversonic (optional).
 - Cameras: UVC, GMSL, MIPI, GenICam.
-- Real-hardware eval.
+- Real-hardware eval setup.
 - Minimal dataset -> train -> export -> deploy flow.
 
-Out:
+Out (Future Work):
 
 - Agentic orchestration.
 - Navigation/VLN.
@@ -84,6 +81,7 @@ Gaps:
 - UR/Franka extras are placeholders.
 - Missing/unvalidated cameras: GMSL, MIPI, GenICam.
 - `PolicyRuntime.from_config()` incomplete.
+- RTC might require refactoring
 - Remote execution and telemetry are scaffolding.
 
 ## Priorities
@@ -128,7 +126,7 @@ Gaps:
 
 ## Model Plan
 
-Source: `policies.csv`. One engineer owns each Build P1/P2 model.
+Source: [PAI Feature Tracker for Q3](https://intel-my.sharepoint.com/:x:/p/samet_akcay/IQDD_l82x1_fQ6HCf-bRDq5cAbJDy_bhaqAv7wJQdnR7vUE?e=CaF6My). One engineer owns each Build P1/P2 model.
 
 | Owner | Model | Priority | Class | Target backends |
 |---|---|---|---|---|
@@ -302,7 +300,7 @@ Implement recipe/config first, UI second.
 - Data contract: extend `Observation`/`LeRobotDataModule` or add a new generic format?
 - P0 owners.
 
-## Later
+## Future Work
 
 - Agentic orchestration.
 - Navigation/VLN.
