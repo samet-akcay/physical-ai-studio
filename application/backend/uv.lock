@@ -2614,7 +2614,7 @@ requires-dist = [
     { name = "click", specifier = ">=8.3.0" },
     { name = "cv2-enumerate-cameras" },
     { name = "executorch", specifier = ">=1.1.0" },
-    { name = "fastapi", extras = ["standard"] },
+    { name = "fastapi", extras = ["standard"], specifier = "<1" },
     { name = "greenlet", specifier = ">=3.2.4" },
     { name = "harvesters", marker = "sys_platform != 'darwin'" },
     { name = "lerobot", extras = ["feetech"], specifier = "==0.5.1" },

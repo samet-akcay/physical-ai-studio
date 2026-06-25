@@ -1,7 +1,7 @@
 [project]
 name = "physicalai-studio"
 version = "0.1.0"
-description = "Physical AI Studio server"
+description = "Physical AI Studio"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
 
@@ -9,7 +9,7 @@ dependencies = [
   "opencv-python",
   "cv2-enumerate-cameras",
   'harvesters; sys_platform != "darwin"',
-  "fastapi[standard]",
+  "fastapi[standard]<1",
   "physicalai-train[pi0,smolvla]",
   "physicalai[robots, capture]",
   "lerobot[feetech]==0.5.1",
@@ -40,14 +40,20 @@ dependencies = [
 physicalai-studio = "cli:cli"
 
 [build-system]
-requires = ["setuptools>=69", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
-[tool.setuptools]
-package-dir = {"" = "src"}
+[tool.hatch.build.targets.wheel]
+only-include = ["src"]
+sources = ["src"]
+exclude = [
+  "src/**/*.egg-info/**",
+  "src/**/__pycache__/**",
+]
 
-[tool.setuptools.packages.find]
-where = ["src"]
+[tool.hatch.build.hooks.custom]
+path = "scripts/hatch_build.py"
+
 
 [project.optional-dependencies]
 cpu = [
