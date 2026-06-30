@@ -30,10 +30,10 @@ In:
 - Cameras: UVC, GMSL, MIPI, GenICam.
 - Real-hardware eval setup.
 - Minimal dataset -> train -> export -> deploy flow.
+- Agentic orchestration exploration for year-end pipeline design.
 
-Out (Future Work):
+Out of Q3 delivery:
 
-- Agentic orchestration.
 - Navigation/VLN.
 - ROS2 / ZeroMQ.
 - RL / DAgger, except generic data-contract decisions.
@@ -90,6 +90,7 @@ Gaps:
 2. E2E validation per model.
 3. Benchmark breadth.
 4. Deployment breadth.
+5. Year-end orchestration design.
 
 ### P0
 
@@ -114,6 +115,7 @@ Gaps:
 | Policy I/O | train/runtime | Shared input/output schema | TBD |
 | One-flow UX | backend/ui/cli | dataset -> train -> export -> deploy recipe | TBD |
 | GR00T | train/backend | N1.7 plan or implementation; backend/UI wiring | TBD |
+| Orchestration exploration | train/runtime/backend | Year-end Qwen-style design: manipulation, navigation, world, agent | TBD |
 
 ### P2
 
@@ -275,6 +277,20 @@ select/import dataset
 
 Implement recipe/config first, UI second.
 
+## Agentic Orchestration Exploration
+
+Goal: design the year-end pipeline, not ship it in Q3.
+
+Reference: Qwen Robot Suite pattern — manipulation, navigation, world model, agent layer.
+
+Q3 output:
+
+- Capability map: current manipulation/VLA, WAM, missing navigation/VLN.
+- Tool interface sketch for exported policies.
+- Agent/runtime boundary proposal.
+- Data and observation requirements for orchestration.
+- Year-end implementation plan.
+
 ## Paper Evidence
 
 | Claim | Evidence |
@@ -286,6 +302,7 @@ Implement recipe/config first, UI second.
 | Simulation is reusable | MuJoCo/Isaac Lab via `Gym` -> `Benchmark` |
 | Hardware works | Success/stability across 3-4 embodiments |
 | Coverage scaled | Pi0.5 plus 7 Build P1/P2 models end-to-end or blocked |
+| Year-end pipeline scoped | Manipulation/navigation/world/agent design document |
 
 ## Open Decisions
 
@@ -296,14 +313,15 @@ Implement recipe/config first, UI second.
 - ABB: remove unless owned?
 - Camera order/owners: GMSL, MIPI, GenICam.
 - Simulation owners: MuJoCo, Isaac Lab.
+- Orchestration exploration owner.
 - Paper robot count: 3 or 4?
 - Data contract: extend `Observation`/`LeRobotDataModule` or add a new generic format?
 - P0 owners.
 
 ## Future Work
 
-- Agentic orchestration.
-- Navigation/VLN.
+- Agentic orchestration implementation.
+- Navigation/VLN implementation.
 - World model as data generator/evaluator.
 - RL / DAgger.
 - Cross-embodiment canonical state/action.
