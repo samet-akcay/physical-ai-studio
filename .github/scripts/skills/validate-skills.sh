@@ -67,10 +67,6 @@ for bucket in library application; do
   shopt -u nullglob
 done
 
-if [[ ! -f skills/sync-manifest.yaml ]]; then
-  fail "Missing skills/sync-manifest.yaml"
-fi
-
 if [[ "$errors" -gt 0 ]]; then
   echo "Skills validation failed with $errors error(s)."
   exit 1

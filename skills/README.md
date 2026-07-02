@@ -94,14 +94,6 @@ python3 .github/scripts/skills/link_skills.py
 
 Then dry-run the workflow in the skill end-to-end and fix any step where an agent could stall or guess.
 
-## Publishing to open-edge-platform/skills
+## Org skills catalog (`open-edge-platform/skills`)
 
-Studio is the **source of truth** under `skills/`. On push to `main` that touches `skills/**`, [`.github/workflows/publish-skills.yml`](../.github/workflows/publish-skills.yml) assembles a bundle and opens a PR on [`open-edge-platform/skills`](https://github.com/open-edge-platform/skills) under `physical-ai-studio/`.
-
-Configure repository secret **`OEP_SKILLS_SYNC_TOKEN`**: a fine-scoped PAT or GitHub App installation token with **contents** and **pull requests** write access to `open-edge-platform/skills`. The workflow runs only on `open-edge-platform/physical-ai-studio`.
-
-Sync layout is defined in [`sync-manifest.yaml`](sync-manifest.yaml). Regenerate local adapter symlinks after adding a skill:
-
-```bash
-python3 .github/scripts/skills/link_skills.py
-```
+Studio is the **source of truth** under `skills/`. The org [`open-edge-platform/skills`](https://github.com/open-edge-platform/skills) repo pulls from product repos on its own schedule (see `scripts/update_skills_index.py` and related workflows there — same pattern as dlstreamer). **Do not** open PRs from Studio into that repo; register or update this product in the skills-repo automation instead.

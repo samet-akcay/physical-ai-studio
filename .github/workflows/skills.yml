@@ -38,7 +38,7 @@ jobs:
           persist-credentials: false
 
       - name: Link client skill adapters
-        run: bash .github/scripts/skills/link-skills.sh
+        run: python3 .github/scripts/skills/link_skills.py
 
       - name: Validate skills and adapter symlinks
         run: bash .github/scripts/skills/validate-skills.sh
