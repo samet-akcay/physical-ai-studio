@@ -2,7 +2,7 @@
 # Validate skills/ layout, SKILL.md frontmatter, and client adapter symlinks.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 cd "$ROOT"
 
 errors=0
@@ -40,7 +40,7 @@ check_skill_dir() {
   for adapter in .claude/skills .agents/skills; do
     local link="$adapter/$name"
     if [[ ! -L "$link" ]]; then
-      fail "Missing symlink $link (run .github/scripts/link-skills.sh)"
+      fail "Missing symlink $link (run .github/scripts/skills/link-skills.sh)"
       continue
     fi
     if [[ ! -f "$link/SKILL.md" ]]; then

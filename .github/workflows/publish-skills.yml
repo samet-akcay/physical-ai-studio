@@ -7,9 +7,7 @@ on:
     paths:
       - "skills/**"
       - ".github/workflows/publish-skills.yml"
-      - ".github/scripts/assemble-skills-bundle.sh"
-      - ".github/scripts/validate-skills.sh"
-      - ".github/scripts/link-skills.sh"
+      - ".github/scripts/skills/**"
   workflow_dispatch:
 
 permissions: {}
@@ -27,8 +25,11 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Link client skill adapters
+        run: bash .github/scripts/skills/link-skills.sh
+
       - name: Validate skills
-        run: bash .github/scripts/validate-skills.sh
+        run: bash .github/scripts/skills/validate-skills.sh
 
       - name: Assemble skills bundle
         env:
@@ -38,7 +39,7 @@ jobs:
         run: |
           set -euo pipefail
           BUNDLE_ROOT="$(mktemp -d)"
-          bash .github/scripts/assemble-skills-bundle.sh "$BUNDLE_ROOT"
+          bash .github/scripts/skills/assemble-skills-bundle.sh "$BUNDLE_ROOT"
           echo "BUNDLE_ROOT=$BUNDLE_ROOT" >> "$GITHUB_ENV"
 
       - name: Sync to open-edge-platform/skills and open PR

@@ -8,16 +8,14 @@ on:
       - "skills/**"
       - ".claude/skills/**"
       - ".agents/skills/**"
-      - ".github/scripts/validate-skills.sh"
-      - ".github/scripts/link-skills.sh"
+      - ".github/scripts/skills/**"
       - ".github/workflows/skills.yml"
   pull_request:
     paths:
       - "skills/**"
       - ".claude/skills/**"
       - ".agents/skills/**"
-      - ".github/scripts/validate-skills.sh"
-      - ".github/scripts/link-skills.sh"
+      - ".github/scripts/skills/**"
       - ".github/workflows/skills.yml"
   workflow_dispatch:
 
@@ -39,5 +37,8 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Link client skill adapters
+        run: bash .github/scripts/skills/link-skills.sh
+
       - name: Validate skills and adapter symlinks
-        run: bash .github/scripts/validate-skills.sh
+        run: bash .github/scripts/skills/validate-skills.sh

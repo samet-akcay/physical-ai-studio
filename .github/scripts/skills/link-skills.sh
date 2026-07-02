@@ -2,7 +2,7 @@
 # Recreate flat .claude/skills and .agents/skills symlinks from skills/{library,application}/.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 cd "$ROOT"
 
 mkdir -p .claude/skills .agents/skills

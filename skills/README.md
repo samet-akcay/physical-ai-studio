@@ -28,12 +28,16 @@ skills/
     └── <skill-name>/
 ```
 
-Client adapters expose skills through symlinks:
+Client adapters are **local symlinks** (not committed — Git stores symlink targets without a trailing newline, which pollutes PR diffs):
 
 - `.claude/skills/<name>` → `../../skills/<bucket>/<name>`
 - `.agents/skills/<name>` → `../../skills/<bucket>/<name>`
 
-Add both symlinks whenever you add a skill (see the bucket README).
+After clone or when you add a skill, run:
+
+```bash
+bash .github/scripts/skills/link-skills.sh
+```
 
 ## Authoring standard
 
@@ -87,7 +91,7 @@ BUCKET=library   # or application
 NAME=library-my-workflow
 mkdir -p "skills/$BUCKET/$NAME"
 $EDITOR "skills/$BUCKET/$NAME/SKILL.md"
-bash .github/scripts/link-skills.sh
+bash .github/scripts/skills/link-skills.sh
 ```
 
 Then dry-run the workflow in the skill end-to-end and fix any step where an agent could stall or guess.
@@ -101,5 +105,5 @@ Configure repository secret **`OEP_SKILLS_SYNC_TOKEN`**: a fine-scoped PAT or Gi
 Sync layout is defined in [`sync-manifest.yaml`](sync-manifest.yaml). Regenerate local adapter symlinks after adding a skill:
 
 ```bash
-bash .github/scripts/link-skills.sh
+bash .github/scripts/skills/link-skills.sh
 ```

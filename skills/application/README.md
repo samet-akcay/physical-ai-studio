@@ -16,7 +16,7 @@ When the first skill lands, add [`EVALUATION.md`](EVALUATION.md) with at least t
 NAME=studio-my-workflow
 mkdir -p "skills/application/$NAME"
 $EDITOR "skills/application/$NAME/SKILL.md"
-bash .github/scripts/link-skills.sh
+bash .github/scripts/skills/link-skills.sh
 ```
 
 Global authoring rules: [`../README.md`](../README.md).

@@ -22,7 +22,7 @@ New library skills must pass at least three scenarios in [`EVALUATION.md`](EVALU
 NAME=library-my-workflow
 mkdir -p "skills/library/$NAME"
 $EDITOR "skills/library/$NAME/SKILL.md"
-bash .github/scripts/link-skills.sh
+bash .github/scripts/skills/link-skills.sh
 ```
 
 Global authoring rules: [`../README.md`](../README.md).

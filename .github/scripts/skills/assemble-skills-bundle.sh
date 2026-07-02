@@ -3,7 +3,7 @@
 # Keep "include" copies in sync with skills/sync-manifest.yaml.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 cd "$ROOT"
 
 OUT="${1:?usage: assemble-skills-bundle.sh <output-dir>}"
