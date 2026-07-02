@@ -61,15 +61,6 @@ source .venv/bin/activate
 
 Server starts at `http://localhost:8000`
 
-### Seed Database (Development)
-
-```bash
-# Seed with sample data and pre-trained model
-SEED_DB=true ./run.sh
-```
-
-**Note**: Ensure model artifacts are uploaded before seeding.
-
 ### Database Migrations
 
 ```bash
@@ -87,10 +78,10 @@ uv run alembic downgrade -1
 
 ```bash
 # Initialize database
-uv run src/cli.py init-db
+uv run physicalai-studio db init
 
-# Seed database with sample data
-uv run src/cli.py seed --with-model=True
+# Run migrations
+uv run physicalai-studio db migrate
 ```
 
 ## API Documentation
@@ -105,12 +96,9 @@ Once the server is running:
 
 Configuration via environment variables (see `src/settings.py`):
 
-| Variable       | Description              | Default                               |
-| -------------- | ------------------------ | ------------------------------------- |
-| `DATABASE_URL` | SQLite database path     | `sqlite+aiosqlite:///./physicalai.db` |
-| `CORS_ORIGINS` | Allowed CORS origins     | `["http://localhost:3000"]`           |
-| `LOG_LEVEL`    | Logging level            | `INFO`                                |
-| `SEED_DB`      | Seed database on startup | `false`                               |
+| Variable      | Description                                                                                                  | Default                                                                                                 |
+|---------------|--------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------|
+| `STORAGE_DIR` | Root directory for persistent artifacts (`datasets/`, `models/`, `snapshots/`, `robots/`, `cache/`, `logs/`) | Linux: `${XDG_DATA_HOME:-~/.local/share}/physicalai`; macOS: `~/Library/Application Support/physicalai` |
 
 Create `.env` file in backend directory for local overrides.
 
@@ -150,25 +138,20 @@ uv run pyrefly check -c pyproject.toml
 
 ## Troubleshooting
 
-### Database Locked Error
+### Data/Storage Migration Behavior
 
-SQLite doesn't handle high concurrency well. For production, use PostgreSQL:
+On startup (`./run.sh`), the backend runs migration checks before Alembic:
 
-```bash
-export DATABASE_URL="postgresql+asyncpg://user:pass@localhost/physicalai"
-```
+- Storage migration: old `~/.cache/physicalai` -> `STORAGE_DIR`
+- Database migration: old `data/physicalai.db`, Docker legacy `/app/data/physicalai.db`, or a legacy `$DATA_DIR/physicalai.db` -> `$STORAGE_DIR/data/physicalai.db`
+
+In interactive terminals, users are prompted for confirmation when a migration is needed.
 
 ### Camera Not Detected
 
 - **RealSense**: Install [librealsense](https://github.com/IntelRealSense/librealsense)
 - **GenICam**: Install vendor-specific SDKs
 - **USB**: Check permissions (`sudo usermod -a -G video $USER`)
-
-### WebRTC Connection Issues
-
-- Ensure firewall allows UDP traffic
-- Check browser console for ICE candidate errors
-- Verify STUN/TURN server configuration
 
 ## See Also
 
