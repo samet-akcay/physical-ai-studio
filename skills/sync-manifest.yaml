@@ -1,0 +1,29 @@
+# Source-of-truth metadata for syncing skills to open-edge-platform/skills.
+# Paths are relative to the repository root.
+
+product: physical-ai-studio
+
+oep:
+  repository: open-edge-platform/skills
+  # Folder created/updated in the org skills repo (one namespace per product).
+  path: physical-ai-studio
+
+buckets:
+  library:
+    source: skills/library
+    # Skill directories use the library- prefix (see skills/README.md).
+    skill_prefix: library-
+  application:
+    source: skills/application
+    skill_prefix: studio-
+
+# Bucket-level files copied alongside skill directories (not Agent Skills themselves).
+include:
+  - source: skills/library/README.md
+    dest: library/README.md
+  - source: skills/library/EVALUATION.md
+    dest: library/EVALUATION.md
+  - source: skills/application/README.md
+    dest: application/README.md
+  - source: skills/publish/oep/README.md
+    dest: README.md

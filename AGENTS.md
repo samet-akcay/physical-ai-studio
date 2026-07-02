@@ -7,7 +7,7 @@ Physical AI Studio is the training-side repo for the Physical AI workflow: colle
 - `library/`: `physicalai-train`, the Python library for data, policies, training, benchmarking, export, and Studio-owned `physicalai` CLI subcommands.
 - `application/backend/`: FastAPI backend for the GUI and orchestration workflows.
 - `application/ui/`: React frontend that consumes generated OpenAPI types.
-- `skills/`: canonical agent skills for repo-specific workflows. Client adapters may expose these through `.claude/skills/`, `.agents/skills/`, or other client paths.
+- `skills/library/`: agent skills for `physicalai-train` (policies, CLI, configs). `skills/application/`: skills for the GUI stack (backend, UI, Docker). Client adapters expose them via `.claude/skills/` and `.agents/skills/` symlinks. See `skills/README.md`.
 
 ## Setup
 

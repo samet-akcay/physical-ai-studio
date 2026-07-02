@@ -1,0 +1,105 @@
+# Physical AI Studio Agent Skills
+
+Canonical, repo-specific agent skills for Physical AI Studio. Skills are grouped by the part of the repo they target so agents load the right paths and commands.
+
+## Buckets
+
+| Bucket | Path | Scope |
+| ------ | ---- | ----- |
+| **Library** | [`library/`](library/) | `physicalai-train`: policies, data, CLI (`fit`, `export`, `benchmark`), configs under `library/` |
+| **Studio (application)** | [`application/`](application/) | GUI stack: `application/backend/`, `application/ui/`, `application/docker/` |
+
+Each bucket has its own skill list and [`EVALUATION.md`](library/EVALUATION.md) scenarios (library today; application when skills are added).
+
+## Layout
+
+```
+skills/
+├── README.md                 # this file — global authoring rules
+├── library/
+│   ├── README.md
+│   ├── EVALUATION.md
+│   └── <skill-name>/
+│       ├── SKILL.md
+│       └── references/
+└── application/
+    ├── README.md
+    ├── EVALUATION.md         # add when the first app skill ships
+    └── <skill-name>/
+```
+
+Client adapters expose skills through symlinks:
+
+- `.claude/skills/<name>` → `../../skills/<bucket>/<name>`
+- `.agents/skills/<name>` → `../../skills/<bucket>/<name>`
+
+Add both symlinks whenever you add a skill (see the bucket README).
+
+## Authoring standard
+
+These skills follow the open [Agent Skills](https://agentskills.io) format (originated by Anthropic, adopted by Claude Code, opencode, Codex, Gemini CLI, Cursor, and others). Write to the **portable core** so a skill works across every agent, not just one.
+
+### Portability rules (non-negotiable)
+
+- **Frontmatter = the portable subset only:** `name`, `description`, and optionally `license`. These three are understood everywhere.
+- **Do not rely on vendor-only fields for behavior.** `disable-model-invocation` (Claude Code's "user-invoked" switch) is ignored by opencode/Codex/Gemini — never make a skill's correctness depend on it. Default to **model-invoked** skills.
+- Put any client-specific hints in a `metadata:` map (opencode reads it; others ignore it), not in top-level fields.
+- Use forward-slash paths; no Windows backslashes.
+
+### `name`
+
+- Lowercase, hyphenated, matches the directory name, regex `^[a-z0-9]+(-[a-z0-9]+)*$`.
+- Prefix with the bucket id: `library-` or `studio-` (application skills use `studio-` for the GUI/orchestration stack).
+- Prefer gerund/verb phrasing (`library-training-a-policy`, `studio-regenerating-openapi-types`).
+- Must not contain the reserved words `anthropic` or `claude`.
+
+### `description` (highest-leverage field)
+
+This is what an agent matches against to decide whether to load the skill. Get it right.
+
+- **Third person**, always: "Trains and validates…", never "I can…" / "You can…".
+- State **what it does and when to use it**, with concrete triggers (CLI names, class names, file paths, policy families).
+- **One trigger per distinct branch** — collapse synonyms. Keep it under 1024 characters.
+
+### Body
+
+- **Be concise; assume the model is smart.** Only add what it can't infer. Every loaded token competes with real context. Keep `SKILL.md` well under 500 lines.
+- **Ground every claim in real paths** for that bucket (`library/src/physicalai/...`, `application/backend/...`, etc.) and real commands. No invented flags.
+- **Numbered workflow steps, each ending in a checkable completion criterion** ("Done when: …") so the agent can tell done from not-done and doesn't stop early.
+- **Match freedom to fragility:** high freedom (prose) for open tasks; low freedom ("run exactly this, don't add flags") for fragile/destructive ops like export or migrations.
+- **Feedback loops** for quality-critical work: run → validate → fix → repeat, with the exact command.
+- Consistent terminology; no time-sensitive text (use a collapsed "old patterns" section if needed).
+- **Progressive disclosure:** push long detail into `references/*.md`, linked **one level deep** from `SKILL.md`. Add a table of contents to any reference file over ~100 lines.
+
+### Before you ship
+
+- Description has both _what_ and _when_, third person, distinct triggers.
+- Every path/command verified against the current tree.
+- Steps have checkable completion criteria.
+- References are one level deep.
+- Runs offline by default; tests needing downloads are marked `requires_download`.
+- Pass at least three scenarios in the bucket's `EVALUATION.md`.
+
+## Add a new skill
+
+```bash
+BUCKET=library   # or application
+NAME=library-my-workflow
+mkdir -p "skills/$BUCKET/$NAME"
+$EDITOR "skills/$BUCKET/$NAME/SKILL.md"
+bash .github/scripts/link-skills.sh
+```
+
+Then dry-run the workflow in the skill end-to-end and fix any step where an agent could stall or guess.
+
+## Publishing to open-edge-platform/skills
+
+Studio is the **source of truth** under `skills/`. On push to `main` that touches `skills/**`, [`.github/workflows/publish-skills.yml`](../.github/workflows/publish-skills.yml) assembles a bundle and opens a PR on [`open-edge-platform/skills`](https://github.com/open-edge-platform/skills) under `physical-ai-studio/`.
+
+Configure repository secret **`OEP_SKILLS_SYNC_TOKEN`**: a fine-scoped PAT or GitHub App installation token with **contents** and **pull requests** write access to `open-edge-platform/skills`. The workflow runs only on `open-edge-platform/physical-ai-studio`.
+
+Sync layout is defined in [`sync-manifest.yaml`](sync-manifest.yaml). Regenerate local adapter symlinks after adding a skill:
+
+```bash
+bash .github/scripts/link-skills.sh
+```

@@ -1,0 +1,110 @@
+name: Publish skills to OEP
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "skills/**"
+      - ".github/workflows/publish-skills.yml"
+      - ".github/scripts/assemble-skills-bundle.sh"
+      - ".github/scripts/validate-skills.sh"
+      - ".github/scripts/link-skills.sh"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  publish:
+    name: Open PR on open-edge-platform/skills
+    runs-on: ${{ github.repository_owner == 'open-edge-platform' && 'overflow' || 'ubuntu-latest' }}
+    if: github.repository == 'open-edge-platform/physical-ai-studio'
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout Studio repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Validate skills
+        run: bash .github/scripts/validate-skills.sh
+
+      - name: Assemble skills bundle
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          BUNDLE_ROOT="$(mktemp -d)"
+          bash .github/scripts/assemble-skills-bundle.sh "$BUNDLE_ROOT"
+          echo "BUNDLE_ROOT=$BUNDLE_ROOT" >> "$GITHUB_ENV"
+
+      - name: Sync to open-edge-platform/skills and open PR
+        env:
+          GH_TOKEN: ${{ secrets.OEP_SKILLS_SYNC_TOKEN }}
+          SOURCE_SHA: ${{ github.sha }}
+          SOURCE_URL: ${{ github.event.repository.html_url }}/commit/${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${GH_TOKEN}" ]]; then
+            echo "::error::OEP_SKILLS_SYNC_TOKEN is not configured. Add a PAT or GitHub App token with contents and pull_requests access to open-edge-platform/skills."
+            exit 1
+          fi
+
+          type gh >/dev/null 2>&1 || (sudo apt-get update -qq && sudo apt-get install -y -qq gh)
+
+          WORK="$(mktemp -d)"
+          git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/open-edge-platform/skills.git" "$WORK/oep-skills"
+          cd "$WORK/oep-skills"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          PRODUCT="physical-ai-studio"
+          TARGET="$PRODUCT"
+          rsync -a --delete "${BUNDLE_ROOT}/${PRODUCT}/" "$TARGET/"
+
+          if git status --porcelain "$TARGET" | grep -q .; then
+            :
+          else
+            echo "No changes to publish; skipping PR."
+            exit 0
+          fi
+
+          SHORT_SHA="${SOURCE_SHA:0:7}"
+          BRANCH="sync/${PRODUCT}-${SHORT_SHA}"
+          git checkout -b "$BRANCH"
+          git add "$TARGET"
+          git commit -m "sync(${PRODUCT}): ${SHORT_SHA}"
+
+          git push -u origin "$BRANCH"
+
+          EXISTING="$(gh pr list --repo open-edge-platform/skills --head "$BRANCH" --json number -q '.[0].number' || true)"
+          if [[ -n "$EXISTING" && "$EXISTING" != "null" ]]; then
+            echo "PR already exists: https://github.com/open-edge-platform/skills/pull/${EXISTING}"
+            exit 0
+          fi
+
+          gh pr create \
+            --repo open-edge-platform/skills \
+            --head "$BRANCH" \
+            --base main \
+            --title "sync(${PRODUCT}): ${SHORT_SHA}" \
+            --body "$(cat <<EOF
+## Summary
+Sync Agent Skills from Physical AI Studio [\`${SHORT_SHA}\`](${SOURCE_URL}).
+
+**Source of truth:** \`physical-ai-studio/skills/\` — edit there, not in this PR.
+
+## Bundle
+- \`${TARGET}/library/\` — \`library-*\` skills
+- \`${TARGET}/application/\` — \`studio-*\` skills (when present)
+- \`${TARGET}/manifest.yaml\` — source ref and skill list
+
+## Test plan
+- [ ] Review skill diffs for accidental renames or path drift
+- [ ] Merge after CODEOWNERS approval
+EOF
+)"
