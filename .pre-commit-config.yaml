@@ -18,7 +18,9 @@ repos:
     rev: v5.0.0
     hooks:
       - id: trailing-whitespace
+        exclude: ^(\.claude/skills/|\.agents/skills/)
       - id: end-of-file-fixer
+        exclude: ^(\.claude/skills/|\.agents/skills/)
       - id: check-yaml
       - id: check-added-large-files
         exclude: uv\.lock$
@@ -45,3 +47,12 @@ repos:
         types_or: [markdown, yaml, json]
         # Exclude project-specific files that are handled by their own configs
         exclude: ^(library/|application/)
+
+  - repo: local
+    hooks:
+      - id: link-agent-skills
+        name: sync agent skill adapter symlinks
+        entry: python3 .github/scripts/skills/link_skills.py
+        language: system
+        pass_filenames: false
+        files: ^skills/

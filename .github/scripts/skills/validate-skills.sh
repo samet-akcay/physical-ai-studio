@@ -40,7 +40,7 @@ check_skill_dir() {
   for adapter in .claude/skills .agents/skills; do
     local link="$adapter/$name"
     if [[ ! -L "$link" ]]; then
-      fail "Missing symlink $link (run .github/scripts/skills/link-skills.sh)"
+      fail "Missing symlink $link (run python3 .github/scripts/skills/link_skills.py)"
       continue
     fi
     if [[ ! -f "$link/SKILL.md" ]]; then

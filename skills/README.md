@@ -28,16 +28,14 @@ skills/
     └── <skill-name>/
 ```
 
-Client adapters are **local symlinks** (not committed — Git stores symlink targets without a trailing newline, which pollutes PR diffs):
+Client adapters are **committed symlinks** so a fresh clone works for agents (no setup step):
 
 - `.claude/skills/<name>` → `../../skills/<bucket>/<name>`
 - `.agents/skills/<name>` → `../../skills/<bucket>/<name>`
 
-After clone or when you add a skill, run:
+When you add or rename a skill, run `python3 .github/scripts/skills/link_skills.py` and commit the updated symlinks (pre-commit does this automatically when `skills/` changes). GitHub may show `\ No newline at end of file` on symlink diffs; that is normal and harmless.
 
-```bash
-bash .github/scripts/skills/link-skills.sh
-```
+**Windows:** enable [Developer Mode](https://learn.microsoft.com/en-us/windows/apps/get-started/enable-your-device-for-development) or clone with `git config core.symlinks true` so Git checks out symlinks. If symlink creation fails, `link_skills.py` falls back to a directory junction for local use.
 
 ## Authoring standard
 
@@ -91,7 +89,7 @@ BUCKET=library   # or application
 NAME=library-my-workflow
 mkdir -p "skills/$BUCKET/$NAME"
 $EDITOR "skills/$BUCKET/$NAME/SKILL.md"
-bash .github/scripts/skills/link-skills.sh
+python3 .github/scripts/skills/link_skills.py
 ```
 
 Then dry-run the workflow in the skill end-to-end and fix any step where an agent could stall or guess.
@@ -105,5 +103,5 @@ Configure repository secret **`OEP_SKILLS_SYNC_TOKEN`**: a fine-scoped PAT or Gi
 Sync layout is defined in [`sync-manifest.yaml`](sync-manifest.yaml). Regenerate local adapter symlinks after adding a skill:
 
 ```bash
-bash .github/scripts/skills/link-skills.sh
+python3 .github/scripts/skills/link_skills.py
 ```

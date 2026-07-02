@@ -210,9 +210,3 @@ __marimo__/
 tmp*
 lightning_logs
 .DS_Store
-
-# Agent skill adapters (symlinks; run .github/scripts/skills/link-skills.sh after clone)
-.claude/skills/*
-!.claude/skills/.gitkeep
-.agents/skills/*
-!.agents/skills/.gitkeep
