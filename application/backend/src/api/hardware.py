@@ -4,9 +4,8 @@ from fastapi import APIRouter, Query
 from loguru import logger
 from physicalai.capture import DeviceInfo, discover_all
 
-from schemas import CalibrationConfig, Camera, CameraProfile, Robot, SerialPortInfo
+from schemas import Camera, CameraProfile, Robot, SerialPortInfo
 from schemas.robot import RobotType
-from utils.calibration import get_calibrations
 from utils.camera_factory import DRIVER_KEY_MAP
 from utils.serial_robot_tools import find_robots, identify_so101_robot_visually
 from utils.trossen_robot_tools import identify_trossen_robot_visually
@@ -56,12 +55,6 @@ async def get_cameras(
 async def get_robots() -> list[SerialPortInfo]:
     """Get all connected Robots"""
     return await find_robots()
-
-
-@router.get("/calibrations")
-async def get_lerobot_calibrations() -> list[CalibrationConfig]:
-    """Get calibrations known to huggingface leRobot"""
-    return get_calibrations()
 
 
 @router.post("/identify")
