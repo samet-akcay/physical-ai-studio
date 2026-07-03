@@ -6,7 +6,7 @@ license: Apache-2.0
 
 # Working with Studio Datasets
 
-Studio data lives in `library/src/physicalai/data/`. Datasets use the **LeRobot format** and are consumed through Lightning datamodules.
+Studio data lives in `library/src/physicalai/data/`. Datasets use the **LeRobot format** and are consumed through Lightning datamodules. The datamodules are first-class Python API objects; YAML/CLI configs are a serialization of the same construction path.
 
 Key modules:
 
@@ -16,6 +16,21 @@ Key modules:
 - `data/observation.py` — `Observation`, `Feature`, `FeatureType`, `NormalizationParameters`.
 - `data/datamodules.py` — base `DataModule` (Lightning `LightningDataModule`, auto num-workers heuristic).
 - `data/dataset.py` — base `Dataset`; `data/gym.py` — `GymDataset` for gym-generated data.
+
+## Python API usage
+
+Use this path for notebooks, tests, direct batch inspection, or debugging dataloading without involving the training CLI.
+
+```python
+from physicalai.data import LeRobotDataModule
+
+datamodule = LeRobotDataModule(repo_id="lerobot/pusht", train_batch_size=2)
+datamodule.prepare_data()
+datamodule.setup("fit")
+batch = next(iter(datamodule.train_dataloader()))
+```
+
+Done when: the batch contains the observation/action fields the policy expects, with the expected batch/action dimensions.
 
 ## Wiring data into a training config
 
@@ -35,13 +50,20 @@ data:
 
 1. **Pick the dataset** by `repo_id` and confirm its features (image keys, state dim, action dim) match the target policy's `Config`.
    - Done when: the policy's expected `Feature` names and action dimension line up with the dataset.
-2. **Verify a batch** before training:
+2. **Verify a batch through the Python API** before training:
+   ```python
+   datamodule.prepare_data()
+   datamodule.setup("fit")
+   batch = next(iter(datamodule.train_dataloader()))
+   ```
+   - Done when: the batch has correct keys and shapes without invoking the CLI.
+3. **Verify CLI parity** when the dataset is configured through YAML:
    ```bash
    physicalai fit --config <config.yaml> --trainer.fast_dev_run=true
    ```
    - Done when: one batch flows through with correct shapes and no missing-feature errors.
-3. **Convert layouts** only when needed via `converters.py` (`DataFormat.physicalai` ↔ `DataFormat.lerobot`); keep field names stable, since they propagate to training and export.
-4. **Set normalization** through `NormalizationParameters`/`Feature` consistently with what the policy expects at inference.
+4. **Convert layouts** only when needed via `converters.py` (`DataFormat.physicalai` ↔ `DataFormat.lerobot`); keep field names stable, since they propagate to training and export.
+5. **Set normalization** through `NormalizationParameters`/`Feature` consistently with what the policy expects at inference.
 
 ## Debugging dataloading
 
@@ -53,6 +75,7 @@ data:
 
 - Feature names, `FeatureType`, action dim, and normalization match between dataset, `Config`, and any export metadata.
 - Conversions round-trip without dropping or renaming fields.
+- Direct datamodule API construction and YAML config construction produce compatible batches.
 - Tests that require downloads are marked `requires_download`; keep default `uv run pytest` runnable offline.
 
 ## Verify

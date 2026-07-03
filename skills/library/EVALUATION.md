@@ -13,12 +13,13 @@ Expected rubric per scenario:
 
 ### Scenario 1: Add a new native policy family
 
-> "Add a new policy family called `mynet` under `physicalai.policies`. It should be trainable with `physicalai fit` and follow the same config/model/policy split as ACT. Keep it minimal."
+> "Add a new policy family called `mynet` under `physicalai.policies`. It should be constructible from Python, available through `get_policy`, trainable with `physicalai fit`, and follow the same config/model/policy split as ACT. Keep it minimal."
 
 Expected behavior:
 
 - Creates `library/src/physicalai/policies/mynet/{config.py,model.py,policy.py}` mirroring `policies/act/`.
 - Registers `Mynet`, `MynetConfig`, `MynetModel` in `policies/__init__.py` and the `get_policy(...)` dispatch.
+- Verifies `from physicalai.policies import Mynet, get_policy` and `get_policy("mynet")` work without CLI involvement.
 - Adds `library/configs/physicalai/mynet.yaml` wiring `model`, `data`, and `trainer`.
 - Adds at least one test under `library/tests/unit/policies/`.
 - Runs `uv run pytest tests/unit/policies -k mynet` and `physicalai fit --config configs/physicalai/mynet.yaml --trainer.fast_dev_run=true`.
@@ -42,49 +43,50 @@ Expected behavior:
 
 - Creates a first-party package under `policies/` rather than editing `policies/lerobot/`.
 - Keeps LeRobot adapter code behind a factory/helper; avoids mixing LeRobot internals with Lightning `Policy` semantics.
-- Validates that `physicalai fit --config configs/physicalai/<name>.yaml --trainer.fast_dev_run=true` still passes.
+- Validates direct Python construction and `physicalai fit --config configs/physicalai/<name>.yaml --trainer.fast_dev_run=true` both pass.
 
 ## `library-training-a-policy`
 
-### Scenario 4: Run a smoke test on a new config
+### Scenario 4: Run an API smoke test
 
-> "I created `configs/physicalai/mynet.yaml`. Make sure it will actually train before I start a long run."
+> "Write a short Python smoke test that trains ACT on `lerobot/pusht` for one fast-dev batch using `Trainer`, `LeRobotDataModule`, and `ACT`. Do not invoke the CLI."
 
 Expected behavior:
 
-- Runs `physicalai fit --config configs/physicalai/mynet.yaml --trainer.fast_dev_run=true`.
-- If it fails, diagnoses whether the error is in `model`, `data`, or `trainer` config and fixes the YAML.
-- Does not launch a long training run without a passing `fast_dev_run`.
+- Constructs `LeRobotDataModule(repo_id="lerobot/pusht", train_batch_size=2)`, `ACT()`, and `Trainer(fast_dev_run=True)` from Python.
+- Calls `trainer.fit(model=policy, datamodule=datamodule)`.
+- If it fails, diagnoses whether the error is in policy construction, dataloading, or trainer setup.
 
 ### Scenario 5: Resume training from a checkpoint
 
-> "My ACT training was interrupted at epoch 5. Resume it from the last checkpoint and keep the same experiment name."
+> "My ACT training was interrupted at epoch 5. Show both the Python API and CLI ways to resume it from the last checkpoint while keeping the same experiment name."
 
 Expected behavior:
 
 - Finds the latest `.ckpt` under `experiments/` matching the experiment name.
-- Uses `physicalai fit --config configs/physicalai/act.yaml --ckpt_path <path>`.
+- Shows `Trainer(...).fit(model=policy, datamodule=datamodule, ckpt_path=<path>)` and `physicalai fit --config configs/physicalai/act.yaml --ckpt_path <path>`.
 - Preserves logger version / experiment name so metrics continue in the same run.
 
 ### Scenario 6: Tune a hyperparameter safely
 
-> "I want to try a larger learning rate for ACT. Show me how to do it without breaking the config."
+> "I want to try a larger learning rate for ACT. Show me the Python API change and the equivalent CLI/config override without breaking reproducibility."
 
 Expected behavior:
 
-- Overrides on the CLI: `physicalai fit --config configs/physicalai/act.yaml --model.optimizer_lr 3e-5`.
-- Uses `--print_config` to confirm the override took effect.
+- Shows direct API construction with the changed policy config/constructor argument and the equivalent CLI override.
+- Uses `--print_config` to confirm CLI serialization matches the API intent.
 - Runs `fast_dev_run` before any full run.
 
 ## `library-benchmarking-a-policy`
 
 ### Scenario 7: Benchmark a trained checkpoint
 
-> "I have an ACT checkpoint at `experiments/act/version_0/checkpoints/last.ckpt`. Benchmark it on PushT with 10 episodes."
+> "I have an ACT checkpoint at `experiments/act/version_0/checkpoints/last.ckpt`. Benchmark it on PushT with 10 episodes from a Python script, and show the equivalent CLI."
 
 Expected behavior:
 
-- Runs `physicalai benchmark --config configs/benchmark/pusht.yaml --policy physicalai.policies.ACT --ckpt_path <path> --benchmark.num_episodes 10`.
+- Loads the policy and evaluates with `PushTBenchmark(num_episodes=10).evaluate(policy)` from Python.
+- Shows the equivalent `physicalai benchmark --config configs/benchmark/pusht.yaml --policy physicalai.policies.ACT --ckpt_path <path> --benchmark.num_episodes 10`.
 - Confirms `results.json` and `results.csv` are written to `--output_dir`.
 - Interprets the success metric and compares it to a baseline if one exists.
 
@@ -96,7 +98,7 @@ Expected behavior:
 
 - Reuses `LiberoBenchmark` in `physicalai.benchmark.gyms` rather than inventing a new class.
 - Creates `configs/benchmark/libero.yaml` if it does not already exist.
-- Runs one episode (`--benchmark.num_episodes 1`) as a smoke test.
+- Runs one episode through `LiberoBenchmark(...).evaluate(policy)` and the equivalent CLI smoke test.
 - Marks heavy gym deps as optional/lazy.
 
 ### Scenario 9: Benchmark an exported artifact
@@ -106,19 +108,19 @@ Expected behavior:
 Expected behavior:
 
 - Loads `library-exporting-and-validating` to produce the ONNX artifact.
-- Runs benchmark twice with `--ckpt_path` pointing to `.ckpt` and export dir.
+- Runs benchmark twice through the Python API and/or CLI with paths pointing to `.ckpt` and export dir.
 - Reports metric parity, not just runtime.
 
 ## `library-working-with-datasets`
 
 ### Scenario 10: Wire a new dataset into a config
 
-> "I want to train ACT on `lerobot/pusht_reduced`. Update the config and verify the datamodule loads."
+> "I want to train ACT on `lerobot/pusht_reduced`. Verify the datamodule loads from Python, then update the config."
 
 Expected behavior:
 
-- Edits `data.init_args.repo_id` in the config.
-- Runs `physicalai fit --config <config> --trainer.fast_dev_run=true` to confirm batches flow.
+- Constructs `LeRobotDataModule(repo_id="lerobot/pusht_reduced")`, runs `prepare_data()`, `setup("fit")`, and inspects one train batch.
+- Edits `data.init_args.repo_id` in the config and runs `physicalai fit --config <config> --trainer.fast_dev_run=true` to confirm CLI parity.
 - Checks feature names/action dim alignment with the policy `Config`.
 
 ### Scenario 11: Debug a feature-name mismatch
@@ -149,7 +151,8 @@ Expected behavior:
 
 Expected behavior:
 
-- Runs `physicalai export --policy physicalai.policies.ACT --ckpt_path <path> --backend onnx --output_dir ./export`.
+- Exports through `policy.export("./export", backend=ExportBackend.ONNX)` after loading the checkpoint from Python.
+- Shows the equivalent `physicalai export --policy physicalai.policies.ACT --ckpt_path <path> --backend onnx --output_dir ./export`.
 - Verifies the export directory contains a model file and metadata.
 - Runs a numerical parity check against the Torch policy path.
 

@@ -6,7 +6,7 @@ license: Apache-2.0
 
 # Exporting and Validating Studio Policies
 
-Export lives in `library/src/physicalai/export/`: `backends.py` (the `ExportBackend` enum — `onnx`, `openvino`, `torch`, `executorch` — plus per-backend parameter classes) and `mixin_policy.py` (`ExportablePolicyMixin`, which gives policies `export(output_dir, backend=...)`). The CLI entry is `library/src/physicalai/cli/export.py`. Studio owns export; Runtime owns loading.
+Export lives in `library/src/physicalai/export/`: `backends.py` (the `ExportBackend` enum — `onnx`, `openvino`, `torch`, `executorch` — plus per-backend parameter classes) and `mixin_policy.py` (`ExportablePolicyMixin`, which gives policies `export(output_dir, backend=...)`). The Python API is primary library behavior; the CLI entry `library/src/physicalai/cli/export.py` must preserve the same artifact contract. Studio owns export; Runtime owns loading.
 
 ## Workflow
 
@@ -32,6 +32,8 @@ physicalai export --policy <ClassPath> --ckpt_path <model.ckpt> --backend <backe
 uv run pytest tests/unit/export -k <backend>
 ```
 
+For API-facing changes, add or run an equivalent Python script/test that loads the checkpoint, calls `policy.export("./export-api", backend=ExportBackend.<BACKEND>)`, and compares artifact metadata with the CLI output.
+
 Treat **parity** (correctness) and **latency/warmup** (deployment viability) as separate checks; passing one does not imply the other.
 
 ## Backend notes
@@ -44,6 +46,7 @@ Treat **parity** (correctness) and **latency/warmup** (deployment viability) as 
 
 - Export directory contains the expected backend model file **and** metadata files.
 - Metadata names inputs/outputs/features consistently with Runtime preprocessing and action-chunk semantics.
+- Python API export and CLI export produce equivalent artifact structure and metadata.
 - Backend-specific dependencies are imported lazily or guarded with clear install guidance.
 - Do not add a backend to user-facing docs unless Runtime can load it in-package or via a documented companion.
 - CLI docs (`library/docs/how-to/export/`) and Python API examples stay consistent.

@@ -21,7 +21,7 @@ library/src/physicalai/policies/<policy_name>/
 
 ## Implementation Notes
 
-- Start from a nearby native policy when possible. Use LeRobot wrappers only when the policy is intentionally a LeRobot integration.
+- Start from a nearby native policy when possible. **`policies/pi05/`** is the best-maintained end-to-end example (train, export, inference). Use LeRobot wrappers only when the policy is intentionally a LeRobot integration.
 - Keep policy-specific tensor transforms local to the policy package unless they are reusable across policies.
 - Do not silently change action dimensions, feature names, or preprocessing conventions; these affect export and Runtime loading.
 - If export support is added, validate the same sample input shape used during training/inference.
