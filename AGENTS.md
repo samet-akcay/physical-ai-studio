@@ -34,4 +34,5 @@ Physical AI Studio is the training-side repo for the Physical AI workflow: colle
 
 - Use Conventional Commits for PR titles and commits.
 - Sign commits when committing changes.
-- Follow `.github/copilot-instructions.md` for detailed coding standards when present.
+- Follow `docs/development/coding-standards.md` for repo-wide coding standards.
+- For `library/` code, follow `library/docs/development/security.md`.
