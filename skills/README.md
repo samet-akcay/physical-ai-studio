@@ -33,7 +33,7 @@ Client adapters are **committed symlinks** so a fresh clone works for agents (no
 - `.claude/skills/<name>` → `../../skills/<bucket>/<name>`
 - `.agents/skills/<name>` → `../../skills/<bucket>/<name>`
 
-When you add or rename a skill, run `python3 .github/scripts/skills/agent_skills.py sync` and commit the updated symlinks (pre-commit runs `sync` and `validate` when `skills/` changes). GitHub may show `\ No newline at end of file` on symlink diffs; that is normal and harmless.
+When you add or rename a skill, run `python3 .github/scripts/skills/agent_skills.py sync` and commit the updated symlinks. Pre-commit runs `sync` then `validate` when `skills/` changes. **CI only runs `validate`** on what is in the PR (it does not regenerate symlinks). GitHub may show `\ No newline at end of file` on symlink diffs; that is normal and harmless.
 
 **Windows:** enable [Developer Mode](https://learn.microsoft.com/en-us/windows/apps/get-started/enable-your-device-for-development) or clone with `git config core.symlinks true` so Git checks out symlinks. If symlink creation fails, `agent_skills.py sync` falls back to a directory junction for local use.
 
