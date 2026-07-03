@@ -67,12 +67,7 @@ export const RobotFormProvider = ({ children, robot }: { children: ReactNode; ro
                 return { ...prev, activeType: type, [type]: { ...oldSlice } as FormDataForSchema[T] };
             }
 
-            return {
-                ...prev,
-                activeType: type,
-                // Don't overwrite robot name as name is presented before robot type picker
-                [type]: { ...(prev[type] as FormDataForSchema[T]), name: oldSlice.name },
-            };
+            return { ...prev, activeType: type };
         });
     }, []);
 
