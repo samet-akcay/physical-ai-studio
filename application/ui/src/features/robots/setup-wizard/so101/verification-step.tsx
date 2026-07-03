@@ -104,8 +104,9 @@ export const VerificationStep = () => {
     const { wsState } = useSetupState();
     const { activeType, robotForm } = useRobotForm();
 
-    const serialNumber = robotForm.serial_number;
-    const robotType = activeType ?? '';
+    const serialNumber = robotForm.serial_number ?? '';
+    const connectionString = 'connection_string' in robotForm ? (robotForm.connection_string ?? '') : '';
+    const robotType = activeType;
 
     const [robotId] = useState(() => uuidv4());
     const [calibrationId] = useState(() => uuidv4());
@@ -209,7 +210,10 @@ export const VerificationStep = () => {
                             <strong>Type:</strong> {robotType}
                         </Text>
                         <Text>
-                            <strong>Serial:</strong> {serialNumber}
+                            <strong>Serial:</strong> {serialNumber || 'Unavailable'}
+                        </Text>
+                        <Text>
+                            <strong>USB Port:</strong> {connectionString || 'Unavailable'}
                         </Text>
                         <Text>
                             <strong>Calibration:</strong>{' '}

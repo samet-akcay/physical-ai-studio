@@ -4,10 +4,11 @@ from fastapi import APIRouter, Query
 from loguru import logger
 from physicalai.capture import DeviceInfo, discover_all
 
+from api.dependencies import RobotConnectionManagerDep
 from schemas import Camera, CameraProfile, Robot, SerialPortInfo
 from schemas.robot import RobotType
 from utils.camera_factory import DRIVER_KEY_MAP
-from utils.serial_robot_tools import find_robots, identify_so101_robot_visually
+from utils.serial_robot_tools import identify_so101_robot_visually
 from utils.trossen_robot_tools import identify_trossen_robot_visually
 
 router = APIRouter(prefix="/api/hardware", tags=["Hardware"])
@@ -52,16 +53,17 @@ async def get_cameras(
 
 
 @router.get("/serial_devices")
-async def get_robots() -> list[SerialPortInfo]:
+async def get_robots(robot_manager: RobotConnectionManagerDep) -> list[SerialPortInfo]:
     """Get all connected Robots"""
-    return await find_robots()
+    await robot_manager.find_robots()
+    return robot_manager.robots
 
 
 @router.post("/identify")
-async def identify_robot(robot: Robot, joint: str | None = None) -> None:
+async def identify_robot(robot_manager: RobotConnectionManagerDep, robot: Robot, joint: str | None = None) -> None:
     """Visually identify the robot by moving given joint on robot"""
     if robot.type in {RobotType.SO101_LEADER, RobotType.SO101_FOLLOWER}:
-        await identify_so101_robot_visually(robot, joint)
+        await identify_so101_robot_visually(robot_manager, robot, joint)
 
     if robot.type in {RobotType.TROSSEN_WIDOWXAI_LEADER, RobotType.TROSSEN_WIDOWXAI_FOLLOWER}:
         await identify_trossen_robot_visually(robot)

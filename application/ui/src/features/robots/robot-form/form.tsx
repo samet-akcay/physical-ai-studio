@@ -39,24 +39,44 @@ const RobotType = () => {
 };
 
 const FormFields = ({ robotType }: { robotType: SchemaRobotType }) => {
+    const { formData, updateField } = useRobotFormFields();
+
+    let formFields = null;
     switch (robotType) {
         case 'SO101_Follower':
         case 'SO101_Leader':
-            return <SO101FormFields />;
+            formFields = <SO101FormFields />;
+            break;
         case 'Trossen_WidowXAI_Follower':
         case 'Trossen_WidowXAI_Leader':
-            return <WidowxAIFormFields />;
+            formFields = <WidowxAIFormFields />;
+            break;
         case 'Trossen_Bimanual_WidowXAI_Leader':
         case 'Trossen_Bimanual_WidowXAI_Follower':
-            return <BiManualWidowxAIFormFields />;
+            formFields = <BiManualWidowxAIFormFields />;
+            break;
     }
+
+    return (
+        <>
+            <TextField
+                isRequired
+                label='Robot name'
+                width='100%'
+                onChange={(name) => {
+                    updateField('name', name);
+                }}
+                value={formData.name}
+            />
+            {formFields}
+        </>
+    );
 };
 
 export const RobotForm = ({ heading = 'Add new robot', submitButton = <SubmitNewRobotButton /> }) => {
     const { project_id } = useProjectId();
 
     const { activeType } = useRobotForm();
-    const { formData: activeFormData, updateField } = useRobotFormFields();
 
     const submitContainerRef = useRef<HTMLDivElement>(null);
 
@@ -88,18 +108,6 @@ export const RobotForm = ({ heading = 'Add new robot', submitButton = <SubmitNew
             <Form onSubmit={handleSubmit}>
                 <Flex direction='column' gap='size-200'>
                     <Flex direction='column' gap='size-200' width='100%'>
-                        <TextField
-                            isRequired
-                            label='Robot name'
-                            width='100%'
-                            onChange={(name) => {
-                                updateField('name', name);
-                            }}
-                            value={activeFormData.name}
-                        />
-
-                        {/* Put robot type first as we can use it to visualize the robot
-                          and determine how to connect with it */}
                         <RobotType />
 
                         <FormFields robotType={activeType} />

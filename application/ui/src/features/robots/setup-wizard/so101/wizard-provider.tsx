@@ -158,15 +158,17 @@ export const SetupWizardProvider = ({ children }: { children: ReactNode }) => {
     // -----------------------------------------------------------------------
     // WebSocket hook
     // -----------------------------------------------------------------------
+    const serialNumber = robotForm.serial_number ?? '';
+    const robotType = activeType;
+    const connectionString = 'connection_string' in robotForm ? (robotForm.connection_string ?? '') : '';
 
-    const serialNumber = robotForm.serial_number;
-    const robotType = activeType ?? '';
-    const wsEnabled = !!serialNumber && robotType.startsWith('SO101');
+    const wsEnabled = (!!serialNumber || !!connectionString) && robotType.startsWith('SO101');
 
     const { state: wsState, commands } = useSetupWebSocket({
         projectId,
         robotType,
         serialNumber,
+        connectionString,
         enabled: wsEnabled,
     });
 
