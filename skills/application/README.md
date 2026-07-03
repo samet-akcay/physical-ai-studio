@@ -6,9 +6,7 @@ Skills for the GUI and orchestration stack under `application/`:
 - `application/ui/` — React, generated API types
 - `application/docker/` — compose, device setup
 
-No application skills are checked in yet. Add them here with the `studio-` name prefix (see [`../README.md`](../README.md)).
-
-When the first skill lands, add [`EVALUATION.md`](EVALUATION.md) with at least three scenarios per skill.
+Name skills with the `studio-` prefix (see [`../README.md`](../README.md)) and add an [`EVALUATION.md`](EVALUATION.md) with at least three scenarios per skill.
 
 ## Add a studio skill
 
