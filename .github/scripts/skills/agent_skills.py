@@ -41,6 +41,21 @@ def read_link(path: Path) -> str | None:
     return None
 
 
+def resolves_to(link: Path, expected_target: str) -> bool:
+    """Check if a symlink or junction points at the expected target.
+
+    On non-Windows, adapters are symlinks and ``read_link`` suffices.
+    On Windows, ``sync`` may fall back to a directory junction when
+    symlinks are unavailable; ``read_link`` returns ``None`` for those,
+    so resolve the link and compare against the resolved expected target.
+    """
+    if link.is_symlink():
+        return read_link(link) == expected_target
+    if link.is_dir():
+        return link.resolve() == (link.parent / expected_target).resolve()
+    return False
+
+
 def remove_adapter(path: Path) -> None:
     if path.is_symlink() or path.is_file():
         path.unlink()
@@ -105,11 +120,11 @@ def cmd_check_adapters(root: Path) -> int:
         target = adapter_target(bucket, name)
         for adapter_root in adapters:
             link = adapter_root / name
-            current = read_link(link)
-            if current == target and link.exists():
+            if resolves_to(link, target):
                 continue
+            current = read_link(link)
             errors.append(
-                f"{link}: expected symlink to {target!r}, got {current!r}"
+                f"{link}: expected adapter to {target!r}, got {current!r}"
             )
 
     if errors:
@@ -168,17 +183,17 @@ def cmd_validate(root: Path) -> int:
             target = adapter_target(bucket, name)
             for adapter_root in (root / ".claude" / "skills", root / ".agents" / "skills"):
                 link = adapter_root / name
-                if not link.is_symlink():
-                    errors.append(f"Missing symlink {link} (run: {_SCRIPT} sync)")
+                if not link.exists():
+                    errors.append(f"Missing adapter {link} (run: {_SCRIPT} sync)")
                     continue
-                if read_link(link) != target:
+                if not resolves_to(link, target):
                     errors.append(
-                        f"{link}: expected symlink to {target!r}, "
+                        f"{link}: expected adapter to {target!r}, "
                         f"got {read_link(link)!r}"
                     )
                     continue
                 if not (link / "SKILL.md").is_file():
-                    errors.append(f"Broken symlink {link}")
+                    errors.append(f"Broken adapter {link}")
 
     if errors:
         for msg in errors:

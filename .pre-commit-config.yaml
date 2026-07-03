@@ -50,9 +50,15 @@ repos:
 
   - repo: local
     hooks:
-      - id: agent-skills
-        name: maintain agent skills (sync adapters + validate)
-        entry: bash -c 'python3 .github/scripts/skills/agent_skills.py sync && python3 .github/scripts/skills/agent_skills.py validate'
+      - id: agent-skills-sync
+        name: sync agent skill adapters
+        entry: python3 .github/scripts/skills/agent_skills.py sync
+        language: system
+        pass_filenames: false
+        files: ^skills/
+      - id: agent-skills-validate
+        name: validate agent skills layout
+        entry: python3 .github/scripts/skills/agent_skills.py validate
         language: system
         pass_filenames: false
         files: ^skills/
