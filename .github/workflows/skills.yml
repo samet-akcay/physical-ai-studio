@@ -37,8 +37,8 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Link client skill adapters
-        run: python3 .github/scripts/skills/link_skills.py
+      - name: Sync client skill adapters
+        run: python3 .github/scripts/skills/agent_skills.py sync
 
       - name: Validate skills and adapter symlinks
-        run: bash .github/scripts/skills/validate-skills.sh
+        run: python3 .github/scripts/skills/agent_skills.py validate
