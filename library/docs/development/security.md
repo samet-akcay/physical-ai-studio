@@ -9,11 +9,13 @@ These rules apply when writing, editing, or reviewing code under `library/` (`ph
 3. No path traversal. Apply the right technique for each case:
 
    - **User-supplied file paths** (e.g., checkpoint path, save directory): resolve and verify containment using `pathlib.Path`. Never use `assert` — it is stripped by `-O`/`-OO`. Never use `os.path` string concatenation. Correct pattern:
+
      ```python
      resolved = (base_dir / user_path).resolve()
      if not resolved.is_relative_to(base_dir.resolve()):
          raise ValueError(f"Path escapes base directory: {user_path!r}")
      ```
+
    - **Names used as directory components** (e.g., `experiment_name` passed to `TensorBoardLogger(name=...)`): validate with a strict regex before use — do not rely on `resolve()` alone, since a name like `../../etc` joins silently before resolution. Required pattern: `re.fullmatch(r"^[a-zA-Z0-9_-]{1,64}$", name)` — raise `ValueError` if it does not match.
    - **Filenames from remote JSON** (e.g., `state_file` in `policy_preprocessor.json`): treat as untrusted. Reject any name containing `/`, `\`, or `..`, and validate the extension against the safe allowlist (`{".safetensors", ".json", ".txt", ".md"}`) before passing to `hf_hub_download()`.
 
