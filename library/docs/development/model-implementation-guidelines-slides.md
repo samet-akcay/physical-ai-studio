@@ -99,8 +99,6 @@ Try wrapper export when Runtime/export value exists
 Fully complete, or keep completion item open
 ```
 
-Diagram source: `model-implementation-guidelines-flow.excalidraw`
-
 ---
 <!-- transition: fade -->
 

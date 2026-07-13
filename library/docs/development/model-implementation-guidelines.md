@@ -39,7 +39,7 @@ Support claims apply only to validated hardware and workflows.
 
 ## 2. Completion States
 
-Use two completion states.
+Two completion states could be used.
 
 | State | Meaning | Required evidence |
 |---|---|---|
@@ -57,7 +57,7 @@ Each model must record:
 
 ## 3. Implementation Options
 
-Studio uses the lowest-cost implementation that meets the required capabilities.
+Studio can use the lowest-cost implementation that meets the required capabilities.
 
 | Option | Description | Typical cost | Support bar |
 |---|---|---|---|
@@ -65,14 +65,14 @@ Studio uses the lowest-cost implementation that meets the required capabilities.
 | Named wrapper | Named Studio class with aliases and equivalence tests | Hours to days | XPU capability validated; wrapper export attempted when Runtime deployment is needed or export provides value |
 | First-party implementation | Native implementation under `physicalai/policies/<name>` | Weeks | XPU training, export, quantization, Runtime load, benchmarks |
 
-Use this order:
+We could use the following order:
 
 1. Start with a wrapper when possible.
 2. Add a named wrapper when policy-specific support is needed.
 3. Attempt wrapper export before first-party implementation when Runtime deployment is needed or export provides value.
 4. Build first-party only when wrapper support cannot meet required capabilities at acceptable cost.
 
-Do not build a first-party implementation only to unblock initial XPU support.
+We should not build a first-party implementation only to unblock initial XPU support.
 
 ## 4. Enablement Flow
 
@@ -85,7 +85,7 @@ Do not build a first-party implementation only to unblock initial XPU support.
 
 ## 5. Contribution Policy
 
-Offer generic fixes upstream, but do not wait for upstream review to ship user-facing support.
+We should ideally offer generic fixes upstream, but should not wait for upstream review to ship user-facing support. Instead:
 
 1. Offer generic fixes upstream: XPU device handling, CUDA-only dependency replacement, exportable control flow, dynamic-shape fixes, and removal of `.item()` in export paths.
 2. Ship required fixes downstream while upstream review is pending.
@@ -95,12 +95,12 @@ Offer generic fixes upstream, but do not wait for upstream review to ship user-f
 
 ## 6. API Ownership
 
-Studio keeps its policy and export APIs even when upstream projects add similar features.
+Studio keeps its policy and export APIs even when upstream projects add similar features. (eg., lerobot adding export)
 
 Reasons:
 
 - Studio uses Lightning for training, configuration, checkpointing, logging, and distributed execution.
-- Studio must support more than one upstream framework.
+- Studio should support more than one upstream framework. (eg., starvla, openpi etc)
 - Studio owns the export metadata, parity checks, quantization flow, and Runtime `InferenceModel.load(...)` contract.
 - Studio must be able to patch CUDA-only dependencies, XPU gaps, and OpenVINO conversion issues without waiting on upstream release cycles.
 - Studio must meet product requirements for licensing, dependency control, security review, and reproducibility.
@@ -109,7 +109,7 @@ When upstream support is sufficient, remove the downstream shim and keep only th
 
 ## 7. Review and Closure
 
-`Studio-enabled` is not a terminal state when required capabilities are still open.
+`Studio-enabled` should not be a terminal state when required capabilities are still open.
 
 Each model with open required capabilities keeps a completion item with an owner. The quarterly review lists `Studio-enabled` and `Fully complete` models. Each open item is either scheduled or its capability is removed from the required set with the reason recorded.
 
@@ -118,10 +118,9 @@ Main closure rules:
 - A model can ship as `Studio-enabled` with export gaps documented.
 - A model is `Fully complete` only when the required capability set is satisfied.
 - OpenVINO export is expected for full deployment readiness when technically feasible.
-- Unsupported capabilities must be explicitly marked not applicable for the product use case.
+- Unsupported capabilities must be explicitly marked not applicable for the product use case. (both in library and studio?)
 
 ## 8. References
 
 - Detailed scorecards, export blockers, common cases, escalation paths, and checklists: [Model Implementation Guidelines Reference](./model-implementation-guidelines-reference.md)
 - Cross-team platform and upstream work: [Intel Hardware Enablement for Robot Learning](./intel-enablement-strategy.md)
-- Process diagram: [Model Implementation Guidelines Flow](./model-implementation-guidelines-flow.excalidraw)

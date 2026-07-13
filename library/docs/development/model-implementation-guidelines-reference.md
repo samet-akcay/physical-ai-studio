@@ -7,7 +7,7 @@
 
 ## Initial Evaluation Scorecard
 
-Before implementation, create a tracking issue and record this scorecard.
+Before implementation, create a tracking issue in the excel sheet and/or in github issues and record this scorecard.
 
 | Criterion | Question | Weight |
 |---|---|---|
