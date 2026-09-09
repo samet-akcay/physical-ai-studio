@@ -56,6 +56,7 @@ export const paths = {
     settings: {
         index: settings,
         compute: settings.path('/compute'),
+        hotkeys: settings.path('/hotkeys'),
         storage: settings.path('/storage'),
         about: settings.path('/about'),
     },
@@ -148,6 +149,10 @@ export const router = createBrowserRouter([
                             },
                             {
                                 path: paths.settings.compute.pattern,
+                                element: <Settings />,
+                            },
+                            {
+                                path: paths.settings.hotkeys.pattern,
                                 element: <Settings />,
                             },
                         ],
