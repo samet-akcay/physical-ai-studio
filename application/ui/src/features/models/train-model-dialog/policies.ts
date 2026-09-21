@@ -32,9 +32,21 @@ export const MODELS: ReadonlyArray<{
         minVRAM: 3 * GB,
     },
     {
+        id: 'molmoact2',
+        name: 'MolmoAct2',
+        description: 'Vision-Language-Action model with flow-matching action generation (Apache 2.0 license)',
+        minVRAM: 80 * GB,
+    },
+    {
         id: 'pi05',
         name: 'Pi0.5',
         description: 'Flow-matching VLA with discrete state encoding and longer context (Gemma license)',
+        minVRAM: 40 * GB,
+    },
+    {
+        id: 'rldx1',
+        name: 'RLDX-1',
+        description: 'General-purpose robot foundation model for dexterous manipulation (RLWRLD Model License v1.0)',
         minVRAM: 40 * GB,
     },
 ];

@@ -395,6 +395,10 @@ class SshTrainJobPayload(TrainJobPayloadBase):
 
     training_target: Literal[TrainingTarget.SSH] = TrainingTarget.SSH
     remote_server_id: UUID = Field(..., description="Configured SSH-provisioned remote server selected for an SSH run")
+    remote_server_name: str | None = Field(
+        default=None,
+        description="Resolved remote server name pinned when the job is submitted, for display once deleted",
+    )
 
 
 TrainJobPayload = Annotated[
