@@ -95,6 +95,7 @@ const mockProjectWithRemoteTrainer = (options: { remoteServers?: (typeof healthy
                 act: ['torch', 'openvino', 'onnx', 'executorch'],
                 smolvla: ['torch', 'openvino'],
                 pi05: ['torch', 'openvino'],
+                xr0: ['torch', 'openvino'],
             })
         ),
         http.get('/api/dataset/{dataset_id}/episodes', () =>
@@ -330,6 +331,43 @@ describe('TrainModelDialog', () => {
 
         await waitFor(() => expect(submitted).toBeDefined());
         expect(submitted).toMatchObject({ snapflow_enabled: false });
+    });
+
+    it('submits XR0 training parameters without LoRA or SnapFlow controls', async () => {
+        const user = userEvent.setup();
+        mockProjectWithRemoteTrainer();
+
+        let submitted: Record<string, unknown> | undefined;
+        server.use(
+            http.post('/api/jobs:train', async ({ request }) => {
+                submitted = (await request.json()) as Record<string, unknown>;
+                return HttpResponse.json({}, { status: 201 });
+            })
+        );
+
+        renderDialog();
+        await user.click(await screen.findByRole('button', { name: /select…/i }));
+        await user.click(await screen.findByRole('option', { name: 'Test dataset' }));
+        await user.click(await screen.findByLabelText('Select XR0 policy'));
+
+        // XR0 reads no fixed camera order, so one Next lands on the training parameters,
+        // which is where the LoRA and SnapFlow controls would be offered.
+        await waitFor(() => expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled());
+        await user.click(screen.getByRole('button', { name: 'Next' }));
+        expect(await screen.findByRole('slider', { name: /batch size/i })).toBeInTheDocument();
+
+        expect(screen.queryByText('LoRA fine-tuning')).not.toBeInTheDocument();
+        expect(screen.queryByRole('checkbox', { name: /snapflow distillation/i })).not.toBeInTheDocument();
+
+        await goToLastStep(user);
+        await user.click(screen.getByRole('button', { name: 'Train' }));
+
+        await waitFor(() => expect(submitted).toBeDefined());
+        expect(submitted).toMatchObject({
+            policy: 'xr0',
+            lora_enabled: false,
+            snapflow_enabled: false,
+        });
     });
 
     it('blocks Pi0.5 training when the token lacks gated-model access', async () => {

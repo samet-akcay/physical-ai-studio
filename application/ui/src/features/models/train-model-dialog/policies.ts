@@ -49,4 +49,12 @@ export const MODELS: ReadonlyArray<{
         description: 'General-purpose robot foundation model for dexterous manipulation (RLWRLD Model License v1.0)',
         minVRAM: 40 * GB,
     },
+    {
+        id: 'xr0',
+        name: 'XR0',
+        description:
+            'Vision-Language-Action model with a Qwen3-VL backbone and flow-matching action expert ' +
+            '(Apache 2.0 license)',
+        minVRAM: 60 * GB,
+    },
 ];
