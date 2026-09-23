@@ -6,8 +6,10 @@
 import logging
 from dataclasses import dataclass
 from unittest.mock import MagicMock, patch
+from pathlib import Path
 
 import onnx
+import openvino
 import pytest
 import torch
 
@@ -20,6 +22,7 @@ from physicalai.export.backends import (
 from physicalai.export.mixin_policy import (
     ExportablePolicyMixin,
     ExportBackend,
+    _set_openvino_input_names,  # noqa: PLC2701
     _quiet_onnx_export_logs,  # noqa: PLC2701
 )
 from physicalai.inference.data import (
@@ -351,6 +354,36 @@ class TestQuietOnnxExportLogs:
 class TestToOpenVINO:
     """Tests for to_openvino method."""
 
+    def test_exported_tokenizer_enables_truncation(self, tmp_path) -> None:
+        """Converted tokenizers enforce the same fixed width as training."""
+        wrapper = ExportWrapper(ModelWithSampleInput())
+        wrapper._preprocessor.tokenizer = MagicMock()
+        wrapper._preprocessor.max_token_len = 31
+        wrapper._extra_export_args = {
+            ExportBackend.OPENVINO: OpenVINOExportParameters(
+                export_tokenizer=True,
+                tokenizer_truncation=True,
+            ),
+        }
+        converted_tokenizer = MagicMock()
+
+        with (
+            patch(
+                "physicalai.export.mixin_policy.openvino_tokenizers.convert_tokenizer",
+                return_value=converted_tokenizer,
+            ) as convert_tokenizer,
+            patch("physicalai.export.mixin_policy.openvino.save_model"),
+        ):
+            wrapper.to_openvino(tmp_path / "model.xml")
+
+        convert_tokenizer.assert_called_once_with(
+            wrapper._preprocessor.tokenizer,
+            with_detokenizer=False,
+            max_length=31,
+            use_max_padding=True,
+            truncation=True,
+        )
+
     def test_to_openvino_with_sample_input_from_model(self, tmp_path):
         """Test OpenVINO export using model's sample_input property."""
         model = ModelWithSampleInput(input_dim=10, output_dim=5)
@@ -467,6 +500,48 @@ class TestToOpenVINO:
 
         assert output_path.exists()
         assert (tmp_path / "model.bin").exists()
+
+
+class TestOpenVINOInputNames:
+    """Tests for OpenVINO input name normalization."""
+
+    def test_set_openvino_input_names_matches_alias_sets(self) -> None:
+        """Configured names collapse the matching port's aliases to one name."""
+        port_a = MagicMock()
+        port_b = MagicMock()
+        port_a.get_names.return_value = {"3497", "position_ids", "3496"}
+        port_b.get_names.return_value = {"input_ids"}
+        ov_model = MagicMock()
+        ov_model.inputs = [port_a, port_b]
+
+        _set_openvino_input_names(ov_model, ["position_ids", "input_ids"])
+
+        port_a.tensor.set_names.assert_called_once_with({"position_ids"})
+        port_b.tensor.set_names.assert_called_once_with({"input_ids"})
+
+    def test_set_openvino_input_names_is_noop_when_not_configured(self) -> None:
+        """Policies that do not opt in leave OpenVINO input names untouched."""
+        port = MagicMock()
+        ov_model = MagicMock()
+        ov_model.inputs = [port]
+
+        _set_openvino_input_names(ov_model, [])
+
+        port.tensor.set_names.assert_not_called()
+
+    def test_set_openvino_input_names_skips_unmatched_names(self) -> None:
+        """Unmatched configured names leave unrelated ports untouched."""
+        port_a = MagicMock()
+        port_b = MagicMock()
+        port_a.get_names.return_value = {"pixel_values"}
+        port_b.get_names.return_value = {"input_ids"}
+        ov_model = MagicMock()
+        ov_model.inputs = [port_a, port_b]
+
+        _set_openvino_input_names(ov_model, ["position_ids", "input_ids"])
+
+        port_a.tensor.set_names.assert_not_called()
+        port_b.tensor.set_names.assert_called_once_with({"input_ids"})
 
 
 class TestToExecutorch:
@@ -715,9 +790,7 @@ class TestSampleInputFromSchema:
         ]
 
         policy = ExportablePolicyMixin()
-        with patch.object(
-            ExportablePolicyMixin, "inputs_schema", new_callable=lambda: property(lambda _self: schema)
-        ):
+        with patch.object(ExportablePolicyMixin, "inputs_schema", new_callable=lambda: property(lambda _self: schema)):
             sample = policy.sample_input
 
         assert sample is not None
@@ -759,3 +832,216 @@ class TestDefaultExportInputSample:
         wrapper = ExportWrapper(model)
 
         assert wrapper._get_default_export_input_sample() is None
+
+
+class TestPostExportHooks:
+    """Tests for post_export_hooks in export() and compress_weights_openvino_int8_sym hook."""
+
+    def test_hook_import_succeeds(self):
+        """Test that the hook can be imported without nncf installed."""
+        from physicalai.export.hooks import compress_weights_openvino_int8_sym  # noqa: F401
+
+    def test_hook_raises_import_error_without_nncf(self, tmp_path):
+        """Test that hook raises ImportError with install hint when nncf is missing."""
+        import builtins
+
+        real_import = builtins.__import__
+
+        def mock_import(name, *args, **kwargs):
+            if name == "nncf":
+                raise ImportError("No module named 'nncf'")
+            return real_import(name, *args, **kwargs)
+
+        from physicalai.export.hooks import compress_weights_openvino_int8_sym
+
+        with patch("builtins.__import__", side_effect=mock_import):
+            with pytest.raises(ImportError, match="physicalai-train\\[nncf\\]"):
+                compress_weights_openvino_int8_sym(tmp_path / "model.xml")
+
+    def test_hook_calls_compress_weights_int8_sym(self, tmp_path):
+        """Test that hook calls nncf.compress_weights with INT8_SYM mode."""
+
+        from physicalai.export.hooks import compress_weights_openvino_int8_sym
+
+        mock_nncf = MagicMock()
+        mock_nncf.CompressWeightsMode.INT8_SYM = "int8_sym"
+        mock_compressed = MagicMock()
+        mock_nncf.compress_weights.return_value = mock_compressed
+
+        mock_ov = MagicMock()
+        mock_model = MagicMock()
+        mock_ov.Core.return_value.read_model.return_value = mock_model
+
+        # ``save_model`` writes to a temp path first; emulate it creating the staged
+        # .xml/.bin files so the subsequent atomic ``Path.replace`` can find them.
+        def fake_save_model(_model, path):
+            Path(path).write_text("xml")
+            Path(path).with_suffix(".bin").write_text("bin")
+
+        mock_ov.save_model.side_effect = fake_save_model
+
+        model_path = tmp_path / "model.xml"
+
+        with patch.dict("sys.modules", {"nncf": mock_nncf, "openvino": mock_ov}):
+            compress_weights_openvino_int8_sym(model_path)
+
+        mock_ov.Core.return_value.read_model.assert_called_once_with(str(model_path))
+        mock_nncf.compress_weights.assert_called_once_with(mock_model, mode="int8_sym")
+
+        # The model is saved to a staged temp path (not the final path), then swapped
+        # atomically into place. Assert on the staged call and the final placement.
+        assert mock_ov.save_model.call_count == 1
+        saved_model, saved_path = mock_ov.save_model.call_args.args
+        assert saved_model is mock_compressed
+        assert Path(saved_path).name == "model.xml"
+        assert Path(saved_path) != Path(model_path)
+        assert (tmp_path / "model.xml").exists()
+        assert (tmp_path / "model.bin").exists()
+
+    def test_export_invokes_post_export_hooks(self, tmp_path):
+        """Test that export() calls post_export_hooks after backend dispatch."""
+        model = ModelWithSampleInput(input_dim=10, output_dim=5)
+        wrapper = ExportWrapper(model)
+
+        mock_hook = MagicMock()
+        output_path = tmp_path / "model.xml"
+        wrapper.export(backend="openvino", output_path=output_path, post_export_hooks=[mock_hook])
+
+        mock_hook.assert_called_once_with(str(output_path))
+
+    def test_export_invokes_multiple_hooks_in_order(self, tmp_path):
+        """Test that multiple hooks are called in sequence."""
+        model = ModelWithSampleInput(input_dim=10, output_dim=5)
+        wrapper = ExportWrapper(model)
+
+        call_order = []
+        hook1 = MagicMock(side_effect=lambda path: call_order.append(("hook1", path)))
+        hook2 = MagicMock(side_effect=lambda path: call_order.append(("hook2", path)))
+
+        output_path = tmp_path / "model.xml"
+        wrapper.export(backend="openvino", output_path=output_path, post_export_hooks=[hook1, hook2])
+
+        expected_path = str(output_path)
+        assert call_order == [("hook1", expected_path), ("hook2", expected_path)]
+
+    @pytest.mark.parametrize("backend", ["onnx", "openvino"])
+    def test_export_hooks_work_for_all_backends(self, tmp_path, backend):
+        """Test that hooks are invoked regardless of export backend."""
+        model = ModelWithSampleInput(input_dim=10, output_dim=5)
+        wrapper = ExportWrapper(model)
+
+        mock_hook = MagicMock()
+        ext = {"onnx": ".onnx", "openvino": ".xml"}[backend]
+        output_path = tmp_path / f"model{ext}"
+        wrapper.export(backend=backend, output_path=output_path, post_export_hooks=[mock_hook])
+
+        mock_hook.assert_called_once_with(str(output_path))
+
+    def test_export_no_hooks_does_not_fail(self, tmp_path):
+        """Test that export works normally without hooks (regression)."""
+        model = ModelWithSampleInput(input_dim=10, output_dim=5)
+        wrapper = ExportWrapper(model)
+
+        output_path = tmp_path / "model.xml"
+        wrapper.export(backend="openvino", output_path=output_path)
+
+        assert output_path.exists()
+
+
+class CompiledTrainingModel(torch.nn.Module):
+    """Model that mirrors how policies compile and branch on training mode.
+
+    Policies rebind hot methods on the instance (``self.forward =
+    torch.compile(self.forward)``) and branch on ``self.training`` in ``forward``,
+    computing a loss during training and predicting during eval. The loss branch
+    needs keys the export input sample does not carry, so tracing in training mode
+    fails loudly.
+    """
+
+    def __init__(self, input_dim: int = 10, output_dim: int = 5):
+        super().__init__()
+        self.input_dim = input_dim
+        self.linear = torch.nn.Linear(input_dim, output_dim)
+        self.forward = torch.compile(self.forward, mode="default")  # type: ignore[method-assign]
+
+    def forward(self, batch):
+        if self.training:
+            return self.linear(batch["input_tensor"]) - batch["action"]
+        return self.linear(batch["input_tensor"])
+
+    @property
+    def sample_input(self) -> dict[str, torch.Tensor]:
+        """Generate sample input."""
+        return {"input_tensor": torch.randn(1, self.input_dim)}
+
+
+class TestExportReadyModel:
+    """Tests for the _export_ready_model context manager."""
+
+    def test_strips_instance_compile_wrapper_and_restores_it(self):
+        """Compiled methods rebound on the instance are removed for the duration."""
+        model = CompiledTrainingModel()
+        wrapper = ExportWrapper(model)
+        compiled = vars(model)["forward"]
+
+        with wrapper._export_ready_model():
+            assert "forward" not in vars(model)
+            assert model.forward.__func__ is CompiledTrainingModel.forward
+
+        assert vars(model)["forward"] is compiled
+
+    def test_strips_compile_wrappers_on_submodules(self):
+        """Nested modules are stripped too, not just the root."""
+        model = ModelWithSampleInput()
+        model.linear.forward = torch.compile(model.linear.forward, mode="default")
+        compiled = vars(model.linear)["forward"]
+        wrapper = ExportWrapper(model)
+
+        with wrapper._export_ready_model():
+            assert "forward" not in vars(model.linear)
+
+        assert vars(model.linear)["forward"] is compiled
+
+    @pytest.mark.parametrize("was_training", [True, False])
+    def test_forces_eval_and_restores_training_mode(self, was_training):
+        """The model is traced in eval mode, then put back the way it was."""
+        model = ModelWithSampleInput()
+        model.train(was_training)
+        wrapper = ExportWrapper(model)
+
+        with wrapper._export_ready_model():
+            assert not model.training
+
+        assert model.training is was_training
+
+    def test_restores_state_when_the_block_raises(self):
+        """A failing export must not leave the model uncompiled or in eval mode."""
+        model = CompiledTrainingModel()
+        model.train()
+        compiled = vars(model)["forward"]
+        wrapper = ExportWrapper(model)
+
+        with pytest.raises(RuntimeError, match="export blew up"):
+            with wrapper._export_ready_model():
+                msg = "export blew up"
+                raise RuntimeError(msg)
+
+        assert vars(model)["forward"] is compiled
+        assert model.training
+
+    def test_export_traces_the_eval_branch_of_a_training_mode_model(self, tmp_path):
+        """A model left in training mode is traced through its eval branch.
+
+        The training branch needs an ``action`` key the export sample does not
+        carry, so tracing it at all would fail.
+        """
+        model = CompiledTrainingModel()
+        model.train()
+        wrapper = ExportWrapper(model)
+
+        output_path = tmp_path / "model.onnx"
+        wrapper.to_onnx(output_path)
+
+        assert output_path.exists()
+        onnx.checker.check_model(onnx.load(str(output_path)))
+        assert model.training

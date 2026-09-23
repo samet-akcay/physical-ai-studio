@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useState } from 'react';
 
 import {
     Button,
@@ -14,39 +14,48 @@ import {
     Text,
 } from '@geti-ui/ui';
 
-import { useRobotControl } from '../../../features/robots/robot-control-provider';
+import { $api } from '../../../api/client';
+import { formatKeyCombo, getEffectiveBindings } from '../../../features/hotkeys/key-combo';
+import { useHotkey } from '../../../features/hotkeys/use-hotkey';
 import { RobotControlView } from '../../../features/robots/robot-control/robot-control-view';
 import { RobotModelsProvider } from '../../../features/robots/robot-models-context';
+import { useRuntimeSession } from '../../../features/robots/runtime-session-provider';
 import { paths } from '../../../router';
 
 import classes from './recording-viewer.module.css';
 
 export const RecordingViewer = () => {
-    const { dataset, state, startEpisode, discardEpisode, saveEpisode, readyForRecording } = useRobotControl();
+    const {
+        dataset,
+        state,
+        startEpisode,
+        discardEpisode,
+        saveEpisode,
+        readyForRecording,
+        environment,
+        observation,
+        actions,
+    } = useRuntimeSession();
 
     if (dataset === undefined) {
         throw 'Cannot load recording viewer without dataset.';
     }
     const [task, setTask] = useState<string>(dataset.default_task);
 
-    useEffect(() => {
-        const handleKeyDown = (e: KeyboardEvent) => {
-            if (e.key === 'ArrowRight') {
-                if (state.is_recording && !saveEpisode.isPending) {
-                    saveEpisode.mutate();
-                } else if (!state.is_recording && task !== '') {
-                    startEpisode.mutate(task);
-                }
-            } else if (e.key === 'ArrowLeft') {
-                if (state.is_recording && !saveEpisode.isPending) {
-                    discardEpisode.mutate();
-                }
-            }
-        };
+    const { data: settings } = $api.useSuspenseQuery('get', '/api/settings');
+    const bindings = getEffectiveBindings(settings.hotkeys.bindings);
 
-        window.addEventListener('keydown', handleKeyDown);
-        return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [state.is_recording, saveEpisode, startEpisode, discardEpisode, task]);
+    useHotkey(bindings['recording.start_episode'], () => startEpisode.mutate(task), !state.is_recording && task !== '');
+    useHotkey(
+        bindings['recording.accept_episode'],
+        () => saveEpisode.mutate(),
+        state.is_recording && !saveEpisode.isPending
+    );
+    useHotkey(
+        bindings['recording.discard_episode'],
+        () => discardEpisode.mutate(),
+        state.is_recording && !saveEpisode.isPending
+    );
 
     const onStart = (e: FormEvent) => {
         e.preventDefault();
@@ -64,7 +73,7 @@ export const RecordingViewer = () => {
                 </Heading>
                 <Flex direction='column' margin='size-200'>
                     <StatusLight variant={state.dataset_loaded ? 'positive' : 'yellow'}>Dataset</StatusLight>
-                    <StatusLight variant={state.environment_loaded ? 'positive' : 'yellow'}>Environment</StatusLight>
+                    <StatusLight variant={state.connected ? 'positive' : 'yellow'}>Environment</StatusLight>
                 </Flex>
                 <Button
                     variant={'secondary'}
@@ -104,22 +113,36 @@ export const RecordingViewer = () => {
                                     onPress={() => discardEpisode.mutate()}
                                 >
                                     <Text>Discard</Text>
-                                    <Keyboard UNSAFE_className={classes.hotkey}>←</Keyboard>
+                                    <Keyboard UNSAFE_className={classes.hotkey}>
+                                        {formatKeyCombo(bindings['recording.discard_episode'])}
+                                    </Keyboard>
                                 </Button>
                                 <Button isPending={saveEpisode.isPending} onPress={() => saveEpisode.mutate()}>
                                     <Text>Accept</Text>
-                                    <Keyboard UNSAFE_className={classes.hotkey}>→</Keyboard>
+                                    <Keyboard UNSAFE_className={classes.hotkey}>
+                                        {formatKeyCombo(bindings['recording.accept_episode'])}
+                                    </Keyboard>
                                 </Button>
                             </ButtonGroup>
                         ) : (
                             <Button type={'submit'}>
                                 <Text>Start episode</Text>
-                                <Keyboard UNSAFE_className={classes.hotkey}>→</Keyboard>
+                                <Keyboard UNSAFE_className={classes.hotkey}>
+                                    {formatKeyCombo(bindings['recording.start_episode'])}
+                                </Keyboard>
                             </Button>
                         )}
                     </Flex>
                 </Form>
-                <RobotControlView />
+                <RobotControlView
+                    environment={environment}
+                    isReady={state.connected}
+                    joints={{
+                        get current() {
+                            return actions.current ?? observation.current;
+                        },
+                    }}
+                />
             </Flex>
         </RobotModelsProvider>
     );

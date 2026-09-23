@@ -398,9 +398,10 @@ class LiberoGym(Gym):
         Raises:
             ValueError: If action has wrong dimensions.
         """
-        # Convert tensor to numpy if needed
+        # Convert tensor to numpy if needed.
+        # NumPy does not support torch.bfloat16 directly, so cast to float32 first.
         if isinstance(action, torch.Tensor):
-            action = action.cpu().numpy()
+            action = action.detach().to(dtype=torch.float32).cpu().numpy()
 
         # Validate action shape
         if action.ndim != 1:

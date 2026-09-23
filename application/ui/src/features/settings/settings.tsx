@@ -1,10 +1,12 @@
-import { ReactNode } from 'react';
+import { ReactNode, Suspense } from 'react';
 
-import { Item, TabList, TabPanels, Tabs } from '@geti-ui/ui';
+import { Item, Loading, TabList, TabPanels, Tabs } from '@geti-ui/ui';
 import { useMatch } from 'react-router';
 
 import { paths } from '../../router';
-import { Compute } from './compute';
+import { GeneralSettings } from './general/general-settings';
+import { HotkeysSettings } from './hotkeys/hotkeys-settings';
+import { TrainingTargets } from './training-targets';
 
 type TabItem = {
     key: string;
@@ -16,24 +18,38 @@ type TabItem = {
 const useActiveTab = () => {
     const match = useMatch(paths.settings.index.path(':activeTab').pattern);
 
-    return match?.params?.activeTab ?? 'compute';
+    return match?.params?.activeTab ?? 'general';
 };
 
 export const SettingsView = () => {
     const activeTab = useActiveTab();
 
     const tabs: TabItem[] = [
-        /*{
+        {
             key: 'general',
             name: 'General',
             href: paths.settings.index.pattern,
-            content: <></>,
-        },*/
+            content: (
+                <Suspense fallback={<Loading />}>
+                    <GeneralSettings />
+                </Suspense>
+            ),
+        },
         {
-            key: 'compute',
-            name: 'Compute',
-            href: paths.settings.compute.pattern,
-            content: <Compute />,
+            key: 'training-targets',
+            name: 'Training Targets',
+            href: paths.settings.trainingTargets.pattern,
+            content: <TrainingTargets />,
+        },
+        {
+            key: 'hotkeys',
+            name: 'Hotkeys',
+            href: paths.settings.hotkeys.pattern,
+            content: (
+                <Suspense fallback={<Loading />}>
+                    <HotkeysSettings />
+                </Suspense>
+            ),
         },
         /*{
             key: 'storage',

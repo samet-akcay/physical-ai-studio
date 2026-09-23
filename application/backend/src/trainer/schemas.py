@@ -6,17 +6,31 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 from uuid import UUID  # noqa: TC003
 
 from loguru import logger
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from training import TrainingJobSpec
 
-_SUPPORTED_POLICIES = frozenset({"act", "pi0", "pi05", "smolvla"})
+_SUPPORTED_POLICIES = frozenset({"act", "pi05", "rldx1", "smolvla", "molmoact2", "xr0"})
 _DEFAULT_PROTOCOL_VERSION = 1
+
+
+def _installed_library_version() -> str:
+    """Return the installed `physicalai-train` version, or "unknown".
+
+    Read directly from installed package metadata rather than a Docker-build
+    ARG, so the reported version can never drift from what is actually
+    installed in this image.
+    """
+    try:
+        return version("physicalai-train")
+    except PackageNotFoundError:
+        return "unknown"
 
 
 class DatasetTransfer(StrEnum):
@@ -84,6 +98,13 @@ class HealthInfo(BaseSettings):
         alias="TRAINER_APPLICATION_VERSION",
         description="Physical AI Studio application version",
     )
+    library_version: str = Field(
+        default_factory=_installed_library_version,
+        description=(
+            "Installed physicalai-train version. Read from package metadata rather than an "
+            "environment variable, so it always reflects what is actually installed."
+        ),
+    )
 
     @field_validator("protocol_version", mode="before")
     @classmethod
@@ -129,6 +150,16 @@ class SubmitJobRequest(BaseModel):
     dataset_transfer: DatasetTransfer = Field(
         default=DatasetTransfer.HTTP,
         description="How the dataset reaches the trainer (http upload)",
+    )
+    hf_token: SecretStr | None = Field(
+        default=None,
+        exclude=True,
+        description=(
+            "Hugging Face token for authenticated dataset/checkpoint downloads during training. "
+            "``exclude=True`` keeps it out of every ``model_dump``/``model_dump_json`` call, so it is "
+            "never written to the job store's SQLite database; it's cached in memory instead for the "
+            "lifetime of the job (see `JobStore.stash_secret`/`take_secret`)."
+        ),
     )
 
     @field_validator("spec")

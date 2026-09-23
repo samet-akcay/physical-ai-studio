@@ -10,7 +10,7 @@ import classes from './episode-list.module.css';
 interface EpisodeListProps {
     episodes: EpisodeSummary[];
     onSelect: (index: number) => void;
-    currentEpisode: number;
+    currentEpisode: number | null;
 }
 
 export const EpisodeList = ({ episodes, onSelect, currentEpisode }: EpisodeListProps) => {
@@ -67,6 +67,7 @@ export const EpisodeList = ({ episodes, onSelect, currentEpisode }: EpisodeListP
                                 >
                                     <EpisodeTag episode={episode} variant='small' />
                                     <Checkbox
+                                        isEmphasized
                                         isSelected={selectedEpisodes.includes(episode.episode_index)}
                                         onPress={() => toggleSelection(episode.episode_index)}
                                         UNSAFE_className={classes.episodeCheckbox}

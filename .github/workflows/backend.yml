@@ -25,7 +25,7 @@ jobs:
     steps:
       - &harden-runner
         name: Harden the runner
-        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           disable-sudo: true
           disable-telemetry: true
@@ -35,13 +35,19 @@ jobs:
             download.pytorch.org:443
             download-r2.pytorch.org:443
             files.pythonhosted.org:443
+            fulcio.sigstore.dev:443
+            ghcr.io:443
             github.com:443
             index.crates.io:443
+            pkg-containers.githubusercontent.com:443
             pypi.org:443
             raw.githubusercontent.com:443
+            rekor.sigstore.dev:443
             releases.astral.sh:443
             release-assets.githubusercontent.com:443
             static.crates.io:443
+            timestamp.sigstore.dev:443
+            tuf-repo-cdn.sigstore.dev:443
             proxy.golang.org:443
             storage.googleapis.com:443
 
@@ -85,12 +91,12 @@ jobs:
 
       - &set-up-uv
         name: Install uv
-        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.10.4"
 
       - name: Run prek
-        uses: j178/prek-action@e98a699c41eb69ab013a45817a0406469a748f8d # v2
+        uses: j178/prek-action@4e14d07f9231acabce116ccfca13b13dd9755ece # v3.0.0
         with:
           extra-args: --all-files
           working-directory: application/backend

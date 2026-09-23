@@ -29,18 +29,17 @@ PhysicalAI Library is a Python SDK for training, evaluating, and deploying Visio
 - Simple and modular API and CLI for training, inference, and benchmarking.
 - Built on [Lightning](https://www.lightning.ai/) for reduced boilerplate and distributed training support.
 - Export models to [OpenVINO](https://docs.openvino.ai/), ONNX, or Torch formats for accelerated inference.
-- Benchmark policies on standardized environments like LIBERO and PushT.
+- Benchmark policies on standardized environments like LIBERO, PushT, and RoboCasa.
 - Unified inference API across all export backends.
 
 ## Supported Policies
 
-| Policy       | Description                                                 | Paper                                                                          |
-| ------------ | ----------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| **ACT**      | Action Chunking with Transformers                           | [Zhao et al. 2023](https://arxiv.org/abs/2304.13705)                           |
-| **SmolVLA**  | Lightweight vision-language-action model                    | [Cadene et al. 2024](https://huggingface.co/lerobot/smolvla_base)              |
-| **Pi0**      | Physical Intelligence foundation model                      | [Black et al. 2024](https://www.physicalintelligence.company/download/pi0.pdf) |
-| **GR00T N1** | Vision-language grounded policy                             | [Bjork et al. 2025](https://arxiv.org/abs/2503.14734)                          |
-| **Pi0.5**    | Vision-Language-Action Model with Open-World Generalization | [Black et al. 2025](https://arxiv.org/pdf/2504.16054)                          |
+| Policy      | Description                                                 | Paper                                                             |
+| ----------- | ----------------------------------------------------------- | ----------------------------------------------------------------- |
+| **ACT**     | Action Chunking with Transformers                           | [Zhao et al. 2023](https://arxiv.org/abs/2304.13705)              |
+| **SmolVLA** | Lightweight vision-language-action model                    | [Cadene et al. 2024](https://huggingface.co/lerobot/smolvla_base) |
+| **Pi0.5**   | Vision-Language-Action Model with Open-World Generalization | [Black et al. 2025](https://arxiv.org/pdf/2504.16054)             |
+| **RLDX-1**  | RLWRLD multi-embodiment flow-matching VLA                   | [RLDX-1](https://huggingface.co/RLWRLD/RLDX-1-PT)                 |
 
 # Installation
 
@@ -75,7 +74,11 @@ cd physical-ai-studio/library
 # Create virtual environment and install
 uv venv
 source .venv/bin/activate
-uv sync --all-extras
+
+# Choose one matching your hardware:
+uv sync --extra cpu --extra all     # CPU
+# uv sync --extra cu128 --extra all # NVIDIA GPU (CUDA)
+# uv sync --extra xpu --extra all   # Intel GPU (XPU)
 ```
 
 </details>
@@ -104,7 +107,7 @@ trainer.fit(model=model, datamodule=datamodule)
 
 ```bash
 # Train with config file
-physicalai fit --config configs/physicalai/act.yaml
+physicalai fit --config configs/physicalai/act/pusht/default.yaml
 
 # Train with CLI arguments
 physicalai fit \
@@ -114,7 +117,7 @@ physicalai fit \
 
 # Override config values
 physicalai fit \
-    --config configs/physicalai/act.yaml \
+    --config configs/physicalai/act/pusht/default.yaml \
     --trainer.max_epochs 200 \
     --data.train_batch_size 64
 ```
@@ -140,6 +143,16 @@ results = benchmark.evaluate(policy)
 # View results
 print(results.summary())
 results.to_json("results.json")
+```
+
+RoboCasa requires a dedicated virtual environment. Install it with `bash library/scripts/benchmark/install_robocasa.sh`,
+then swap in `RoboCasaBenchmark`:
+
+```python test="skip" reason="requires robocasa dedicated venv"
+from physicalai.benchmark.gyms import RoboCasaBenchmark
+
+benchmark = RoboCasaBenchmark(task="atomic_seen", num_episodes=20)
+results = benchmark.evaluate(policy)
 ```
 
 ## CLI

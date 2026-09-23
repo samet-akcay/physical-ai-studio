@@ -36,9 +36,15 @@ backend/src/
 
 ### Install Dependencies
 
+Choose the torch variant that matches your hardware:
+
 ```bash
 cd application/backend
-uv sync
+
+# Choose one matching your hardware:
+uv sync --extra cpu     # CPU only
+# uv sync --extra cuda  # NVIDIA GPU (CUDA)
+# uv sync --extra xpu   # Intel GPU (XPU)
 ```
 
 This installs all backend dependencies including FastAPI, SQLAlchemy, aiortc, and the physicalai library.
@@ -86,6 +92,11 @@ Physical AI Trainer service from
 [`docs/remote-trainer.md`](docs/remote-trainer.md), then register its URL
 as a remote trainer in the Studio UI. The backend sends dataset snapshots to
 the service, monitors the training job, and imports the resulting model.
+
+Alternatively, the backend can provision a job-scoped trainer over SSH on a
+server you can reach directly. This feature is off by default and has no
+authentication model of its own — see
+[`docs/explanation/ssh-remote-trainer.md`](docs/explanation/ssh-remote-trainer.md) before enabling it.
 
 ### Database Migrations
 

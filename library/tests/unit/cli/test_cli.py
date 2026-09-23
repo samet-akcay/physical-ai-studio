@@ -42,11 +42,19 @@ def _library_root() -> Path:
 
 
 def _act_config_path() -> Path:
-    return _library_root() / "configs" / "physicalai" / "act.yaml"
+    return _library_root() / "configs" / "physicalai" / "act" / "pusht" / "default.yaml"
+
+
+def _molmoact2_config_path(name: str) -> Path:
+    return _library_root() / "configs" / "physicalai" / "molmoact2" / f"{name}.yaml"
 
 
 def _libero_config_path() -> Path:
     return _library_root() / "configs" / "benchmark" / "libero.yaml"
+
+
+def _pi05_snapflow_config_path() -> Path:
+    return _library_root() / "configs" / "physicalai" / "pi05" / "aloha" / "snapflow.yaml"
 
 
 class TestRegister:
@@ -82,6 +90,49 @@ class TestConfigParsing:
         assert cfg.data.class_path == "physicalai.data.lerobot.LeRobotDataModule"
         assert cfg.trainer.max_steps == 70000
 
+    def test_fit_parser_accepts_molmoact2_pusht_config(self) -> None:
+        parser = fit_module.register().parser
+        cfg = parser.parse_args([f"--config={_molmoact2_config_path('pusht')}"])
+
+        assert cfg.model.class_path == "physicalai.policies.MolmoAct2"
+        assert cfg.model.init_args.pretrained_name_or_path == "allenai/MolmoAct2"
+        assert cfg.model.init_args.chunk_size == 10
+        assert cfg.model.init_args.n_action_steps == 10
+        assert cfg.model.init_args.use_random_input_noise is True
+        assert cfg.model.init_args.optimizer_lr == pytest.approx(1e-5)
+        assert cfg.model.init_args.optimizer_vit_lr == pytest.approx(5e-6)
+        assert cfg.model.init_args.optimizer_connector_lr == pytest.approx(5e-6)
+        assert cfg.model.init_args.gradient_checkpointing is False
+        assert cfg.model.init_args.scheduler_decay_steps == 24_000
+        assert cfg.model.init_args.setup_type.startswith("single 2D point-mass pusher")
+        assert cfg.model.init_args.control_mode == "absolute planar end-effector position"
+        assert cfg.data.init_args.val_gym.class_path == "physicalai.gyms.pusht.PushTGym"
+        assert cfg.data.init_args.num_rollouts_val == 10
+        assert cfg.trainer.max_epochs == 8
+        assert cfg.trainer.val_check_interval == 2000
+        assert cfg.trainer.check_val_every_n_epoch is None
+        video_callback = cfg.trainer.callbacks[0]
+        assert video_callback["class_path"] == "physicalai.train.RolloutVideoRecorderCallback"
+        assert video_callback["init_args"]["frame_key"] == "top"
+        assert video_callback["init_args"]["fps"] == 10
+
+    def test_fit_parser_accepts_molmoact2_so101_config(self) -> None:
+        parser = fit_module.register().parser
+        cfg = parser.parse_args([f"--config={_molmoact2_config_path('so101')}"])
+
+        assert cfg.model.class_path == "physicalai.policies.MolmoAct2"
+        assert cfg.model.init_args.pretrained_name_or_path == "allenai/MolmoAct2-SO100_101"
+        assert cfg.model.init_args.chunk_size == 30
+        assert cfg.model.init_args.n_action_steps == 30
+        assert cfg.model.init_args.adapt_to_so101 is True
+        assert cfg.model.init_args.optimizer_lr == pytest.approx(1e-5)
+        assert cfg.model.init_args.optimizer_vit_lr == pytest.approx(5e-6)
+        assert cfg.model.init_args.optimizer_connector_lr == pytest.approx(5e-6)
+        assert cfg.model.init_args.scheduler_decay_steps == 24_000
+        assert cfg.data.init_args.repo_id == "Daankrol/pick-and-place-multi-obj"
+        assert cfg.trainer.max_epochs == 8
+        assert cfg.trainer.val_check_interval == 2000
+
     def test_benchmark_parser_accepts_existing_libero_config(self) -> None:
         parser = benchmark_module.register().parser
         cfg = parser.parse_args(
@@ -106,7 +157,7 @@ class TestDispatch:
 
         with patch.object(
             parser,
-            "instantiate_classes",
+            "instantiate",
             return_value=MagicMock(trainer=trainer, model=model, data=datamodule),
         ):
             exit_code = fit_module.run(cast(ArgumentParser, parser), cast(Namespace, cfg))
@@ -124,7 +175,7 @@ class TestDispatch:
 
         with patch.object(
             parser,
-            "instantiate_classes",
+            "instantiate",
             return_value=Namespace(
                 trainer=trainer,
                 model=model,
@@ -145,7 +196,7 @@ class TestDispatch:
 
         with patch.object(
             parser,
-            "instantiate_classes",
+            "instantiate",
             return_value=Namespace(
                 trainer=trainer,
                 model=object(),
@@ -157,6 +208,109 @@ class TestDispatch:
 
         assert exit_code == 0
         assert trainer.validate.call_args.kwargs["ckpt_path"] == "/tmp/best.ckpt"
+
+    def test_fit_dispatch_weights_from_warm_starts_without_resuming(self) -> None:
+        """``--weights_from`` must load weights only, replaying --model init_args as overrides."""
+        parser = fit_module.register().parser
+        cfg = parser.parse_args(
+            [
+                f"--config={_act_config_path()}",
+                "--weights_from=/tmp/phase1.ckpt",
+            ],
+        )
+        trainer = MagicMock()
+        datamodule = object()
+
+        class _FakePolicy:
+            last_call: tuple[str, dict[str, object]] | None = None
+
+            @classmethod
+            def load_from_checkpoint(cls, checkpoint_path: str, **kwargs: object) -> _FakePolicy:
+                cls.last_call = (checkpoint_path, kwargs)
+                return cls()
+
+        discarded_model = _FakePolicy()
+
+        with patch.object(
+            parser,
+            "instantiate",
+            return_value=Namespace(trainer=trainer, model=discarded_model, data=datamodule),
+        ):
+            exit_code = fit_module.run(cast(ArgumentParser, parser), cast(Namespace, cfg))
+
+        assert exit_code == 0
+        assert _FakePolicy.last_call is not None
+        ckpt_path, init_args = _FakePolicy.last_call
+        assert ckpt_path == "/tmp/phase1.ckpt"
+        assert init_args["map_location"] == "cpu"
+        # The model's own class_path/init_args from --config are replayed as overrides.
+        assert "chunk_size" in init_args
+        warm_started_model = trainer.fit.call_args.kwargs["model"]
+        assert isinstance(warm_started_model, _FakePolicy)
+        assert warm_started_model is not discarded_model
+
+    def test_fit_dispatch_weights_from_strips_pretrained_path_and_unset_dataset_stats(self) -> None:
+        """``--weights_from`` must not shadow the checkpoint's own weights/dataset stats.
+
+        Both ``pretrained_name_or_path`` and ``dataset_stats`` are filled in by
+        jsonargparse with their class defaults (``None``) when a config omits them.
+        Passing that ``None`` through to ``load_from_checkpoint`` would overwrite the
+        checkpoint's saved pretrained path / dataset stats and, for ``dataset_stats``,
+        prevent the policy from being built eagerly (regression: see
+        ``docs/how-to/training/snapflow_distillation.md``).
+        """
+        parser = fit_module.register().parser
+        cfg = parser.parse_args(
+            [
+                f"--config={_pi05_snapflow_config_path()}",
+                "--weights_from=/tmp/phase1.ckpt",
+            ],
+        )
+        trainer = MagicMock()
+        datamodule = object()
+
+        class _FakePolicy:
+            last_call: tuple[str, dict[str, object]] | None = None
+
+            @classmethod
+            def load_from_checkpoint(cls, checkpoint_path: str, **kwargs: object) -> _FakePolicy:
+                cls.last_call = (checkpoint_path, kwargs)
+                return cls()
+
+        with patch.object(
+            parser,
+            "instantiate",
+            return_value=Namespace(trainer=trainer, model=_FakePolicy(), data=datamodule),
+        ):
+            exit_code = fit_module.run(cast(ArgumentParser, parser), cast(Namespace, cfg))
+
+        assert exit_code == 0
+        assert _FakePolicy.last_call is not None
+        _, init_args = _FakePolicy.last_call
+        assert "pretrained_name_or_path" not in init_args
+        assert "dataset_stats" not in init_args
+        # Real config overrides for the phase-2 handoff must still come through.
+        assert init_args["train_expert_only"] is True
+        assert init_args["snapflow_enabled"] is True
+        assert init_args["compile_model"] is True
+
+    def test_fit_dispatch_without_weights_from_uses_instantiated_model(self) -> None:
+        """Without ``--weights_from``, the normally instantiated model must be used untouched."""
+        parser = fit_module.register().parser
+        cfg = parser.parse_args([f"--config={_act_config_path()}"])
+        trainer = MagicMock()
+        model = object()
+        datamodule = object()
+
+        with patch.object(
+            parser,
+            "instantiate",
+            return_value=Namespace(trainer=trainer, model=model, data=datamodule),
+        ):
+            exit_code = fit_module.run(cast(ArgumentParser, parser), cast(Namespace, cfg))
+
+        assert exit_code == 0
+        trainer.fit.assert_called_once_with(model=model, datamodule=datamodule)
 
     def test_benchmark_dispatch_calls_benchmark_evaluate(self, tmp_path: Path) -> None:
         parser = benchmark_module.register().parser
@@ -175,7 +329,7 @@ class TestDispatch:
         fake_benchmark.gyms = [MagicMock(), MagicMock()]
 
         with (
-            patch.object(parser, "instantiate_classes", return_value=MagicMock(benchmark=fake_benchmark)),
+            patch.object(parser, "instantiate", return_value=MagicMock(benchmark=fake_benchmark)),
             patch("physicalai.cli.benchmark.load_policy", return_value=(fake_policy, "cpu")),
             patch("builtins.print"),
         ):

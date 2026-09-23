@@ -10,7 +10,7 @@ from exceptions import InvalidArchiveError
 from schemas import Model, TrainJob
 from schemas.base_job import JobStatus
 from schemas.dataset import Dataset
-from schemas.job import TrainJobPayload
+from schemas.job import LocalTrainJobPayload
 from settings import get_settings
 
 # We assume the directory/zip is taken directly from Physical AI Studio, either
@@ -21,7 +21,7 @@ _REQUIRED_FILES = (
     "exports/torch/manifest.json",
 )
 _TORCH_MANIFEST_PATH = "exports/torch/manifest.json"
-_SUPPORTED_POLICIES = frozenset({"act", "smolvla", "pi05"})
+_SUPPORTED_POLICIES = frozenset({"act", "smolvla", "pi05", "rldx1", "molmoact2", "xr0"})
 
 
 class ModelReader(Protocol):
@@ -127,7 +127,7 @@ class ModelImportService:
 
         job = TrainJob(
             project_id=project_id,
-            payload=TrainJobPayload(
+            payload=LocalTrainJobPayload(
                 project_id=project_id,
                 dataset_id=dataset_id,
                 policy=policy,

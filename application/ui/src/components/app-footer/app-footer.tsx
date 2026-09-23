@@ -2,9 +2,18 @@ import { ActionButton, DialogTrigger, Divider, Flex, Icon, View } from '@geti-ui
 import { Manifest } from '@geti-ui/ui/icons';
 
 import { JobStatus } from '../../features/jobs/footer/job-status';
+import { JobsButton } from '../../features/jobs/footer/jobs-button';
+import { useJobUpdates } from '../../features/jobs/use-job-updates';
 import { LogsDialog } from '../../features/logs/logs-dialog';
+import { useOptionalProjectId } from '../../features/projects/use-project';
+import { RuntimeSessionStatus } from '../../features/runtime-sessions/runtime-sessions';
+import { RestartRequiredBanner } from '../../features/system/restart-required-banner';
 
 export const AppFooter = ({ gridArea = 'footer' }: { gridArea?: string }) => {
+    const { project_id } = useOptionalProjectId();
+
+    useJobUpdates(project_id);
+
     return (
         <View
             gridArea={gridArea}
@@ -16,25 +25,31 @@ export const AppFooter = ({ gridArea = 'footer' }: { gridArea?: string }) => {
             paddingX='size-100'
             paddingY='size-0'
         >
-            <Flex alignItems={'center'} height='100%' gap='size-100' minWidth={0}>
-                <View overflow={'hidden'}>
-                    <DialogTrigger type='fullscreen'>
-                        <ActionButton
-                            isQuiet
-                            UNSAFE_style={{
-                                paddingRight: 'var(--spectrum-global-dimension-size-100)',
-                            }}
-                        >
-                            <Icon>
-                                <Manifest />
-                            </Icon>
-                            Logs
-                        </ActionButton>
-                        {(close) => <LogsDialog close={close} />}
-                    </DialogTrigger>
-                </View>
-                <Divider orientation='vertical' size='S' />
-                <JobStatus />
+            <Flex alignItems='center' justifyContent='space-between' gap='size-100' height='100%'>
+                <Flex alignItems={'center'} height='100%' gap='size-100' flex={1} minWidth={0}>
+                    <View overflow={'hidden'}>
+                        <DialogTrigger type='fullscreen'>
+                            <ActionButton
+                                isQuiet
+                                UNSAFE_style={{
+                                    paddingRight: 'var(--spectrum-global-dimension-size-100)',
+                                }}
+                            >
+                                <Icon>
+                                    <Manifest />
+                                </Icon>
+                                Logs
+                            </ActionButton>
+                            {(close) => <LogsDialog close={close} />}
+                        </DialogTrigger>
+                    </View>
+                    <Divider orientation='vertical' size='S' />
+                    <JobsButton projectId={project_id} />
+                    <Divider orientation='vertical' size='S' />
+                    <JobStatus />
+                    <RuntimeSessionStatus />
+                </Flex>
+                <RestartRequiredBanner />
             </Flex>
         </View>
     );

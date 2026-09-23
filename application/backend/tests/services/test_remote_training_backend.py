@@ -18,9 +18,10 @@ from uuid import UUID, uuid4
 import httpx
 import pytest
 from loguru import logger
+from pydantic import SecretStr
 
 from schemas.dataset import Snapshot
-from schemas.job import TrainingDevice, TrainJobPayload
+from schemas.job import RemoteTrainJobPayload, TrainingDevice
 from schemas.model import Model
 from services.training_backends._transfer_progress import TransferProgressLogger, format_bytes, format_throughput
 from services.training_backends.base import TrainingContext
@@ -31,6 +32,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 REMOTE = "services.training_backends.remote"
+LOCAL = "services.training_backends.local"
 TRANSFER = "services.training_backends._transfer_progress"
 
 
@@ -202,10 +204,10 @@ class _FakeClient:
 def _settings() -> MagicMock:
     settings = MagicMock()
     settings.trainer_url = "https://trainer.test"
-    settings.trainer_request_timeout_s = 5.0
-    settings.trainer_download_read_timeout_s = 120.0
-    settings.trainer_stream_reconnect_max_s = 900.0
-    settings.trainer_stream_reconnect_backoff_max_s = 30.0
+    settings.trainer.request_timeout_s = 5.0
+    settings.trainer.download_read_timeout_s = 120.0
+    settings.trainer.stream_reconnect_max_s = 900.0
+    settings.trainer.stream_reconnect_backoff_max_s = 30.0
     settings.data_import_max_uncompressed_bytes = 10 * 1024 * 1024
     settings.data_import_min_free_bytes = 0
     return settings
@@ -217,6 +219,8 @@ def _context(
     should_stop: bool = False,
     remote_job_id: UUID | None = None,
     should_cancel_job: bool = False,
+    policy: str = "act",
+    **payload_overrides: object,
 ) -> TrainingContext:
     snap = tmp_path / "snap"
     snap.mkdir()
@@ -229,13 +233,20 @@ def _context(
         path=str(tmp_path / "model"),
         name="m",
         snapshot_id=uuid4(),
-        policy="act",
+        policy=policy,
         properties={},
         train_job_id=uuid4(),
         version=1,
         created_at=None,
     )
-    payload = TrainJobPayload(project_id=uuid4(), dataset_id=uuid4(), policy="act", model_name="m")
+    payload = RemoteTrainJobPayload(
+        project_id=uuid4(),
+        dataset_id=uuid4(),
+        policy=policy,
+        model_name="m",
+        remote_trainer_id=uuid4(),
+        **payload_overrides,
+    )
     return TrainingContext(
         job=MagicMock(),
         model=model,
@@ -314,6 +325,33 @@ class TestRemoteTrainingBackend:
         assert SNAPSHOT_UPLOAD_PROGRESS + round(50 * span / 100) in reported
         # Progress reached 100% before the worker marks completion.
         assert max(reported) == 100
+
+    @pytest.mark.anyio
+    async def test_submit_excludes_local_run_options_from_trainer_payload(self, tmp_path):
+        body = await _submitted_body(_settings(), _context(tmp_path))
+
+        assert "run_options" not in body["spec"]
+
+    @pytest.mark.anyio
+    async def test_submit_sends_hf_token_as_top_level_field(self, tmp_path):
+        """The token travels outside `spec`, so the trainer never persists it with the job request."""
+        local_settings = MagicMock()
+        local_settings.huggingface.hf_token = SecretStr("hf-secret")
+        with patch(f"{LOCAL}.get_settings", return_value=local_settings):
+            body = await _submitted_body(_settings(), _context(tmp_path))
+
+        assert body["hf_token"] == "hf-secret"
+        assert "hf_token" not in body["spec"]
+
+    @pytest.mark.anyio
+    async def test_submit_sends_none_hf_token_when_unconfigured(self, tmp_path, monkeypatch):
+        local_settings = MagicMock()
+        local_settings.huggingface.hf_token = None
+        monkeypatch.delenv("HF_TOKEN", raising=False)
+        with patch(f"{LOCAL}.get_settings", return_value=local_settings):
+            body = await _submitted_body(_settings(), _context(tmp_path))
+
+        assert body["hf_token"] is None
 
     @pytest.mark.anyio
     async def test_completion_deletes_remote_job_artifacts(self, tmp_path):
@@ -474,8 +512,8 @@ class TestRemoteTrainingBackend:
         """Persistent unreachability past the reconnect budget aborts the job."""
         settings = _settings()
         # Zero budget: the first failed reconnect+poll cycle exhausts it.
-        settings.trainer_stream_reconnect_max_s = 0.0
-        settings.trainer_stream_reconnect_backoff_max_s = 0.0
+        settings.trainer.stream_reconnect_max_s = 0.0
+        settings.trainer.stream_reconnect_backoff_max_s = 0.0
         context = _context(tmp_path)
         controller = _Controller(states=[])
         controller.raise_connection_error = True
@@ -655,11 +693,57 @@ class TestHttpDatasetTransfer:
 
         body = await _submitted_body(settings, context)
 
-        assert body["spec"] == build_spec(context).model_dump(mode="json") | {
+        expected = build_spec(context).model_dump(mode="json", exclude={"run_options", "snapflow_start_epoch"}) | {
             "device_type": None,
             "device_index": None,
         }
+        assert body["spec"] == expected
         assert (body["spec"]["policy"], body["spec"]["max_epochs"], body["spec"]["batch_size"]) == ("act", 5, 16)
+
+    @pytest.mark.anyio
+    async def test_submit_body_includes_lora_fields_when_enabled(self, tmp_path):
+        """LoRA fields are always sent on the wire when a LoRA run was requested."""
+        settings = _settings()
+        context = _context(tmp_path)
+        context.model = context.model.model_copy(update={"policy": "pi05"})
+        context.payload = context.payload.model_copy(
+            update={"policy": "pi05", "lora_enabled": True, "lora_rank": 16, "lora_use_dora": True}
+        )
+
+        body = await _submitted_body(settings, context)
+
+        assert body["spec"]["lora_enabled"] is True
+        assert (body["spec"]["lora_rank"], body["spec"]["lora_use_dora"]) == (16, True)
+
+    @pytest.mark.anyio
+    async def test_submit_body_includes_lora_fields_when_disabled(self, tmp_path):
+        settings = _settings()
+        context = _context(tmp_path)
+
+        body = await _submitted_body(settings, context)
+
+        for key in ("lora_enabled", "lora_rank", "lora_alpha", "lora_dropout", "lora_use_dora"):
+            assert key in body["spec"]
+        assert body["spec"]["lora_enabled"] is False
+
+    @pytest.mark.anyio
+    async def test_submit_omits_an_unset_distillation_boundary(self, tmp_path):
+        """Trainers forbid unknown spec fields, so an ordinary run must stay
+        submittable against a trainer image that predates SnapFlow support."""
+        body = await _submitted_body(_settings(), _context(tmp_path))
+
+        assert "snapflow_start_epoch" not in body["spec"]
+
+    @pytest.mark.anyio
+    async def test_submit_sends_a_distillation_boundary_when_one_is_asked_for(self, tmp_path):
+        """A distillation run must fail loudly against an old trainer rather
+        than silently train without distilling, so the field is sent."""
+        context = _context(tmp_path, policy="pi05", max_epochs=8, snapflow_enabled=True, snapflow_distill_epochs=3)
+
+        body = await _submitted_body(_settings(), context)
+
+        assert body["spec"]["snapflow_start_epoch"] == 8
+        assert body["spec"]["max_epochs"] == 11
 
     @pytest.mark.anyio
     async def test_submit_body_omits_the_studios_device_selection(self, tmp_path):

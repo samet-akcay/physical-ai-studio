@@ -27,7 +27,7 @@ Examples:
 
     Multi-policy comparison:
 
-        >>> results = benchmark.evaluate([act, pi0, groot])
+        >>> results = benchmark.evaluate([act, pi05, smolvla])
         >>> for name, result in results.items():
         ...     print(f"{name}: {result.overall_success_rate:.1%}")
 """
@@ -38,6 +38,7 @@ from .benchmark import Benchmark
 from .libero.libero import LiberoBenchmark
 from .pusht.pusht import PushTBenchmark
 from .results import BenchmarkResults, TaskResult
+from .robocasa.robocasa import RoboCasaBenchmark
 
 __all__ = [
     "Benchmark",
@@ -45,6 +46,7 @@ __all__ = [
     "LiberoBenchmark",
     "PushTBenchmark",
     "RecordMode",
+    "RoboCasaBenchmark",
     "TaskResult",
     "VideoRecorder",
 ]

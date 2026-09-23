@@ -149,6 +149,9 @@ class LeRobotDataModule(DataModule):
         test_gym: Gym | None = None,
         num_rollouts_test: int = 10,
         max_episode_steps: int | None = 300,
+        pin_memory: bool | Literal["auto"] = "auto",
+        persistent_workers: bool = True,
+        val_persistent_workers: bool = False,
     ) -> None:
         """Initialize a LeRobot-specific Action DataModule.
 
@@ -208,6 +211,16 @@ class LeRobotDataModule(DataModule):
                 Defaults to `10`.
             max_episode_steps (int | None, optional): Maximum steps per episode.
                 Defaults to `300`.
+            pin_memory (bool | Literal["auto"], optional): Whether to use pinned (page-locked)
+                memory for the training and eval-loss validation DataLoaders, which speeds up
+                host-to-GPU transfers. ``"auto"`` (default) enables it only when an accelerator
+                (CUDA/XPU/etc.) is available, avoiding PyTorch's ``pin_memory=True`` warning on
+                CPU-only setups.
+            persistent_workers (bool, optional): Whether to keep training DataLoader worker
+                processes alive between epochs, avoiding the cost of re-spawning them every
+                epoch. Has no effect when ``num_workers`` resolves to ``0``. Defaults to `True`.
+            val_persistent_workers (bool, optional): Same as ``persistent_workers`` but for the
+                eval-loss validation DataLoader. Defaults to `False`.
 
         Raises:
             ValueError: If neither `repo_id` nor `dataset` is provided, or if invalid `data_format`.
@@ -361,6 +374,9 @@ class LeRobotDataModule(DataModule):
             test_gym=test_gym,
             num_rollouts_test=num_rollouts_test,
             max_episode_steps=max_episode_steps,
+            pin_memory=pin_memory,
+            persistent_workers=persistent_workers,
+            val_persistent_workers=val_persistent_workers,
         )
 
     def train_dataloader(self) -> DataLoader:
@@ -384,6 +400,8 @@ class LeRobotDataModule(DataModule):
             batch_size=self.train_batch_size,
             shuffle=True,
             drop_last=True,
+            pin_memory=self.pin_memory,
+            persistent_workers=self.persistent_workers,
         )
 
     @staticmethod
@@ -423,18 +441,20 @@ class LeRobotDataModule(DataModule):
         augment_dataset_quantile_stats(full_ds)
 
         # Propagate computed quantiles to the train adapter
-        for key, feat_stats in full_ds.meta.stats.items():
-            if "q01" in feat_stats and key in train_lerobot_ds.meta.stats:
-                train_lerobot_ds.meta.stats[key]["q01"] = feat_stats["q01"]
-                train_lerobot_ds.meta.stats[key]["q99"] = feat_stats["q99"]
+        train_stats = train_lerobot_ds.meta.stats or {}
+        for key, feat_stats in (full_ds.meta.stats or {}).items():
+            if "q01" in feat_stats and key in train_stats:
+                train_stats[key]["q01"] = feat_stats["q01"]
+                train_stats[key]["q99"] = feat_stats["q99"]
 
         # Propagate to val adapter if it exists
         if val_dataset is not None:
             val_lerobot_ds = val_dataset._lerobot_dataset  # noqa: SLF001
-            for key, feat_stats in full_ds.meta.stats.items():
-                if "q01" in feat_stats and key in val_lerobot_ds.meta.stats:
-                    val_lerobot_ds.meta.stats[key]["q01"] = feat_stats["q01"]
-                    val_lerobot_ds.meta.stats[key]["q99"] = feat_stats["q99"]
+            val_stats = val_lerobot_ds.meta.stats or {}
+            for key, feat_stats in (full_ds.meta.stats or {}).items():
+                if "q01" in feat_stats and key in val_stats:
+                    val_stats[key]["q01"] = feat_stats["q01"]
+                    val_stats[key]["q99"] = feat_stats["q99"]
 
 
 __all__ = ["LeRobotDataModule"]

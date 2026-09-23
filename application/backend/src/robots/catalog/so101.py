@@ -6,14 +6,20 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from loguru import logger
-from physicalai.robot import SO101
-from physicalai.robot.so101 import SO101Calibration, SO101JointCalibration
+from physicalai.robot.so101 import SO101, SO101Calibration, SO101JointCalibration
 from physicalai.robot.so101.constants import TICKS_PER_REVOLUTION
-from physicalai_studio_plugin import RobotAdapterOptions, RobotAsset, RobotCatalogDefinition, RobotProbe
+from physicalai_studio_plugin import (
+    RobotAdapterOptions,
+    RobotAsset,
+    RobotCatalogDefinition,
+    RobotProbe,
+    robot_field_ui,
+    robot_payload_ui,
+)
+from physicalai_studio_plugin.schemas import SerialPortInfo
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from exceptions import RobotIdentifyError
-from schemas import SerialPortInfo
 from schemas.robot_type import BaseRobot
 
 SO101Types = Literal["SO101_Follower", "SO101_Leader"]
@@ -29,19 +35,51 @@ class SO101RobotPayload(BaseModel):
         default="",
         description="Serial port path; leave empty to auto-discover via serial_number",
     )
-    serial_number: str = Field(default="", description="USB serial number of the robot (when available)")
-    calibration: dict[str, SO101JointCalibration] | None = Field(
+    serial_number: str = Field(
+        default="",
+        description="USB serial number of the robot (when available)",
+    )
+    calibration: dict[str, SO101JointCalibration] | None = Field(  # pyrefly: ignore[no-matching-overload]
         default=None,
-        description="Per-joint calibration values (id, drive_mode, homing_offset, range_min, range_max)",
+        description=(
+            "Provide SO101 calibration values. Studio uses these values as-is: it does not overwrite "
+            "calibration on the control board and it skips the guided manual calibration flow."
+        ),
+        json_schema_extra=robot_field_ui(  # type: ignore[call-overload]
+            {
+                "advanced_configuration": True,
+                "info": {
+                    "title": "Calibration values",
+                    "description": (
+                        "Upload a calibration JSON exported for this SO101. If provided, Studio uses these "
+                        "values as-is, "
+                        "does not overwrite control-board calibration, and skips guided manual calibration."
+                    ),
+                    "variant": "help",
+                },
+            }
+        ),
     )
 
     model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
-                "connection_string": "",
-                "serial_number": "SO101-2024-001",
-                "calibration": None,
-            },
+        json_schema_extra={  # pyrefly: ignore[bad-argument-type]
+            "example": {"connection_string": "", "serial_number": "SO101-2024-001", "calibration": None},
+            **robot_payload_ui(  # type: ignore[dict-item]
+                [
+                    {
+                        "kind": "connection",
+                        "label": "Connection",
+                        "device_discovery": True,
+                        "identify": True,
+                        "manual_entry": True,
+                        "bind": {
+                            "connection": "connection_string",
+                            "serial_number": "serial_number",
+                        },
+                    },
+                    {"kind": "calibration", "name": "calibration"},
+                ]
+            ),
         },
     )
 

@@ -36,6 +36,34 @@ export const isSerialPermissionDeniedError = (error: unknown): boolean =>
     typeof (error as Record<string, unknown>).error_code === 'string' &&
     (error as Record<string, string>).error_code.toLowerCase() === 'serial_permission_denied';
 
+/**
+ * Returns true when a live runtime session holds the robot (HTTP 423).
+ *
+ * Expected when deleting a robot that is still being driven, or when connecting
+ * with a different rig (leader, fps) than the session that already owns it.
+ */
+export const isRuntimeSessionBusyError = (error: unknown): boolean =>
+    typeof error === 'object' &&
+    error !== null &&
+    'error_code' in error &&
+    (error as Record<string, unknown>).error_code === 'runtime_session_busy';
+
+/**
+ * Returns true when the API error is the SSH-provisioned-trainer feature
+ * reporting itself unavailable (HTTP 503, `{ error_code: "ssh_feature_unavailable" }`).
+ *
+ * The backend fails closed whenever this Studio instance is not eligible to
+ * run SSH-provisioned training (e.g. it is bound to more than loopback), so
+ * this is an expected, often-permanent environment state - not a page-breaking
+ * failure. Callers should degrade gracefully (hide SSH-only UI) instead of
+ * surfacing it as a crash.
+ */
+export const isSshFeatureUnavailableError = (error: unknown): boolean =>
+    typeof error === 'object' &&
+    error !== null &&
+    'error_code' in error &&
+    (error as Record<string, unknown>).error_code === 'ssh_feature_unavailable';
+
 interface ApiErrorBody {
     error_code?: string;
     message?: string;
@@ -54,12 +82,23 @@ export const getApiErrorMessage = (error: unknown): string | undefined => {
     return undefined;
 };
 
+export const getSshHostKeyFingerprint = (error: unknown): string | undefined => {
+    if (typeof error !== 'object' || error === null) {
+        return undefined;
+    }
+    const payload = error as Record<string, unknown>;
+    return payload.error_code === 'ssh_host_key_confirmation_required' && typeof payload.fingerprint === 'string'
+        ? payload.fingerprint
+        : undefined;
+};
+
 /**
  * Short title for robot connection errors surfaced over WebSocket or API responses.
  */
 export const getRobotConnectionErrorTitle = (errorCode: string | null): string => {
     switch (errorCode) {
         case 'robot_device_already_owned':
+        case 'runtime_session_busy':
             return 'Robot already in use';
         case 'robot_name_conflict':
             return 'Robot name conflict';

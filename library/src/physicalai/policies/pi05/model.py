@@ -17,10 +17,19 @@ import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 from transformers.cache_utils import DynamicCache
 
-from physicalai.data.constants import IMAGE_MASKS, TOKENIZED_PROMPT, TOKENIZED_PROMPT_MASK
-from physicalai.data.observation import ACTION, IMAGES
+from physicalai.data.constants import (
+    IMAGE_MASKS,
+    RTC_EXECUTION_HORIZON,
+    RTC_INFERENCE_DELAY,
+    RTC_MAX_GUIDANCE_WEIGHT,
+    TOKENIZED_PROMPT,
+    TOKENIZED_PROMPT_MASK,
+)
+from physicalai.data.observation import ACTION, IMAGES, PREV_CHUNK_LEFT_OVER
 from physicalai.policies.base import Model
-from physicalai.policies.mixins import SnapFlowModelMixin
+from physicalai.policies.mixins import RTCModelMixin, SnapFlowModelMixin
+from physicalai.policies.mixins.peft import PeftModelMixin
+from physicalai.policies.utils import in_episode_bound, reduce_losses
 
 from .pi_gemma import (
     PaliGemmaForConditionalGenerationWithPiGemma,
@@ -537,12 +546,52 @@ class PaliGemmaWithExpertModel(nn.Module):
         return [prefix_output, suffix_output], prefix_past_key_values
 
 
-class Pi05Model(SnapFlowModelMixin, Model):
+class Pi05Model(PeftModelMixin, SnapFlowModelMixin, RTCModelMixin, Model):
     """Core Pi05 PyTorch model for flow matching VLA.
 
     This is the nn.Module that contains the actual model logic,
     separated from the Lightning wrapper.
     """
+
+    @classmethod
+    def get_default_peft_targets(cls) -> str:
+        """Return the default LoRA target modules for Pi05.
+
+        Targets the full attention block (`q`/`k`/`v`/`o_proj`) and MLP (`gate`/`up`/
+        `down_proj`) of *both* the action expert and the PaliGemma VLM's language model,
+        plus the action/time projection heads.
+
+        Two design choices drive this, deliberately going wider than a q/v-attention-only,
+        action-expert-only adapter set:
+
+        1. VLM coverage: adapting only the action expert starves LoRA of the same "the VLM
+           needs to adapt too" signal that full fine-tuning relies on (see
+           `freeze_vision_encoder`/`train_expert_only`, which default to training the whole
+           VLM) -- important when the task requires new visual/language groundings, not
+           just new action-space mappings.
+        2. Full attention + MLP: the original LoRA paper's own ablation (Hu et al. 2021,
+           Table 6) found that spreading a fixed parameter budget across more weight-matrix
+           types at lower rank outperforms concentrating it in fewer types at higher rank
+           (e.g. adapting {q,k,v,o} at rank 4 beat {q,v} alone at rank 16). MLP matrices
+           also hold the bulk of a transformer block's parameters, so q/v-only attention
+           adaptation touches a disproportionately small slice of model capacity. Note that
+           with `num_kv_heads=1` (GQA) in these Gemma variants, `k_proj`/`v_proj` are cheap
+           to adapt (output dim is just `head_dim`), so the "full attention" addition here
+           is mostly `q_proj`/`o_proj` plus MLP.
+
+        The vision tower (SigLIP backbone) is still excluded by default; pass an explicit
+        `lora_target_modules` to include it if needed. Excludes the SnapFlow-only
+        `target_time_mlp_*` heads.
+
+        Returns:
+            A regex string matching the default LoRA-adapted submodule names.
+        """
+        attn_and_mlp = r"(self_attn\.(q|k|v|o)_proj|mlp\.(gate|up|down)_proj)"
+        return (
+            rf"(.*\.gemma_expert\..*\.{attn_and_mlp}|"
+            rf".*\.paligemma\.model\.language_model\..*\.{attn_and_mlp}|"
+            r"(action_in_proj|action_out_proj|time_mlp_in|time_mlp_out))"
+        )
 
     def __init__(  # noqa: PLR0913
         self,
@@ -658,16 +707,15 @@ class Pi05Model(SnapFlowModelMixin, Model):
         nn.init.zeros_(self.target_time_mlp_out.weight)
         nn.init.zeros_(self.target_time_mlp_out.bias)
 
-        self.enable_rtc = False
-
         self.gradient_checkpointing_enabled = False
         if gradient_checkpointing:
             self.gradient_checkpointing_enable()
 
         if compile_model:
             torch.set_float32_matmul_precision("high")
-            # TODO(Eugene): max-autotune currently failed.  # noqa: TD003, FIX002
-            # Set to default for now, need further investigation.
+            # Default to "default" compile mode for training; max-autotune incurs
+            # excessive autotuning overhead that slows down training runs.
+            # See https://github.com/open-edge-platform/physical-ai-studio/issues/1165
             compile_mode = "default"
             self.sample_actions = torch.compile(self.sample_actions, mode=compile_mode)  # type: ignore[method-assign]
             self.forward = torch.compile(self.forward, mode=compile_mode)  # type: ignore[method-assign]
@@ -1041,9 +1089,14 @@ class Pi05Model(SnapFlowModelMixin, Model):
         and target velocities.  When SnapFlow is enabled, uses a mixture
         of standard FM loss and consistency distillation loss.
 
+        Action steps flagged by ``extra.action_is_pad`` are excluded from both
+        the numerator and the denominator, so end-of-episode padding neither
+        supervises the policy nor scales down the gradient.
+
         Args:
             batch: Preprocessed batch dict containing IMAGES, IMAGE_MASKS,
-                TOKENIZED_PROMPT, TOKENIZED_PROMPT_MASK, and ACTION.
+                TOKENIZED_PROMPT, TOKENIZED_PROMPT_MASK, and ACTION, and
+                optionally ``extra.action_is_pad``.
 
         Returns:
             Tuple of (mean loss tensor, loss dict with ``"loss"`` key).
@@ -1064,6 +1117,7 @@ class Pi05Model(SnapFlowModelMixin, Model):
         u_t = noise - actions
 
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, tokens, masks)
+        cd_idx: Tensor | None = None
         if not self._snapflow_enabled:
             v_t = self._predict_velocity(
                 x_t,
@@ -1075,7 +1129,7 @@ class Pi05Model(SnapFlowModelMixin, Model):
             )
             losses = F.mse_loss(u_t, v_t, reduction="none")
         else:
-            losses = self.snapflow_mixed_loss(
+            losses, cd_idx = self.snapflow_mixed_loss(
                 u_t=u_t,
                 x_t=x_t,
                 time=time,
@@ -1087,11 +1141,15 @@ class Pi05Model(SnapFlowModelMixin, Model):
                 predict_velocity=self._predict_velocity,
             )
 
+        # Mask out action steps that only exist because the chunk query was
+        # clamped at an episode boundary.
+        bound = in_episode_bound(batch, cd_idx)
+
         # Truncate losses to actual action dimensions to avoid dilution from padding
         original_action_dim = int(self._dataset_stats[ACTION]["shape"][-1])
         losses = losses[:, :, :original_action_dim]
 
-        loss = losses.mean()
+        loss = reduce_losses(losses, bound)
         # Detached tensor, not `.item()` float: see Model.compute_loss docstring.
         return loss, {"loss": loss.detach()}
 
@@ -1104,9 +1162,14 @@ class Pi05Model(SnapFlowModelMixin, Model):
         deterministic and gives a direct measure of action prediction
         quality — unlike the stochastic flow matching training loss.
 
+        Action steps flagged by ``extra.action_is_pad`` are excluded, so the
+        metric is not diluted by the repeated terminal actions LeRobot inserts
+        at episode boundaries.
+
         Args:
             batch: Preprocessed batch dict containing IMAGES, IMAGE_MASKS,
-                TOKENIZED_PROMPT, TOKENIZED_PROMPT_MASK, and ACTION.
+                TOKENIZED_PROMPT, TOKENIZED_PROMPT_MASK, and ACTION, and
+                optionally ``extra.action_is_pad``.
 
         Returns:
             Tuple of (mean MSE loss tensor, loss dict with ``"loss"`` key).
@@ -1121,7 +1184,12 @@ class Pi05Model(SnapFlowModelMixin, Model):
 
         # Align chunk lengths (predicted may be clipped by n_action_steps)
         min_len = min(gt_trimmed.shape[1], pred_trimmed.shape[1])
-        loss = F.mse_loss(pred_trimmed[:, :min_len], gt_trimmed[:, :min_len])
+        losses = F.mse_loss(pred_trimmed[:, :min_len], gt_trimmed[:, :min_len], reduction="none")
+
+        bound = in_episode_bound(batch)
+        if bound is not None:
+            bound = bound[:, :min_len]
+        loss = reduce_losses(losses, bound)
         return loss, {"loss": loss.item()}
 
     def predict_action_chunk(self, batch: dict[str, Any]) -> Tensor:
@@ -1135,6 +1203,10 @@ class Pi05Model(SnapFlowModelMixin, Model):
 
         Returns:
             Denoised action tensor, unpadded and clipped to n_action_steps.
+
+        Raises:
+            ValueError: If RTC is enabled and the batch is missing
+                ``prev_chunk_left_over``.
         """
         images = batch[IMAGES]
         img_masks = batch[IMAGE_MASKS]
@@ -1143,11 +1215,19 @@ class Pi05Model(SnapFlowModelMixin, Model):
 
         rtc_kwargs: dict[str, Any] = {}
         if self.enable_rtc:
+            max_guidance = batch.get(RTC_MAX_GUIDANCE_WEIGHT, 0.0)
+            execution_horizon = batch.get(RTC_EXECUTION_HORIZON, 0)
+            inference_delay = batch.get(RTC_INFERENCE_DELAY, 0.0)
+
+            if PREV_CHUNK_LEFT_OVER not in batch:
+                msg = f"Expected {PREV_CHUNK_LEFT_OVER} in batch when RTC is enabled."
+                raise ValueError(msg)
+
             rtc_kwargs = {
-                "rtc_max_guidance": batch.get("max_guidance_weight", 0.0),
-                "rtc_execution_horizon": batch.get("execution_horizon", 0),
-                "rtc_latency": batch.get("inference_delay", 0.0),
-                "rtc_prev_action_chunk": batch.get("prev_chunk_left_over"),
+                "rtc_max_guidance": max_guidance,
+                "rtc_execution_horizon": execution_horizon,
+                "rtc_latency": inference_delay,
+                "rtc_prev_action_chunk": self._pad_prev_chunk(batch[PREV_CHUNK_LEFT_OVER]),
             }
 
         actions = self.sample_actions(
@@ -1168,78 +1248,6 @@ class Pi05Model(SnapFlowModelMixin, Model):
             actions = actions[:, : self._n_action_steps]
 
         return actions
-
-    def _compute_prefix_weights(
-        self,
-        inference_delay: Tensor,
-        execution_horizon: Tensor,
-        prefix_attention_schedule: Literal["linear", "exp"] = "linear",
-    ) -> Tensor:
-        """Compute prefix attention weights inside the graph.
-
-        Args:
-            inference_delay: Scalar tensor — the dynamic latency estimate.
-            execution_horizon: Scalar tensor — number of fresh actions per chunk.
-            prefix_attention_schedule: Schedule type for prefix attention weights ("linear" or "exp").
-
-        Returns:
-            ``(1, chunk_size, 1)`` weight tensor.
-        """
-        chunk_size = self._chunk_size
-        end = execution_horizon.float()
-        start = torch.minimum(inference_delay.float(), end)
-
-        idx = torch.arange(chunk_size, dtype=torch.float32, device=inference_delay.device)
-        denom = end - start + 1.0
-        weights = (end - idx) / denom
-        weights = torch.clamp(weights, min=0.0, max=1.0)
-
-        if prefix_attention_schedule == "exp":
-            weights = weights * (torch.exp(weights) - 1.0) / (math.e - 1.0)
-        # "linear" → no-op
-
-        return weights.unsqueeze(0).unsqueeze(-1)  # (1, chunk_size, 1)
-
-    @staticmethod
-    def _rtc_correct(
-        x_t: Tensor,
-        v_t: Tensor,
-        prev_chunk_left_over: Tensor,
-        prefix_weights: Tensor,
-        time: float,
-        max_guidance_weight: Tensor,
-    ) -> Tensor:
-        """Apply RTC guidance correction to velocity prediction.
-
-        Uses direct error (not autograd.grad) for OV traceability.
-
-        Returns:
-            Corrected velocity tensor.
-        """
-        tau = 1.0 - time
-
-        # Predicted clean actions at t=0
-        x1_t = x_t - time * v_t
-
-        # Weighted error between previous chunk and prediction
-        err = (prev_chunk_left_over - x1_t) * prefix_weights
-        correction = err
-
-        # Adaptive guidance weight
-        max_gw = max_guidance_weight.float()
-        tau_t = torch.as_tensor(tau)
-        squared_one_minus_tau = (1.0 - tau_t) ** 2
-        inv_r2 = (squared_one_minus_tau + tau_t**2) / squared_one_minus_tau
-
-        # Manual nan_to_num — torch.nan_to_num not supported by OV
-        c_raw = (1.0 - tau_t) / tau_t
-        c = torch.where(torch.isinf(c_raw), max_gw, c_raw)
-
-        guidance_weight_raw = c * inv_r2
-        guidance_weight = torch.where(torch.isinf(guidance_weight_raw), max_gw, guidance_weight_raw)
-        guidance_weight = torch.minimum(guidance_weight, max_gw)
-
-        return v_t - guidance_weight * correction
 
     @torch.no_grad()
     def sample_actions(  # noqa: PLR0914
@@ -1303,8 +1311,8 @@ class Pi05Model(SnapFlowModelMixin, Model):
 
             if rtc_prev_action_chunk is not None:
                 prefix_weights = self._compute_prefix_weights(
-                    inference_delay=torch.tensor(rtc_latency, device=device),
-                    execution_horizon=torch.tensor(rtc_execution_horizon, device=device),
+                    inference_delay=torch.as_tensor(rtc_latency, device=device),
+                    execution_horizon=torch.as_tensor(rtc_execution_horizon, device=device),
                 )
                 v_t = self._rtc_correct(
                     x_t,
@@ -1312,7 +1320,7 @@ class Pi05Model(SnapFlowModelMixin, Model):
                     prev_chunk_left_over=rtc_prev_action_chunk,
                     prefix_weights=prefix_weights,
                     time=time,
-                    max_guidance_weight=torch.tensor(rtc_max_guidance, device=device),
+                    max_guidance_weight=torch.as_tensor(rtc_max_guidance, device=device),
                 )
 
             x_t += dt * v_t
