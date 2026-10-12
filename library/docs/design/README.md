@@ -42,11 +42,12 @@ Per-model process for selecting, integrating, validating, optimizing, and mainta
 
 ## Policy Plugin Architecture
 
-Design proposal for the policy extension mechanism and model enablement strategy. See [`policy-plugin/`](policy-plugin/).
+Design proposals for the policy extension mechanism and model enablement strategy. See [`policy-plugin/`](policy-plugin/).
 
 | Document | Description |
 | --- | --- |
 | [Policy Plugin and Model Enablement Strategy](policy-plugin/plugin-options.md) | Proposal making an installed `Policy` subclass the unit of extension; covers discovery, capabilities, deployment enablement, and migration |
+| [Policy Plugins: Registry, Bridge, and Native Packages](policy-plugin/registry-and-bridge.md) | Alternative proposal with a `PolicySpec` registry, an `ExternalPolicy` bridge base class, and a `native` deploy lane; compares itself with the strategy above |
 
 ## Architecture
 
