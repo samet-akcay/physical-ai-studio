@@ -1,6 +1,6 @@
 # Physical AI Studio agent skills
 
-Studio owns these canonical skills. **`skills/using/` is published to the OEP catalog; `skills/contributing/` stays in this repository.** A using skill must work in a customer project with the installed packages, without a Studio source checkout. A contributing skill changes Studio or Runtime source. An external robot plugin belongs to `using/`; changes to Studio's curated manifest or UI belong to contributors.
+Studio owns these canonical skills. **`skills/using/` is the set intended for the OEP catalog; `skills/contributing/` stays in this repository.** A using skill must work in a customer project with the installed packages, without a Studio source checkout. A contributing skill changes Studio or Runtime source. An external robot plugin belongs to `using/`; changes to Studio's curated manifest or UI belong to contributors.
 
 | Audience     | Skill                                                                | Workflow                                |
 | ------------ | -------------------------------------------------------------------- | --------------------------------------- |
@@ -16,7 +16,7 @@ Studio owns these canonical skills. **`skills/using/` is published to the OEP ca
 
 ## Discovery and authoring
 
-Canonical content is in `skills/<audience>/<name>/`. Both `.agents/skills/<name>` and `.claude/skills/<name>` are committed adapter symlinks. They expose **both audiences to agents working in this repository**, but the org catalog indexes only `using/`. Never publish an adapter as a second source. Windows requires symlink support (Developer Mode or `core.symlinks true`); the sync script falls back to local junctions where available. After a rename, remove any stale junction reported by validation before rerunning sync.
+Canonical content is in `skills/<audience>/<name>/`. Both `.agents/skills/<name>` and `.claude/skills/<name>` are committed adapter symlinks. They expose **both audiences to agents working in this repository**, but only `using/` is intended for the org catalog. Never publish an adapter as a second source. Windows requires symlink support (Developer Mode or `core.symlinks true`); the sync script falls back to local junctions where available. After a rename, remove any stale junction reported by validation before rerunning sync.
 
 - Name skills with short, distinct actions; directory and frontmatter must match (`^[a-z0-9]+(-[a-z0-9]+)*$`, at most 64 characters). **Prefix `pai-` if and only if the skill is published:** `using/` names are installed into a flat, shared namespace next to other products' skills, so they carry the prefix and keep the same name in source and catalog. `contributing/` names never leave this repository and stay unprefixed (for example `add-policy`). `agent_skills.py validate` enforces this; coordinate any `using/` rename with the OEP catalog.
 - Describe _what_ and _when_, with distinct user triggers. Give a specific negative trigger where neighboring workflows overlap; keep `SKILL.md` focused and disclose detailed unique knowledge in bundled `references/`. Link to existing documentation at its canonical URL so an installed copy does not depend on the Studio checkout.
