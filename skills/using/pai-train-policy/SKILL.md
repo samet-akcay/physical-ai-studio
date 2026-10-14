@@ -13,7 +13,7 @@ Training uses `physicalai.train.Trainer` with a `Policy` and a `DataModule`. Bot
 
 The CLI subcommands and the Python API share the same objects; YAML `class_path` / `init_args` should match what you would wire in code.
 
-The four CLI subcommands share the same `--model` / `--data` / `--trainer.*` shape; `validate`/`test`/`predict` additionally take `--ckpt_path`. Prefer the Python API when the user needs a script, and the CLI for a repeatable YAML-driven run.
+The four CLI subcommands share the same `--model` / `--data` / `--trainer.*` shape; checkpoint arguments are namespaced by subcommand (`--fit.ckpt_path` to resume, `--validate.ckpt_path`, `--test.ckpt_path`, `--predict.ckpt_path` to evaluate). Prefer the Python API when the user needs a script, and the CLI for a repeatable YAML-driven run.
 
 ## Anatomy of a config
 
@@ -65,7 +65,7 @@ Use this path for terminal commands, YAML configs, and reproducible experiments.
    - Done when: checkpoints appear under `experiments/{name}/version_N/`.
 4. **Validate / test / predict** from a checkpoint:
    ```bash
-   physicalai validate --config <your-config.yaml> --ckpt_path experiments/<name>/version_0/checkpoints/last.ckpt
+   physicalai validate --config <your-config.yaml> --validate.ckpt_path experiments/<name>/version_0/checkpoints/last.ckpt
    ```
 5. **Iterate on metrics**, not just loss — confirm the val metric relevant to the task moves, and record the config + checkpoint that produced it.
 

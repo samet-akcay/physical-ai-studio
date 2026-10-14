@@ -5,7 +5,7 @@ Run from the Studio checkout. Reset agent context between prompts; check that th
 ## `add-policy`
 
 1. "Add a native `mynet` policy family under `physicalai.policies`." Expect config/model/policy split, `get_policy` registration, synthetic shape tests, and CLI smoke config.
-2. "Make ACT exportable without changing action semantics." Expect a valid sample input, `ExportablePolicyMixin`, a parity check with `pai-export-policy`, and tests.
+2. "Add ONNX and OpenVINO export to the new `mynet` policy without changing action semantics." Expect a valid sample input, `ExportablePolicyMixin`, a parity check with `pai-export-policy`, and tests.
 3. "Port a LeRobot-wrapped family into first-party Studio policy code." Expect separate first-party files, direct Python construction, and optional dependency checks.
 
 ## `prepare-release`
