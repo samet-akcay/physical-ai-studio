@@ -1,5 +1,5 @@
 ---
-name: pai-add-policy
+name: add-policy
 description: Adds or modifies a policy in the Physical AI Studio library source tree. Use when implementing a policy family under library/src/physicalai/policies, registering it in get_policy, or changing its Lightning training and export integration. DO NOT USE FOR training an existing policy from a customer project (use pai-train-policy).
 license: Apache-2.0
 ---
