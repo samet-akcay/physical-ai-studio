@@ -1,6 +1,7 @@
 ---
 name: prepare-release
 description: Prepares and publishes versioned releases of the Physical AI Studio repository. Triggered by requests to bump `physicalai-studio` or `physicalai-train`, prepare release notes or a release PR, cut `app/vX.Y.Z` or `lib/vX.Y.Z` tags, or verify GitHub Releases and PyPI publications.
+license: Apache-2.0
 ---
 
 # Preparing repository releases
