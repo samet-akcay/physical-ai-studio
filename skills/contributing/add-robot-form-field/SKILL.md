@@ -1,5 +1,5 @@
 ---
-name: pai-add-robot-form-field
+name: add-robot-form-field
 description: Adds an interactive robot form field to Physical AI Studio's UI and plugin SDK. Use when introducing a new robot_payload_ui item kind, changing application/ui robot-form components and SDK validation, and documenting plugin adoption. DO NOT USE FOR creating an external robot plugin with existing fields (use pai-create-robot-plugin).
 license: Apache-2.0
 ---

@@ -1,5 +1,5 @@
 ---
-name: pai-add-benchmark
+name: add-benchmark
 description: Adds or changes a first-party simulation Benchmark in the Physical AI Studio library. Use when implementing a Benchmark class under library/src/physicalai/benchmark, adding a library benchmark config or gym integration, or changing benchmark tests. DO NOT USE FOR running a benchmark on an existing policy (use pai-benchmark-policy).
 license: Apache-2.0
 ---
