@@ -264,7 +264,7 @@ def _infer(package: Path, observations: list[dict[str, Any]]) -> tuple[np.ndarra
     started = time.monotonic()
     model = Engine.load(package, seed=_SEED)
     load_seconds = time.monotonic() - started
-    try:
+    with model:
         chunks = []
         latencies = []
         for observation in observations:
@@ -273,8 +273,6 @@ def _infer(package: Path, observations: list[dict[str, Any]]) -> tuple[np.ndarra
             latencies.append(time.monotonic() - started)
         model.reset()
         replay = model.predict_action_chunk(_runtime_inputs(observations[0]))
-    finally:
-        model.adapter.close()
     assert _listing(package) == before, "Inference must not modify the Runtime package."
     actions = np.stack(chunks)
     assert np.isfinite(actions).all()

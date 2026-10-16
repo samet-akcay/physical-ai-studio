@@ -67,14 +67,14 @@ run = engine.train(
 native = engine.export(run, "exports/gr00t-native")  # PyTorch package
 openvino = engine.export(run, "exports/gr00t-openvino", backend="openvino")  # Suite patches
 
-model = Engine.load(openvino)
-actions = model.predict_action_chunk(
-    {
-        "images": {"image": front_rgb, "wrist_image": wrist_rgb},  # HWC uint8
-        "state": state_vector,  # flat, per meta/modality.json
-        "task": "put the white mug on the plate",
-    },
-)
+with Engine.load(openvino) as model:
+    actions = model.predict_action_chunk(
+        {
+            "images": {"image": front_rgb, "wrist_image": wrist_rgb},  # HWC uint8
+            "state": state_vector,  # flat, per meta/modality.json
+            "task": "put the white mug on the plate",
+        },
+    )
 ```
 
 The native CLI passes flags unchanged to `launch_finetune.py`:
@@ -85,6 +85,8 @@ physicalai train gr00t --base-model-path nvidia/GR00T-N1.7-3B \
 physicalai engine prepare gr00t                                          # optional pre-provisioning
 physicalai engine prepare gr00t --enablement robotics-ai-suite-openvino
 ```
+
+`Gr00tTrainConfig` is a plugin-owned host-side convenience type; it is **not** NVIDIA's `FinetuneConfig`. The official class is `gr00t.configs.finetune_config.FinetuneConfig`, which upstream's launcher constructs inside the isolated GR00T worker. We do not import GR00T into the host because its Python/Torch/Transformers dependencies conflict with Runtime. For the exact official interface, use the native CLI above; its flags are forwarded unchanged. The Python settings type exposes common fields for Engine/Studio and `extra_args` for other native flags.
 
 Upstream-released checkpoints package the same way; pass the dataset that defines the I/O mapping and the embodiment:
 

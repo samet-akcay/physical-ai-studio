@@ -241,7 +241,7 @@ explicit = false
 
 # PyTorch sources configuration
 [tool.uv.sources]
-physicalai = { git = "https://github.com/openvinotoolkit/physicalai.git", rev = "f90b3767cfa99e243fc7b277b9faa242c87db213" }
+physicalai = { git = "https://github.com/openvinotoolkit/physicalai.git", rev = "d0f379d7a067b0f8e1ca27d1bdcd00e896d4c6df" }
 physicalai-lerobot-policy-plugin = { path = "../plugins/policies/lerobot", editable = true }
 physicalai-gr00t-policy-plugin = { path = "../plugins/policies/gr00t", editable = true }
 torch = [

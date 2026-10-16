@@ -238,12 +238,12 @@ conflicts = [[
 ]]
 
 [options]
-exclude-newer = "2026-10-08T18:34:55.48903745Z"
+exclude-newer = "2026-10-09T10:22:07.113022481Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
 openvino-tokenizers = false
-pyrealsense2 = { timestamp = "2026-10-14T18:34:55.489053601Z", span = "P1D" }
+pyrealsense2 = { timestamp = "2026-10-15T10:22:07.113039155Z", span = "P1D" }
 pynokhwa = false
 markupsafe = false
 openvino = false
@@ -3696,8 +3696,8 @@ wheels = [
 
 [[package]]
 name = "physicalai"
-version = "0.3.0"
-source = { git = "https://github.com/openvinotoolkit/physicalai.git?rev=f90b3767cfa99e243fc7b277b9faa242c87db213#f90b3767cfa99e243fc7b277b9faa242c87db213" }
+version = "0.3.1.dev9+gd0f379d"
+source = { git = "https://github.com/openvinotoolkit/physicalai.git?rev=d0f379d7a067b0f8e1ca27d1bdcd00e896d4c6df#d0f379d7a067b0f8e1ca27d1bdcd00e896d4c6df" }
 dependencies = [
     { name = "huggingface-hub" },
     { name = "jsonargparse", extra = ["shtab", "signatures"] },
@@ -3944,7 +3944,7 @@ requires-dist = [
     { name = "peft", marker = "extra == 'cosmos3'", specifier = ">=0.13.0,<1.0.0" },
     { name = "peft", marker = "extra == 'molmoact2'", specifier = ">=0.13.0,<1.0.0" },
     { name = "peft", marker = "extra == 'rldx1'", specifier = ">=0.13.0,<1.0.0" },
-    { name = "physicalai", git = "https://github.com/openvinotoolkit/physicalai.git?rev=f90b3767cfa99e243fc7b277b9faa242c87db213" },
+    { name = "physicalai", git = "https://github.com/openvinotoolkit/physicalai.git?rev=d0f379d7a067b0f8e1ca27d1bdcd00e896d4c6df" },
     { name = "physicalai-gr00t-policy-plugin", extras = ["train"], marker = "extra == 'gr00t'", editable = "../plugins/policies/gr00t" },
     { name = "physicalai-lerobot-policy-plugin", extras = ["train"], marker = "extra == 'lerobot'", editable = "../plugins/policies/lerobot" },
     { name = "physicalai-train", extras = ["cosmos3"], marker = "extra == 'policies'" },
