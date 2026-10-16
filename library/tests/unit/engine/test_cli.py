@@ -12,7 +12,7 @@ from jsonargparse import ArgumentParser, Namespace
 
 from physicalai.cli import engine as engine_cli
 from physicalai.cli import train as train_cli
-from physicalai.engine import Engine, WorkerEnv
+from physicalai.engine import Engine, TrainingEngine, WorkerEnv
 
 
 def test_train_parser_keeps_native_device_arguments_opaque() -> None:
@@ -37,9 +37,11 @@ def test_train_parser_keeps_native_device_arguments_opaque() -> None:
 def test_train_dispatch_returns_the_framework_native_exit_code(monkeypatch: pytest.MonkeyPatch) -> None:
     events: list[tuple[tuple[str, ...], str | Path | None]] = []
 
-    class _FakeEngine:
+    class _FakeEngine(TrainingEngine):
+        framework = "lerobot"
+
         @classmethod
-        def cli(cls, args: list[str], *, interpreter: str | Path | None) -> int:
+        def cli(cls, args: list[str], *, interpreter: str | Path | None = None) -> int:  # type: ignore[override]
             events.append((tuple(args), interpreter))
             return 23
 
@@ -88,8 +90,9 @@ def test_engine_list_and_prune_use_core_environment_registry(monkeypatch: pytest
         (),
         {
             "framework": "lerobot",
+            "name": "default",
             "accelerator": "cpu",
-            "lock_hash": "abcd12345678",
+            "key": "abcd12345678",
             "size_bytes": 1024,
             "path": Path("/cache/lerobot"),
         },
@@ -104,3 +107,49 @@ def test_engine_list_and_prune_use_core_environment_registry(monkeypatch: pytest
     assert engine_cli.run(parser, parser.parse_args(["list"])) == 0
     assert engine_cli.run(parser, parser.parse_args(["prune"])) == 0
     assert any("old" in line for line in outputs)
+
+
+def test_train_rejects_engines_that_only_package_models(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _ExportOnly(Engine):
+        framework = "export-only"
+
+    monkeypatch.setattr(Engine, "get", classmethod(lambda cls, name: _ExportOnly))
+    parser = train_cli.build_parser()
+
+    with pytest.raises(ValueError, match="does not train"):
+        train_cli.run(parser, parser.parse_args(["export-only", "--help"]))
+
+
+def test_engine_prepare_selects_an_enablement_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from physicalai.engine import Enablement
+
+    base = WorkerEnv(framework="demo", project=tmp_path, worker=tmp_path / "w.py", distribution="d", package="p")
+    patched = WorkerEnv(
+        framework="demo",
+        name="openvino",
+        project=tmp_path,
+        worker=tmp_path / "w.py",
+        distribution="d",
+        package="p",
+    )
+
+    class _Demo(Engine):
+        framework = "demo"
+        env = base
+        enablements = (Enablement(name="openvino", env=patched),)
+
+    calls: list[WorkerEnv] = []
+
+    def prepare(env: WorkerEnv, accelerator: str, *, offline: bool) -> Path:
+        del accelerator, offline
+        calls.append(env)
+        return tmp_path
+
+    monkeypatch.setattr(Engine, "get", classmethod(lambda cls, name: _Demo))
+    monkeypatch.setattr(engine_cli, "prepare", prepare)
+    parser = engine_cli.build_parser()
+
+    assert engine_cli.run(parser, parser.parse_args(["prepare", "demo", "--enablement", "openvino"])) == 0
+    assert calls == [patched]
+    with pytest.raises(ValueError, match="no enablement environment 'missing'"):
+        engine_cli.run(parser, parser.parse_args(["prepare", "demo", "--enablement", "missing"]))

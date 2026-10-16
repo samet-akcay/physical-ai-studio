@@ -25,11 +25,12 @@ Python API                     pai CLI                       Studio (follow-up)
      └──────────────┬──────────────┴─────────────────────────┘
                     ▼
              Engine registry (`physicalai.engines`)
-               ├── Trainer: Engine + Lightning Trainer, in-process
-               ├── LeRobotEngine: native LeRobot config/CLI, locked worker
+               ├── Trainer: TrainingEngine + Lightning Trainer, in-process
+               ├── LeRobotEngine: native LeRobot config/CLI, bundled locked worker
+               ├── Gr00tEngine: upstream Isaac-GR00T checkout + Suite OpenVINO enablement
                └── repository or framework engines, added as plugins
                     │
-           shared worker environments and process support
+           declarative worker environments (bundled or Git + verified patches)
                     ▼
              native checkpoint / Runtime package
                     ▼
@@ -42,22 +43,31 @@ Dependencies point down. Engine and policy plugins do not import Studio UI or ba
 
 ## Engine API
 
-`physicalai.engine.Engine` is a lightweight base class and registry. It defines the operations common to frameworks, but it does not prescribe a constructor, a settings type, or a single training method signature.
+`physicalai.engine` separates what every engine does from what only some engines do. `Engine` packages models for Runtime and reports its capabilities. `TrainingEngine` adds native training. A repository plugin that only packages or exports models subclasses `Engine` and needs no training stubs; `pai train` rejects it with a clear error.
 
 ```python
 class Engine(ABC):
     framework: ClassVar[str]
+    env: ClassVar[WorkerEnv | None] = None               # the framework's own environment
+    enablements: ClassVar[tuple[Enablement, ...]] = ()   # each may declare its own environment
+    stock_export_formats: ClassVar[tuple[str, ...]] = ()
 
-    # Implemented per engine, with framework-specific signatures as needed:
-    def cli(self, argv: Sequence[str], *, interpreter: Path | None = None) -> int: ...
-    def run(self, settings, *, dataset, output_dir, device, hooks=None, interpreter=None) -> Run: ...
-    def export(self, source, output_path, backend=None) -> Path: ...
-    def policies(self) -> list[str]: ...
-    def config_schema(self, policy: str) -> dict: ...
+    def export(self, source, output_path, backend=None) -> Path: ...   # abstract
+    def policies(self) -> list[str]: ...                               # abstract
     def capabilities(self, policy: str) -> Capabilities: ...
+    def environments(self) -> tuple[WorkerEnv, ...]: ...
+    def environment(self, name: str | None = None) -> WorkerEnv: ...
+
+
+class TrainingEngine(Engine):
+    training_accelerators: ClassVar[tuple[str, ...]] = ()
+
+    def cli(self, argv: Sequence[str], *, interpreter: Path | None = None) -> int: ...   # abstract
+    def run(self, settings, *, dataset, output_dir, device, hooks=None, interpreter=None) -> Run: ...
+    def config_schema(self, policy: str) -> dict: ...                                   # abstract
 ```
 
-The base also provides `Engine.create(name, **options)`, `Engine.get(name)`, `Engine.names()`, and `Engine.load(package)`. `Engine.get()` returns the engine class; `Engine.create()` constructs an instance. Use the concrete class directly when the framework is already known and strong IDE/type-checker support is useful.
+`capabilities()` reports training accelerators only for `TrainingEngine` subclasses. The base also provides `Engine.create(name, **options)`, `Engine.get(name)`, `Engine.names()`, and `Engine.load(package)`. `Engine.get()` returns the engine class; `Engine.create()` constructs an instance. Use the concrete class directly when the framework is already known and strong IDE/type-checker support is useful.
 
 `Run` describes a completed or in-progress native run. `TrainHooks` is a framework-neutral progress and cooperative-cancellation interface for headless runs. Engines may add framework-specific methods without changing the base interface.
 
@@ -153,19 +163,36 @@ The goal is to make a new model usable early without permanently taking ownershi
 
 Changes that make a framework work with a device or export format should be contributed upstream and maintained there whenever possible. A plugin then selects the upstream release or commit that contains the capability. A downstream enablement is a bridge while upstream work is pending; once accepted, it should be reduced to an upstream version update and the downstream workaround removed.
 
-If an upstream contribution is not accepted or cannot land in time, an enablement can provide the capability without changing the default framework plugin. The preferred fallback is our own overlay code (for example, a wrapper or a scoped export-time adaptation). A published downstream patch series from another team may also be referenced, subject to SDL approval. The plugin should identify the source repository, exact revision, selected patch files, and checksums; it should not copy the patch series into the plugin or maintain a fork as the normal path. If applying another team's patches is not approved, use upstream changes or our own overlay code instead.
+If an upstream contribution is not accepted or cannot land in time, an enablement can provide the capability without changing the default framework plugin. The preferred fallback is our own overlay code (for example, a wrapper or a scoped export-time adaptation). A published downstream patch series from another team may also be used, subject to SDL and license review. If applying another team's patches is not approved, use upstream changes or our own overlay code.
+
+A plugin declares its patches as one or more `PatchSeries` on a `GitProject`. The series type records who owns the patches:
+
+| Series             | Patches live                                   | Content pinned by                                   | Use when                                                       |
+| ------------------ | ---------------------------------------------- | --------------------------------------------------- | -------------------------------------------------------------- |
+| `PublishedPatches` | In another repository at an immutable revision | Per-file SHA-256 digests and the resulting Git tree | Another team owns the patches, such as Robotics AI Suite today |
+| `BundledPatches`   | In the plugin, reviewed in this repository     | Digests computed from the files; optional tree pin  | The patch maintainers contribute here                          |
+
+A published series can also name a local `mirror` for offline builds; a mirror changes where bytes come from, not who owns them. Several series can be layered, for example the Suite's published series plus fixes owned by this repository, or a series moved into the plugin a few patches at a time.
+
+Patches are applied with `git am` only to a clean checkout of the pinned upstream commit inside a cached worker environment, never to a user's checkout or at inference time. When the last series pins its resulting tree, the environment key is the commit plus that tree. Moving the same patches between repositories therefore keeps the environment and every package built in it valid, while provenance records still show where each patch came from. Because this logic lives once in core, it is reviewed once, and the next plugin built on a Suite pipeline only declares its series. Once the change lands upstream, the plugin drops the series and pins the upstream release instead.
 
 [Robotics AI Suite's model pipelines](https://github.com/open-edge-platform/robotics-ai-suite/tree/main/src/pipelines) illustrate both approaches: some wrap an unmodified framework for conversion, while others pin an upstream repository and apply downstream patch series. They are examples of the enablement pattern, not dependencies of this project.
 
 ### Enablement declaration and selection
 
-An Engine may declare which additional capabilities have been validated for each policy. The current `Enablement` type records a name, upstream reference, and per-policy capabilities:
+An Engine may declare which additional capabilities have been validated for each policy. `Enablement` records a name, an upstream reference, per-policy capabilities, and, when the capability needs different code, its own environment:
 
 ```python
 Enablement(
     name="intel-xpu",
     upstream="acme-policy@<commit>",
     provides={"act": {"train": ("xpu",)}},
+)
+
+Enablement(
+    name="robotics-ai-suite-openvino",
+    provides={"gr00t_n1d7": {"export": ("openvino",)}},
+    env=WorkerEnv(..., name="robotics-ai-suite-openvino", project=GitProject(upstream, commit, patches=series)),
 )
 
 engine.capabilities("act")
@@ -186,14 +213,14 @@ If an enablement changes preprocessing or postprocessing, the robot needs the ma
 
 ### Current implementation boundary
 
-| Capability                                                    | Status in this POC                                                                                       |
-| ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| Engine-level `Enablement` metadata and `capabilities(policy)` | Implemented; used to report declared support.                                                            |
-| Native LeRobot training, export, and Runtime adapter          | Implemented and validated for selected ACT/Diffusion paths.                                              |
-| Automatic worker profile from native device or hardware       | Implemented for LeRobot; explicit pre-provisioning is available with `pai engine prepare --accelerator`. |
-| Separate locked environment for each enablement               | Design direction; not yet implemented.                                                                   |
-| Downloading and applying another team's patch series          | Not implemented; requires SDL approval.                                                                  |
-| Concrete OpenVINO/ONNX/ExecuTorch enablement recipes          | Not implemented in this PR.                                                                              |
+| Capability                                                    | Status in this POC                                                                                        |
+| ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| Engine-level `Enablement` metadata and `capabilities(policy)` | Implemented; used to report declared support.                                                             |
+| Native LeRobot training, export, and Runtime adapter          | Implemented and validated for selected ACT/Diffusion paths.                                               |
+| Automatic worker profile from native device or hardware       | Implemented for LeRobot; explicit pre-provisioning is available with `pai engine prepare --accelerator`.  |
+| Separate locked environment for each enablement               | Implemented in core: `Enablement.env`, named environments, keyed caches; used by GR00T.                   |
+| Downloading and applying another team's patch series          | Implemented in core (`GitProject`, `PatchSeries`) with pinned digests and tree check; SDL review pending. |
+| Concrete OpenVINO/ONNX/ExecuTorch enablement recipes          | OpenVINO for GR00T N1.7 through the Robotics AI Suite patches; others not implemented.                    |
 
 ## CLI
 
@@ -212,7 +239,20 @@ Device selection stays framework-native. For LeRobot, `--policy.device` passes t
 
 ## Worker environments and dependencies
 
-Conflicting framework and Runtime dependencies should not be installed into one interpreter. For example, LeRobot's Pi extra and Runtime currently require incompatible Transformers versions. Each worker-based engine therefore ships a small uv project and lock with its plugin; the host Engine prepares a cached environment for it.
+Conflicting framework and Runtime dependencies should not be installed into one interpreter. For example, LeRobot's Pi extra and Runtime currently require incompatible Transformers versions, and GR00T pins `transformers==4.57.3` while Runtime requires `>=5.15`. Engines therefore declare worker environments, and core prepares cached, isolated environments from them.
+
+A `WorkerEnv` names its uv project source and how to synchronize it:
+
+| Field              | Purpose                                                                                                                                                                                                                                       |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `project`          | `BundledProject` (a project and lock shipped in the plugin, as for LeRobot) or `GitProject` (a framework's own project at a commit, optionally with `PublishedPatches` or `BundledPatches` layers). A plain directory means `BundledProject`. |
+| `name`             | Distinguishes the engine's own environment (`default`) from enablement environments.                                                                                                                                                          |
+| `python`, `extras` | uv `--python` version and the uv extras for each accelerator profile; a single-profile environment needs no hardware selection.                                                                                                               |
+| `worker`           | Default worker script; `run_worker(..., worker=...)` selects another script, for example an export worker.                                                                                                                                    |
+
+The cache directory is `<framework>-<name>-<accelerator>-<key>`, where the key hashes everything that determines the environment's contents: the source (lock digest, or commit plus pinned patched tree, or commit plus patch digests), Python version, and extras. Changing any of them builds a new environment instead of mutating one. Core passes `PHYSICALAI_WORKER_PROJECT` to workers so scripts in a framework checkout are reachable.
+
+The worker handshake checks the framework package against the environment's exact lock. A plugin that depends on a PyPI framework also declares its supported range, which the handshake checks as before; frameworks pinned by Git commit declare no range.
 
 The LeRobot plugin declares its supported LeRobot range in its main `pyproject.toml`. Its worker `env/pyproject.toml` describes training dependencies and CPU, CUDA (`cu128`), and XPU PyTorch indexes; `env/uv.lock` pins exact transitive versions. A test verifies that the locked LeRobot version satisfies the plugin's declared range.
 
@@ -230,12 +270,13 @@ physicalai-lerobot-policy-plugin/
 The environment lifecycle is explicit and inspectable:
 
 ```bash
-pai engine prepare lerobot --accelerator cu128  # pre-provision; training device still comes from LeRobot config
-pai engine list                                  # show cached environments
-pai engine prune                                 # remove environments with obsolete locks
+pai engine prepare lerobot --accelerator cu128                       # pre-provision; device still comes from LeRobot config
+pai engine prepare gr00t --enablement robotics-ai-suite-openvino     # enablement environment
+pai engine list                                                      # show cached environments
+pai engine prune                                                     # remove environments no engine or enablement declares
 ```
 
-Conceptually, core copies the plugin's worker project outside the user's checkout, then runs `uv sync --frozen --project <cached-project> --extra <profile>`. The cache is keyed by engine, profile, and lock hash. `interpreter=/path/to/python` bypasses provisioning and uses a user-managed environment; the worker handshake checks the framework version.
+Core materializes the source outside the user's checkout, then runs `uv sync --frozen --project <cached-project>` with the environment's Python and extras. `interpreter=/path/to/python` bypasses provisioning and uses a user-managed environment.
 
 For integration tests that compare native LeRobot with `LeRobotEngine`, the host also needs the matching PyTorch extra. The tests select XPU/CUDA/CPU from available host PyTorch and reject a detected GPU that the host interpreter cannot use, rather than silently falling back:
 
@@ -250,28 +291,70 @@ PHYSICALAI_RUN_LEROBOT_INTEGRATION=1 PHYSICALAI_LEROBOT_TEST_STEPS=5 \
 
 The LeRobot engine packages the native `pretrained_model/` folder with a Runtime manifest. The installed plugin's `RuntimeAdapter` handles LeRobot preprocessing, stateful `select_action()`, postprocessing, and reset. Runtime's own generic preprocessors are not used for this plugin package. Exported packages contain model data; executable code stays in installed and registered plugins.
 
-The LeRobot GR00T policy is not advertised or loaded: its loader enables `trust_remote_code=True`. It remains blocked until remote code is reviewed and pinned.
+The LeRobot GR00T policy is not advertised or loaded: its loader enables `trust_remote_code=True`. It remains blocked until remote code is reviewed and pinned. NVIDIA's own GR00T N1.7 is integrated as a separate repository plugin instead (see below).
+
+## Repository plugin example: GR00T N1.7
+
+`plugins/policies/gr00t/` integrates NVIDIA Isaac-GR00T N1.7 as a repository plugin: training and native inference come from the upstream repository, and OpenVINO export comes from the [Robotics AI Suite `gr00t-n1d7-ov`](https://github.com/open-edge-platform/robotics-ai-suite/tree/main/src/pipelines/gr00t-n1d7-ov) patch series as an enablement. The plugin declares pins; core builds and verifies the environments.
+
+```python
+engine = Engine.create("gr00t")
+run = engine.train(Gr00tTrainConfig(dataset_path=..., embodiment_tag="LIBERO_PANDA", output_dir=...))
+native = engine.export(run, "exports/native")                          # PyTorch package
+openvino = engine.export(run, "exports/openvino", backend="openvino")  # Suite patches
+actions = Engine.load(openvino).predict_action_chunk(observation)
+```
+
+| Concern           | Design                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Environments      | `default`: `GitProject` at upstream commit `3df8b38` with its own `uv.lock` (Python 3.10, CUDA 12.8). `robotics-ai-suite-openvino`: the same commit with the 8-file Suite `PatchSeries` (Python 3.12, CPU PyTorch, OpenVINO), declared by the OpenVINO `Enablement`.                                                                                                                                                  |
+| Patches           | Declared as `PublishedPatches` because Robotics AI Suite owns them: core downloads each file from the pinned Suite revision, verifies its SHA-256, applies the series with `git am`, and checks the resulting tree (`d657bcb`). If the Suite team contributes the patches to this repository, they become `BundledPatches` in the plugin with the same tree, keeping the environment key and existing packages valid. |
+| Training          | `Gr00tEngine` is a `TrainingEngine`. Upstream `launch_finetune.py` runs unchanged through core `run_worker`; the worker refuses remote model code and reports per-step progress. `physicalai train gr00t` passes native flags through.                                                                                                                                                                                |
+| Runtime inference | GR00T's pins conflict with Runtime's, so the adapter runs GR00T in a worker process of the package's environment and exchanges pickle-free frames (JSON plus numeric buffers) over pipes. GR00T's ZMQ `PolicyServer` is not used: it decodes msgpack-numpy before checking its token.                                                                                                                                 |
+| Packages          | Native checkpoint or Suite single IR plus `package.json`: embodiment, Runtime I/O mapping from the dataset's `meta/modality.json`, environment name, key, and pins, and the exporter's OpenVINO-versus-PyTorch metrics. Runtime refuses packages whose environment key differs from the installed plugin's, and inference never writes into a package.                                                                |
+
+The opt-in integration test `library/tests/integration/test_engine_gr00t_e2e.py` runs two scenarios with `nvidia/Cosmos-Reason2-2B`:
+
+1. Fine-tune `nvidia/GR00T-N1.7-3B` on the pinned LIBERO demo data, package natively, run Runtime inference, export through the Suite patches, run the OpenVINO package, and compare both backends on identical observations with identical seeded flow-matching noise.
+2. Package NVIDIA's released `GR00T-N1.7-LIBERO` checkpoint natively and through OpenVINO, and check that both predict the dataset's recorded 16-step action chunks far better than a zero-action baseline. Backend parity cannot detect a swapped camera or a misaligned state or action slice; this check can.
+
+GR00T exposed four gaps in the original engine design. Core now closes three of them:
+
+| Gap                                                               | Resolution                                                                                                                                                                      |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Every engine had to implement training methods.                   | `Engine` covers packaging and capabilities; `TrainingEngine` adds training. Export-only repository plugins need no stubs.                                                       |
+| Worker identity required a PyPI version range in plugin metadata. | Managed environments are identified by content key and checked against their exact lock; a PyPI range is checked only when a plugin declares one.                               |
+| One static bundled project per engine.                            | `WorkerEnv` sources (`BundledProject`, `GitProject` with published or bundled patch layers), named per-enablement environments, and content-keyed caches that `prune` respects. |
+| Runtime adapters had no `close()` hook.                           | Proposed in Runtime: `RuntimeAdapter.close()`, `Callback.on_close()`, and `InferenceModel.close()` called by `__exit__`. The GR00T adapter already implements `close()`.        |
+
+The environment primitives and the worker protocol live in `physicalai.engine` (the `physicalai-train` distribution) and import nothing heavy. A Runtime-only host can run GR00T packages with a user-managed interpreter, without pin verification. Moving these primitives into Runtime would let deployments provision and verify isolated inference environments without training dependencies.
 
 ## Studio integration and enablements
 
 Studio owns labels, forms, dataset snapshots, training targets, and job persistence. Extending the existing #1294 policy catalog to discover `policies()`, `config_schema()`, and `capabilities()` is a follow-up; it is not implemented in this PR. Studio plugins must not import Studio-specific UI code.
 
-Enablements are upstream-first. A plugin may declare validated per-policy capabilities such as XPU training or an export format. Downstream patch materialization and concrete OpenVINO/ONNX/ExecuTorch recipes are out of scope pending SDL review. The final fallback for a brittle or unsupported integration is a first-party policy implementation.
+Enablements are upstream-first. A plugin may declare validated per-policy capabilities such as XPU training or an export format. The GR00T plugin declares one downstream patch enablement (Robotics AI Suite OpenVINO); SDL review of core patch materialization is still required before it ships. The final fallback for a brittle or unsupported integration is a first-party policy implementation.
 
 ## Validation
 
-| Area                         | Result         | Evidence / limit                                                                                                                                           |
-| ---------------------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| First-party Lightning API    | **Pass**       | `fit`, `validate`, `test`, `predict` are exact inherited Lightning methods/signatures; `Trainer.export()` option forwarding is unit-tested.                |
-| First-party GPU train/eval   | **Pass**       | ACT `fit`, `validate`, `test`: 3 E2E cases passed on RTX A6000.                                                                                            |
-| First-party export/inference | **Pass**       | ACT OpenVINO export-to-Runtime + numerical consistency: 2 passed; OpenVINO selected CPU for inference. `Trainer.export()` → Runtime is not yet E2E-tested. |
-| LeRobot GPU training parity  | **Pass**       | Native vs Engine ACT/PushT, 5 steps on RTX A6000; config, losses, final weights match (`rtol=1e-6`, `atol=1e-7`) with deterministic cuDNN.                 |
-| LeRobot Runtime inference    | **Pass**       | Pinned pretrained ACT and Diffusion on CUDA; 3 observations plus reset/replay; max action difference 0.                                                    |
-| Managed CUDA environment     | **Pass**       | Native `policy.device=cuda` selected cu128; worker lock prepared with `uv sync --frozen`; LeRobot 0.6.1 / PyTorch 2.11.0+cu128.                            |
-| CLI passthrough              | **Pass**       | Native `--help`: exit 0, 386 stdout lines; invalid native flag: exit 2.                                                                                    |
-| Unit/hooks/package           | **Pass**       | Engine 58 focused tests; 6 gated skips; plugin tests 2; backend was not changed; library hooks, plugin Ruff/mypy, lock checks, wheel/sdist checks passed.  |
-| XPU                          | **Not tested** | No XPU hardware run.                                                                                                                                       |
-| Full library suite           | **Incomplete** | No full-suite pass claimed; a full run was interrupted with first-party E2E failures/errors.                                                               |
+| Area                         | Result         | Evidence / limit                                                                                                                                                                                                               |
+| ---------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| First-party Lightning API    | **Pass**       | `fit`, `validate`, `test`, `predict` are exact inherited Lightning methods/signatures; `Trainer.export()` option forwarding is unit-tested.                                                                                    |
+| First-party GPU train/eval   | **Pass**       | ACT `fit`, `validate`, `test`: 3 E2E cases passed on RTX A6000.                                                                                                                                                                |
+| First-party export/inference | **Pass**       | ACT OpenVINO export-to-Runtime + numerical consistency: 2 passed; OpenVINO selected CPU for inference. `Trainer.export()` → Runtime is not yet E2E-tested.                                                                     |
+| LeRobot GPU training parity  | **Pass**       | Native vs Engine ACT/PushT, 5 steps on RTX A6000; config, losses, final weights match (`rtol=1e-6`, `atol=1e-7`) with deterministic cuDNN.                                                                                     |
+| LeRobot Runtime inference    | **Pass**       | Pinned pretrained ACT and Diffusion on CUDA; 3 observations plus reset/replay; max action difference 0.                                                                                                                        |
+| Managed CUDA environment     | **Pass**       | Native `policy.device=cuda` selected cu128; worker lock prepared with `uv sync --frozen`; LeRobot 0.6.1 / PyTorch 2.11.0+cu128.                                                                                                |
+| CLI passthrough              | **Pass**       | Native `--help`: exit 0, 386 stdout lines; invalid native flag: exit 2.                                                                                                                                                        |
+| GR00T train → Runtime        | **Pass**       | 20 fine-tuning steps from `nvidia/GR00T-N1.7-3B` with `nvidia/Cosmos-Reason2-2B` on RTX A6000: finite loss, per-step progress; native package loads on CUDA in 11 s, 0.13 s per 16-step chunk; reset/replay exact.             |
+| GR00T OpenVINO enablement    | **Pass**       | Core fetched, SHA-256-verified, applied, and tree-checked the 8 Suite patches; export about 100 s, 6.3 GB fp16 IR; exporter check cosine at least 0.9999994; CPU Runtime 1.2–1.4 s per chunk; packages unchanged by inference. |
+| GR00T native vs OpenVINO     | **Pass**       | Identical observations and seeded noise: mean absolute action difference 5.1e-4 (fine-tuned) and 9.8e-4 (released), 0.16% and 0.43% of mean action magnitude.                                                                  |
+| GR00T released checkpoint    | **Pass**       | NVIDIA's `GR00T-N1.7-LIBERO` predicts the dataset's 16-step action chunks with MAE 0.0133 (native) and 0.0134 (OpenVINO), against 0.216 for zero actions.                                                                      |
+| GR00T CLI passthrough        | **Pass**       | `physicalai train gr00t --help`: exit 0 with upstream help; invalid native flag: exit 2.                                                                                                                                       |
+| Engine core and plugins      | **Pass**       | 85 engine tests (21 new: sources, patches, keyed environments, export-only engines, enablement environments), LeRobot plugin 2, GR00T plugin 48; repository hooks pass.                                                        |
+| Unit/hooks/package           | **Pass**       | Engine 58 focused tests; 6 gated skips; plugin tests 2; backend was not changed; library hooks, plugin Ruff/mypy, lock checks, wheel/sdist checks passed.                                                                      |
+| XPU                          | **Not tested** | No XPU hardware run.                                                                                                                                                                                                           |
+| Full library suite           | **Incomplete** | No full-suite pass claimed; a full run was interrupted with first-party E2E failures/errors.                                                                                                                                   |
 
 With cuDNN's default nondeterministic mode, the first cross-process comparison exceeded the tight tolerance (maximum loss delta about 0.0021). The parity test now sets LeRobot's deterministic cuDNN option for both runs rather than loosening the tolerance.
 
@@ -280,4 +363,6 @@ With cuDNN's default nondeterministic mode, the first cross-process comparison e
 - Extend Studio's #1294 policy catalog/UI/job path to consume engine policies, schemas, and capabilities.
 - Exercise Lightning `Trainer.predict()` and first-party `Trainer.export()` → Runtime end to end.
 - Validate XPU worker provisioning and training.
-- Implement enablement patch materialization and optimized export recipes only after SDL review.
+- Complete SDL review of core patch materialization (`GitProject`, `PatchSeries`).
+- Land the Runtime `close()` lifecycle, then move worker environments and the isolated-adapter protocol into Runtime so deployments need no training dependencies.
+- Convert Studio's LeRobot v3.0 datasets for GR00T (which reads v2.1), and package backbone processor files so GR00T inference runs without Hugging Face access.

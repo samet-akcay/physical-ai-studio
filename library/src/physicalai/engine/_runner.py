@@ -20,11 +20,12 @@ from typing import TYPE_CHECKING, Any
 
 from packaging.version import InvalidVersion, Version
 
-from ._environment import interpreter_for, locked_version, supported_versions
+from ._environment import locked_version, prepare_environment, supported_versions
 from ._types import Run, TrainHooks, TrainingCancelledError, WorkerEnv
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
+    from importlib.resources.abc import Traversable
     from typing import BinaryIO
 
 logger = logging.getLogger(__name__)
@@ -137,12 +138,29 @@ def run_worker(
     accelerator: str = "auto",
     interpreter: str | Path | None = None,
     expected_version: str | Version | None = None,
+    worker: Path | Traversable | None = None,
+    extra_env: Mapping[str, str] | None = None,
 ) -> Run:
     """Run a framework worker with JSON-lines progress and cancellation.
 
     The framework's stdout and stderr are drained into the host logger. Worker
     control and progress use a separate inherited pipe, so native framework
     output never has to be rewritten or multiplexed with protocol messages.
+
+    A managed environment is prepared on demand; its exact locked package
+    version is then required, and ``PHYSICALAI_WORKER_PROJECT`` tells the worker
+    where the project it was built from lives (for example, a framework checkout).
+
+    Args:
+        env: Worker environment.
+        arguments: Arguments passed to the worker script.
+        device: Device string exposed to the worker.
+        hooks: Progress and cancellation hooks.
+        accelerator: Accelerator profile of a managed environment.
+        interpreter: User-managed interpreter that bypasses provisioning.
+        expected_version: Exact package version the worker must report.
+        worker: Worker script to run instead of ``env.worker``.
+        extra_env: Additional environment variables for the worker.
 
     Returns:
         A :class:`Run` with the worker's native output and checkpoint paths.
@@ -158,14 +176,20 @@ def run_worker(
         msg = "Managed engine workers currently require an OS that supports inherited file descriptors."
         raise NotImplementedError(msg)
 
-    python = interpreter_for(env, accelerator=accelerator, interpreter=interpreter)
-    if expected_version is None and interpreter is None:
-        expected_version = locked_version(env)
+    variables = dict(extra_env or {})
+    if interpreter is None:
+        prepared = prepare_environment(env, accelerator)
+        python = prepared.python
+        variables["PHYSICALAI_WORKER_PROJECT"] = str(prepared.project)
+        if expected_version is None:
+            expected_version = locked_version(env, prepared.project)
+    else:
+        python = Path(interpreter).expanduser()
     expected = Version(str(expected_version)) if expected_version is not None else None
 
-    with resources.as_file(env.worker) as worker_path:
+    with resources.as_file(worker if worker is not None else env.worker) as worker_path:
         command = [str(python), str(worker_path), *arguments]
-        return _run_process(env, command, device=device, hooks=hooks, expected_version=expected)
+        return _run_process(env, command, device=device, hooks=hooks, expected_version=expected, variables=variables)
 
 
 def _run_process(
@@ -175,8 +199,9 @@ def _run_process(
     device: str,
     hooks: TrainHooks | None,
     expected_version: Version | None,
+    variables: Mapping[str, str],
 ) -> Run:
-    state = _start_worker(env, command, device, hooks, expected_version)
+    state = _start_worker(env, command, device, hooks, expected_version, variables)
     try:
         return_code = _wait_for_worker(state)
     finally:
@@ -192,12 +217,14 @@ def _start_worker(
     device: str,
     hooks: TrainHooks | None,
     expected_version: Version | None,
+    variables: Mapping[str, str],
 ) -> _WorkerState:
     read_fd, write_fd = os.pipe()
     inherit_protocol_fd = True
     os.set_inheritable(write_fd, inherit_protocol_fd)
     child_env = {
         **os.environ,
+        **variables,
         "PHYSICALAI_WORKER_PROTOCOL_FD": str(write_fd),
         "PHYSICALAI_WORKER_FRAMEWORK": engine_env.framework,
         "PHYSICALAI_WORKER_PACKAGE": engine_env.package,
@@ -384,7 +411,7 @@ def _validate_hello(env: WorkerEnv, message: dict[str, Any], expected_version: V
         raise WorkerProtocolError(msg) from exc
 
     supported = supported_versions(env)
-    if version not in supported:
+    if supported is not None and version not in supported:
         msg = f"Worker {env.package} version {version} is outside the supported range {supported}."
         raise WorkerProtocolError(msg)
     if expected_version is not None and version != expected_version:

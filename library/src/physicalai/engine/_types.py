@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
 
@@ -15,6 +17,8 @@ if TYPE_CHECKING:
 
     from packaging.specifiers import SpecifierSet
     from packaging.version import Version
+
+    from ._sources import ProjectSource
 
 
 class TrainingCancelledError(RuntimeError):
@@ -56,50 +60,107 @@ class Capabilities:
 
 @dataclass(frozen=True)
 class Enablement:
-    """Declarative capabilities supplied by a validated engine enablement.
+    """Validated capabilities that an engine adds beyond its stock framework.
 
-    ``upstream`` records the pinned upstream release or commit that provides
-    the capability. Patch retrieval and application are intentionally not part
-    of this type. Enablement environments are ordinary locked ``WorkerEnv``
-    projects; an enablement is listed only after its behavior has passed validation.
+    An enablement that needs different framework code or dependencies declares
+    its own :class:`WorkerEnv` in ``env``; for example, an upstream checkout with
+    a verified downstream patch series. Capabilities are listed only after they
+    pass validation.
+
+    Attributes:
+        name: Enablement identifier, unique within its engine.
+        provides: Per-policy operations and formats, such as ``{"act": {"export": ("openvino",)}}``.
+        upstream: Human-readable reference of the code providing the capability.
+        env: Worker environment providing the capability, if it differs from the engine's.
     """
 
     name: str
     provides: Mapping[str, Mapping[str, tuple[str, ...]]] = field(default_factory=dict)
     upstream: str | None = None
+    env: WorkerEnv | None = None
 
 
 @dataclass(frozen=True)
 class WorkerEnv:
     """Locked, isolated Python project used by an engine worker.
 
-    ``project`` contains ``pyproject.toml`` and ``uv.lock``. ``worker`` is a
-    standard-library-compatible script executed by the managed or supplied
-    interpreter. The supported package range comes from the plugin's installed
-    distribution metadata; the exact version comes from the worker lock.
+    ``project`` is a :class:`~physicalai.engine.ProjectSource`, or a directory
+    containing ``pyproject.toml`` and ``uv.lock`` (shorthand for
+    :class:`~physicalai.engine.BundledProject`). ``worker`` is the default
+    standard-library-compatible script executed by the environment's interpreter.
+
+    Attributes:
+        framework: Engine identifier that owns the environment.
+        project: Source of the uv project.
+        worker: Default worker script.
+        distribution: Plugin distribution that declares the environment.
+        package: Framework distribution installed in the environment; workers report its version.
+        accelerators: Accelerator profiles the environment supports.
+        name: Environment name, unique within its framework. Enablements use their own names.
+        python: Python version requested from uv, or ``None`` to follow the project.
+        extras: uv extras per accelerator profile. Defaults to the profile's own name.
     """
 
     framework: str
-    project: Path | Traversable
+    project: Path | Traversable | ProjectSource
     worker: Path | Traversable
     distribution: str
     package: str
     accelerators: tuple[str, ...] = ("cpu", "cu128", "xpu")
+    name: str = "default"
+    python: str | None = None
+    extras: Mapping[str, tuple[str, ...]] | None = field(default=None, hash=False)
 
-    def supported(self) -> SpecifierSet:
-        """Return the supported package range from plugin metadata."""
+    @property
+    def source(self) -> ProjectSource:
+        """The project source, wrapping a plain directory as a bundled project."""
+        from ._sources import BundledProject, ProjectSource  # ruff: ignore[import-outside-top-level]  # Avoid an import cycle.
+
+        if isinstance(self.project, ProjectSource):
+            return self.project
+        return BundledProject(self.project)
+
+    def extras_for(self, accelerator: str) -> tuple[str, ...]:
+        """Return the uv extras that select *accelerator*.
+
+        Returns:
+            Extra names passed to ``uv sync``.
+        """
+        if self.extras is None:
+            return (accelerator,)
+        return tuple(self.extras.get(accelerator, ()))
+
+    def key(self) -> str:
+        """Hash every input that determines the environment's contents.
+
+        Returns:
+            Hexadecimal SHA-256 key.
+        """
+        identity = {
+            "format": 2,
+            "framework": self.framework,
+            "name": self.name,
+            "python": self.python,
+            "extras": {accelerator: list(self.extras_for(accelerator)) for accelerator in sorted(self.accelerators)},
+            "source": self.source.identity(),
+        }
+        payload = json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return hashlib.sha256(payload).hexdigest()
+
+    def supported(self) -> SpecifierSet | None:
+        """Return the package range declared by the plugin, if any."""
         from ._environment import supported_versions  # ruff: ignore[import-outside-top-level]  # Lazy to avoid an import cycle.
 
         return supported_versions(self)
 
     def pinned(self) -> Version:
-        """Return the exact package version from the worker lock."""
+        """Return the exact package version from a bundled worker lock."""
         from ._environment import locked_version  # ruff: ignore[import-outside-top-level]  # Lazy to avoid an import cycle.
 
         return locked_version(self)
 
     def lock_hash(self) -> str:
-        """Return the SHA-256 digest of the worker lock."""
+        """Return the SHA-256 digest of a bundled worker lock."""
         from ._environment import lock_hash  # ruff: ignore[import-outside-top-level]  # Lazy to avoid an import cycle.
 
         return lock_hash(self)

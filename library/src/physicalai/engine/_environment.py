@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import logging
@@ -20,20 +21,20 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from packaging.requirements import Requirement
+from packaging.specifiers import SpecifierSet
 from packaging.version import Version
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
-    from importlib.resources.abc import Traversable
+    from collections.abc import Iterable, Iterator
 
-    from packaging.specifiers import SpecifierSet
-
+    from ._sources import ProjectSource
     from ._types import WorkerEnv
 
 logger = logging.getLogger(__name__)
 _MARKER = ".physicalai-engine.json"
-_MARKER_VERSION = 1
+_MARKER_VERSION = 2
 _COMPONENT_RE = re.compile(r"[a-zA-Z0-9_.-]{1,128}")
+_KEY_PREFIX = 12
 _ACCELERATOR_ALIASES = {"cpu": "cpu", "cuda": "cu128", "cu128": "cu128", "xpu": "xpu"}
 _PCI_DISPLAY_CLASS = 0x03
 _PCI_VENDOR_INTEL = "0x8086"
@@ -42,14 +43,35 @@ _PCI_VENDOR_NVIDIA = "0x10de"
 
 @dataclass(frozen=True)
 class PreparedEnvironment:
-    """A managed worker environment reported by ``pai engine list``."""
+    """A managed worker environment.
+
+    Attributes:
+        framework: Engine identifier.
+        name: Environment name within the framework (``default`` or an enablement).
+        accelerator: Accelerator profile that was synchronized.
+        key: Content key of the environment's inputs.
+        distribution: Plugin distribution that declared the environment.
+        path: Environment root, containing ``project`` and ``venv``.
+        size_bytes: On-disk size, when measured.
+    """
 
     framework: str
+    name: str
     accelerator: str
-    lock_hash: str
+    key: str
     distribution: str
     path: Path
-    size_bytes: int
+    size_bytes: int = 0
+
+    @property
+    def python(self) -> Path:
+        """The environment's Python executable."""
+        return _python_path(self.path / "venv")
+
+    @property
+    def project(self) -> Path:
+        """The materialized uv project the environment was built from."""
+        return self.path / "project"
 
 
 def engine_cache_root() -> Path:
@@ -75,37 +97,48 @@ def resolve_accelerator(accelerator: str, *, allowed: tuple[str, ...] | None = N
     """
     normalized_allowed = None if allowed is None else {_canonical_accelerator(value) for value in allowed}
     if accelerator.strip().lower() == "auto":
-        runtime = _torch_accelerators()
-        hardware = _hardware_accelerators()
-        order = (("xpu", "xpu"), ("cuda", "cu128"))
-        candidates = [extra for device, extra in order if runtime.get(device, False)]
-        if not candidates:
-            candidates = [extra for device, extra in order if device in hardware]
-        if normalized_allowed is None:
-            if candidates:
-                return candidates[0]
-            return "cpu"
-        for candidate in candidates:
-            if candidate in normalized_allowed:
-                return candidate
-        if candidates:
-            detected = ", ".join("XPU" if candidate == "xpu" else "CUDA" for candidate in candidates)
-            supported = ", ".join(sorted(normalized_allowed))
-            msg = f"Detected {detected} hardware, but this engine environment supports only {supported}."
-            raise ValueError(msg)
-        if "cpu" in normalized_allowed:
-            return "cpu"
-        for fallback in ("xpu", "cu128"):
-            if fallback in normalized_allowed:
-                return fallback
-        msg = "The worker environment does not declare a supported accelerator extra."
-        raise ValueError(msg)
+        return _automatic_accelerator(normalized_allowed)
 
     selected = _canonical_accelerator(accelerator)
     if normalized_allowed is not None and selected not in normalized_allowed:
         msg = f"Accelerator {accelerator!r} is not supported by this engine environment."
         raise ValueError(msg)
     return selected
+
+
+def _automatic_accelerator(allowed: set[str] | None) -> str:
+    """Pick the best profile for the host among the environment's profiles.
+
+    Returns:
+        Canonical profile name.
+
+    Raises:
+        ValueError: If detected GPU hardware has no matching profile.
+    """
+    if allowed is not None and len(allowed) == 1:
+        # A single-profile environment (for example, a CUDA-only upstream lock) has nothing to choose.
+        return next(iter(allowed))
+    runtime = _torch_accelerators()
+    hardware = _hardware_accelerators()
+    order = (("xpu", "xpu"), ("cuda", "cu128"))
+    candidates = [extra for device, extra in order if runtime.get(device, False)]
+    if not candidates:
+        candidates = [extra for device, extra in order if device in hardware]
+    if allowed is None:
+        return candidates[0] if candidates else "cpu"
+    for candidate in candidates:
+        if candidate in allowed:
+            return candidate
+    if candidates:
+        detected = ", ".join("XPU" if candidate == "xpu" else "CUDA" for candidate in candidates)
+        supported = ", ".join(sorted(allowed))
+        msg = f"Detected {detected} hardware, but this engine environment supports only {supported}."
+        raise ValueError(msg)
+    for fallback in ("cpu", "xpu", "cu128"):
+        if fallback in allowed:
+            return fallback
+    msg = "The worker environment does not declare a supported accelerator extra."
+    raise ValueError(msg)
 
 
 def _canonical_accelerator(accelerator: str) -> str:
@@ -198,28 +231,40 @@ def uv_bin() -> str:
     return str(find_uv_bin())
 
 
-def lock_bytes(env: WorkerEnv) -> bytes:
-    """Read the worker lock from a filesystem path or package resource.
+def lock_bytes(env: WorkerEnv, project: Path | None = None) -> bytes:
+    """Read a worker lock from a prepared project or from a bundled source.
+
+    Args:
+        env: Worker environment.
+        project: Materialized project directory. Required for sources whose
+            lock exists only after materialization, such as Git projects.
 
     Returns:
         The raw ``uv.lock`` bytes.
 
     Raises:
-        FileNotFoundError: If the worker project does not include a lock file.
+        FileNotFoundError: If the project does not include a lock.
+        ValueError: If the source has no lock before preparation and no project was given.
     """
-    lock = _join_resource(env.project, "uv.lock")
-    if not lock.is_file():
-        msg = f"Worker environment for {env.framework!r} does not include uv.lock."
-        raise FileNotFoundError(msg)
-    return lock.read_bytes()
+    if project is not None:
+        lock = project / "uv.lock"
+        if not lock.is_file():
+            msg = f"Worker project for {env.framework!r} does not include uv.lock."
+            raise FileNotFoundError(msg)
+        return lock.read_bytes()
+    lock_data = env.source.lock()
+    if lock_data is None:
+        msg = f"The {env.framework!r} {env.name!r} environment's lock is available only after preparation."
+        raise ValueError(msg)
+    return lock_data
 
 
-def lock_hash(env: WorkerEnv) -> str:
+def lock_hash(env: WorkerEnv, project: Path | None = None) -> str:
     """Return the SHA-256 digest of a worker lock."""
-    return hashlib.sha256(lock_bytes(env)).hexdigest()
+    return hashlib.sha256(lock_bytes(env, project)).hexdigest()
 
 
-def locked_version(env: WorkerEnv) -> Version:
+def locked_version(env: WorkerEnv, project: Path | None = None) -> Version:
     """Read the exact worker package version from ``uv.lock``.
 
     Returns:
@@ -229,7 +274,7 @@ def locked_version(env: WorkerEnv) -> Version:
         ValueError: If the lock is invalid or does not pin exactly one matching package.
     """
     try:
-        lock = tomllib.loads(lock_bytes(env).decode("utf-8"))
+        lock = tomllib.loads(lock_bytes(env, project).decode("utf-8"))
     except (UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
         msg = f"Worker lock for {env.framework!r} is not valid TOML."
         raise ValueError(msg) from exc
@@ -251,14 +296,18 @@ def locked_version(env: WorkerEnv) -> Version:
     return next(iter(versions))
 
 
-def supported_versions(env: WorkerEnv) -> SpecifierSet:
-    """Read the supported package range from the plugin's installed metadata.
+def supported_versions(env: WorkerEnv) -> SpecifierSet | None:
+    """Read the package range declared by the plugin, if it declares one.
+
+    Plugins that depend on a PyPI framework (LeRobot) declare its range. Plugins
+    for frameworks pinned by Git commit declare none; their environments are
+    identified by content key and exact lock instead.
 
     Returns:
-        The package version specifier declared by the plugin.
+        The declared specifier, or ``None`` when the plugin declares no requirement.
 
     Raises:
-        LookupError: If the plugin distribution does not declare one unmarked requirement.
+        LookupError: If the plugin declares more than one unmarked requirement on the package.
     """
     package_name = _normalize_distribution_name(env.package)
     requirements = []
@@ -270,107 +319,112 @@ def supported_versions(env: WorkerEnv) -> SpecifierSet:
             continue
         requirements.append(requirement.specifier)
 
+    if not requirements:
+        return None
     if len(requirements) != 1:
         msg = (
             f"Expected one unmarked {env.package!r} requirement in distribution "
             f"{env.distribution!r}, found {len(requirements)}."
         )
         raise LookupError(msg)
-    return requirements[0]
+    return SpecifierSet(str(requirements[0]))
 
 
 def prepare(env: WorkerEnv, accelerator: str = "auto", *, offline: bool = False) -> Path:
-    """Create or synchronize the immutable worker environment for *env*.
-
-    The uv project is copied outside the caller's working tree so a host
-    project's ``[tool.uv]`` configuration cannot affect resolution. ``--frozen``
-    makes the plugin's lock the only dependency resolution source.
+    """Create or synchronize the worker environment and return its interpreter.
 
     Returns:
         Path to the prepared worker Python executable.
+    """
+    return prepare_environment(env, accelerator, offline=offline).python
+
+
+def prepare_environment(env: WorkerEnv, accelerator: str = "auto", *, offline: bool = False) -> PreparedEnvironment:
+    """Create or synchronize the immutable worker environment for *env*.
+
+    The source is materialized outside the caller's working tree, so a host
+    project's ``[tool.uv]`` configuration cannot affect resolution, and
+    ``--frozen`` makes the project's lock the only resolution source. The cache
+    directory is keyed by framework, environment name, accelerator, and the
+    content key of every input.
+
+    Returns:
+        The prepared environment.
 
     Raises:
-        ValueError: If the worker framework or accelerator is invalid.
+        ValueError: If the worker framework, name, or accelerator is invalid.
     """
     selected = resolve_accelerator(accelerator, allowed=env.accelerators)
-    _validate_component(env.framework, "framework")
-    _validate_component(env.distribution, "distribution")
-    digest = lock_hash(env)
-    root = engine_cache_root() / f"{env.framework}-{selected}-{digest[:12]}"
+    for value, label in ((env.framework, "framework"), (env.name, "name"), (env.distribution, "distribution")):
+        _validate_component(value, label)
+    key = env.key()
+    root = engine_cache_root() / f"{env.framework}-{env.name}-{selected}-{key[:_KEY_PREFIX]}"
     project = root / "project"
     venv = root / "venv"
-    if root.is_symlink():
+    if root.is_symlink() or venv.is_symlink():
         msg = f"Worker environment cache path cannot be a symbolic link: {root}"
         raise ValueError(msg)
     root.mkdir(parents=True, exist_ok=True)
-    _copy_project_once(env.project, project)
-    if venv.is_symlink():
-        msg = f"Worker virtual environment path cannot be a symbolic link: {venv}"
-        raise ValueError(msg)
-
-    command = [uv_bin(), "sync", "--frozen", "--project", str(project), "--extra", selected]
-    if offline:
-        command.append("--offline")
-    child_env = {**os.environ, "UV_PROJECT_ENVIRONMENT": str(venv)}
-    logger.info("Preparing %s worker environment (%s).", env.framework, selected)
-    subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true]  # Only fixed uv subcommands and validated project paths are passed.
-        command,
-        cwd=project,
-        env=child_env,
-        check=True,
-        shell=False,
-    )
-    _write_marker(
-        root,
-        {
-            "format_version": _MARKER_VERSION,
-            "framework": env.framework,
-            "accelerator": selected,
-            "lock_hash": digest,
-            "distribution": env.distribution,
-        },
-    )
-    return _python_path(venv)
+    with _exclusive(root.parent / f".{root.name}.lock"):
+        _materialize_once(env.source, project, offline=offline)
+        command = [uv_bin(), "sync", "--frozen", "--project", str(project)]
+        if env.python is not None:
+            command.extend(["--python", env.python])
+        for extra in env.extras_for(selected):
+            command.extend(["--extra", extra])
+        if offline:
+            command.append("--offline")
+        child_env = {**os.environ, "UV_PROJECT_ENVIRONMENT": str(venv)}
+        logger.info("Preparing %s %s worker environment (%s).", env.framework, env.name, selected)
+        subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true]  # Only fixed uv subcommands and validated project paths are passed.
+            command,
+            cwd=project,
+            env=child_env,
+            check=True,
+            shell=False,
+        )
+        _write_marker(
+            root,
+            {
+                "format_version": _MARKER_VERSION,
+                "framework": env.framework,
+                "name": env.name,
+                "accelerator": selected,
+                "key": key,
+                "distribution": env.distribution,
+                "source": env.source.provenance(),
+            },
+        )
+    return PreparedEnvironment(env.framework, env.name, selected, key, env.distribution, root)
 
 
 def list_prepared() -> list[PreparedEnvironment]:
     """List valid managed environments and their on-disk size.
 
     Returns:
-        Environments sorted by framework, accelerator, and path.
+        Environments sorted by framework, name, accelerator, and path.
     """
-    cache = engine_cache_root()
-    if not cache.is_dir():
-        return []
-
     prepared: list[PreparedEnvironment] = []
-    for root in cache.iterdir():
-        if root.is_symlink() or not root.is_dir():
-            continue
-        try:
-            marker = _read_marker(root)
-            framework = _marker_string(marker, "framework")
-            accelerator = _marker_string(marker, "accelerator")
-            digest = _marker_string(marker, "lock_hash")
-            distribution = _marker_string(marker, "distribution")
-        except (OSError, json.JSONDecodeError, TypeError, ValueError):
-            logger.warning("Skipping invalid worker environment marker at %s.", root / _MARKER)
-            continue
+    for root, marker in _markers():
         prepared.append(
             PreparedEnvironment(
-                framework=framework,
-                accelerator=accelerator,
-                lock_hash=digest,
-                distribution=distribution,
+                framework=_marker_string(marker, "framework"),
+                name=_marker_string(marker, "name"),
+                accelerator=_marker_string(marker, "accelerator"),
+                key=_marker_string(marker, "key"),
+                distribution=_marker_string(marker, "distribution"),
                 path=root,
                 size_bytes=_directory_size(root),
             ),
         )
-    return sorted(prepared, key=lambda item: (item.framework, item.accelerator, str(item.path)))
+    return sorted(prepared, key=lambda item: (item.framework, item.name, item.accelerator, str(item.path)))
 
 
-def prune_prepared(current: Mapping[str, WorkerEnv]) -> list[Path]:
-    """Remove managed environments whose engine or lock is no longer current.
+def prune_prepared(current: Iterable[WorkerEnv]) -> list[Path]:
+    """Remove managed environments that no current engine or enablement declares.
+
+    Args:
+        current: Every environment declared by installed engines and their enablements.
 
     Returns:
         Paths of removed worker environments.
@@ -379,7 +433,7 @@ def prune_prepared(current: Mapping[str, WorkerEnv]) -> list[Path]:
     if not cache.is_dir():
         return []
 
-    current_hashes = {name: lock_hash(env) for name, env in current.items()}
+    current_keys = {(env.framework, env.name): env.key() for env in current}
     removed: list[Path] = []
     for root in cache.iterdir():
         if root.is_symlink() or not root.is_dir():
@@ -389,12 +443,12 @@ def prune_prepared(current: Mapping[str, WorkerEnv]) -> list[Path]:
             continue
         try:
             marker = _read_marker(root)
-            framework = _marker_string(marker, "framework")
-            digest = _marker_string(marker, "lock_hash")
+            identity = (_marker_string(marker, "framework"), _marker_string(marker, "name"))
+            key = _marker_string(marker, "key")
         except (OSError, json.JSONDecodeError, TypeError, ValueError):
             stale = True
         else:
-            stale = current_hashes.get(framework) != digest
+            stale = current_keys.get(identity) != key
         if stale:
             shutil.rmtree(root)
             removed.append(root)
@@ -402,39 +456,45 @@ def prune_prepared(current: Mapping[str, WorkerEnv]) -> list[Path]:
 
 
 def prune() -> list[Path]:
-    """Prune cached environments whose installed engine or lock is outdated.
+    """Prune cached environments that installed engines and enablements no longer declare.
 
     Returns:
         Paths of removed worker environments.
     """
     from . import Engine  # ruff: ignore[import-outside-top-level]  # Discovery imports this module during package initialization.
 
-    current: dict[str, WorkerEnv] = {}
+    current: list[WorkerEnv] = []
     for name in _prepared_frameworks():
         try:
-            engine_env = Engine.get(name).env
+            current.extend(Engine.get(name).environments())
         except ValueError:
             continue
-        if engine_env is not None:
-            current[name] = engine_env
     return prune_prepared(current)
 
 
 def _prepared_frameworks() -> set[str]:
+    return {_marker_string(marker, "framework") for _, marker in _markers()}
+
+
+def _markers() -> Iterator[tuple[Path, dict[str, Any]]]:
     cache = engine_cache_root()
     if not cache.is_dir():
-        return set()
-
-    frameworks: set[str] = set()
-    for root in cache.iterdir():
-        if root.is_symlink() or not root.is_dir():
+        return
+    for root in sorted(cache.iterdir()):
+        if root.is_symlink() or not root.is_dir() or not (root / _MARKER).is_file():
             continue
         try:
-            framework = _marker_string(_read_marker(root), "framework")
+            marker = _read_marker(root)
+            for key in ("framework", "name", "accelerator", "key", "distribution"):
+                _marker_string(marker, key)
         except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            logger.warning(
+                "Skipping worker environment %s with an outdated or invalid marker; "
+                "`physicalai engine prune` removes it.",
+                root,
+            )
             continue
-        frameworks.add(framework)
-    return frameworks
+        yield root, marker
 
 
 def interpreter_for(
@@ -468,7 +528,7 @@ def _python_path(venv: Path) -> Path:
     return venv / "bin" / "python"
 
 
-def _copy_project_once(source: Traversable, destination: Path) -> None:
+def _materialize_once(source: ProjectSource, destination: Path, *, offline: bool) -> None:
     if destination.is_symlink():
         msg = f"Worker project cache path cannot be a symbolic link: {destination}"
         raise ValueError(msg)
@@ -480,7 +540,7 @@ def _copy_project_once(source: Traversable, destination: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=f".{destination.name}.", dir=destination.parent) as temporary:
         staged = Path(temporary) / destination.name
-        _copy_resource_tree(source, staged)
+        source.materialize(staged, offline=offline)
         try:
             staged.rename(destination)
         except FileExistsError:
@@ -488,21 +548,24 @@ def _copy_project_once(source: Traversable, destination: Path) -> None:
                 raise
 
 
-def _copy_resource_tree(source: Traversable, destination: Path) -> None:
-    if source.is_dir():
-        destination.mkdir(parents=True, exist_ok=True)
-        for child in source.iterdir():
-            _copy_resource_tree(child, destination / child.name)
+@contextlib.contextmanager
+def _exclusive(path: Path) -> Iterator[None]:
+    """Serialize preparation of one environment across processes on POSIX hosts.
+
+    Yields:
+        Control while the lock is held.
+    """
+    try:
+        import fcntl  # ruff: ignore[import-outside-top-level]  # POSIX-only module.
+    except ImportError:
+        yield
         return
-    if not source.is_file():
-        msg = f"Worker project resource is not a file or directory: {source}"
-        raise FileNotFoundError(msg)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_bytes(source.read_bytes())
-
-
-def _join_resource(source: Traversable, child: str) -> Traversable:
-    return source.joinpath(child)
+    with path.open("a", encoding="utf-8") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
 
 
 def _write_marker(root: Path, marker: dict[str, Any]) -> None:
@@ -564,6 +627,7 @@ __all__ = [
     "lock_hash",
     "locked_version",
     "prepare",
+    "prepare_environment",
     "prune",
     "prune_prepared",
     "resolve_accelerator",

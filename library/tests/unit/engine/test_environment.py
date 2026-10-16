@@ -11,7 +11,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from physicalai.engine import WorkerEnv
+from physicalai.engine import ProjectSource, WorkerEnv
 from physicalai.engine import _environment
 
 
@@ -154,62 +154,167 @@ def test_worker_lock_and_plugin_metadata_are_the_version_sources(
     assert env.lock_hash() == _environment.lock_hash(env)
 
 
+def _marker(env: WorkerEnv, **overrides: object) -> str:
+    marker = {
+        "format_version": 2,
+        "framework": env.framework,
+        "name": env.name,
+        "accelerator": "cpu",
+        "key": env.key(),
+        "distribution": env.distribution,
+        "source": env.source.identity(),
+    }
+    marker.update(overrides)
+    return json.dumps(marker)
+
+
 def test_prune_removes_only_stale_managed_worker_environments(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     cache = tmp_path / "cache"
     cache.mkdir()
-    current = cache / "current"
-    stale = cache / "stale"
-    unrelated = cache / "unrelated"
-    for directory in (current, stale, unrelated):
-        directory.mkdir()
-    marker = {
-        "framework": "demo",
-        "accelerator": "cpu",
-        "lock_hash": "current-lock",
-        "distribution": "demo-plugin",
-        "format_version": 1,
-    }
-    (current / ".physicalai-engine.json").write_text(json.dumps(marker), encoding="utf-8")
-    (stale / ".physicalai-engine.json").write_text(
-        json.dumps({**marker, "lock_hash": "old-lock"}), encoding="utf-8"
-    )
-    (unrelated / "keep.txt").write_text("not ours", encoding="utf-8")
     env = _worker_env(tmp_path / "project")
+    enablement_env = WorkerEnv(
+        framework="demo",
+        name="openvino",
+        project=env.project,
+        worker=env.worker,
+        distribution="demo-plugin",
+        package="lerobot",
+        python="3.12",
+    )
+    directories = {
+        name: cache / name for name in ("current", "enablement", "stale", "removed-name", "legacy", "unrelated")
+    }
+    for directory in directories.values():
+        directory.mkdir()
+    (directories["current"] / ".physicalai-engine.json").write_text(_marker(env), encoding="utf-8")
+    (directories["enablement"] / ".physicalai-engine.json").write_text(_marker(enablement_env), encoding="utf-8")
+    (directories["stale"] / ".physicalai-engine.json").write_text(_marker(env, key="0" * 64), encoding="utf-8")
+    (directories["removed-name"] / ".physicalai-engine.json").write_text(_marker(env, name="gone"), encoding="utf-8")
+    (directories["legacy"] / ".physicalai-engine.json").write_text(
+        json.dumps({"format_version": 1, "framework": "demo", "lock_hash": "old"}),
+        encoding="utf-8",
+    )
+    (directories["unrelated"] / "keep.txt").write_text("not ours", encoding="utf-8")
     monkeypatch.setattr(_environment, "engine_cache_root", lambda: cache)
-    monkeypatch.setattr(_environment, "lock_hash", lambda _: "current-lock")
 
-    removed = _environment.prune_prepared({"demo": env})
+    removed = _environment.prune_prepared([env, enablement_env])
 
-    assert removed == [stale]
-    assert current.is_dir()
-    assert not stale.exists()
-    assert unrelated.is_dir()
+    assert removed == sorted([directories["legacy"], directories["removed-name"], directories["stale"]])
+    assert directories["current"].is_dir()
+    assert directories["enablement"].is_dir()
+    assert directories["unrelated"].is_dir()
 
 
 def test_list_prepared_reports_managed_env_metadata(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     cache = tmp_path / "cache"
-    prepared = cache / "demo-cpu-abcd"
+    env = _worker_env(tmp_path / "project")
+    prepared = cache / "demo-default-cpu-abcd"
     venv = prepared / "venv" / "bin"
     venv.mkdir(parents=True)
     (venv / "python").write_bytes(b"python")
-    marker = {
-        "framework": "demo",
-        "accelerator": "cpu",
-        "lock_hash": "abcd1234",
-        "distribution": "demo-plugin",
-        "format_version": 1,
-    }
-    (prepared / ".physicalai-engine.json").write_text(json.dumps(marker), encoding="utf-8")
+    (prepared / ".physicalai-engine.json").write_text(_marker(env), encoding="utf-8")
     monkeypatch.setattr(_environment, "engine_cache_root", lambda: cache)
 
     environments = _environment.list_prepared()
 
     assert len(environments) == 1
     assert environments[0].framework == "demo"
+    assert environments[0].name == "default"
     assert environments[0].accelerator == "cpu"
-    assert environments[0].lock_hash == "abcd1234"
+    assert environments[0].key == env.key()
     assert environments[0].size_bytes >= len(b"python")
     assert environments[0].path == prepared
+    assert environments[0].python == prepared / "venv" / "bin" / "python"
+
+
+class _GeneratedProject(ProjectSource):
+    """A source whose lock exists only after materialization, like a Git checkout."""
+
+    def __init__(self, revision: str) -> None:
+        self.revision = revision
+
+    def identity(self) -> dict[str, object]:
+        return {"kind": "generated", "revision": self.revision}
+
+    def materialize(self, destination: Path, *, offline: bool = False) -> None:
+        del offline
+        destination.mkdir(parents=True)
+        (destination / "pyproject.toml").write_text("[project]\nname='gr00t'\n", encoding="utf-8")
+        (destination / "uv.lock").write_text(
+            'version = 1\n\n[[package]]\nname = "gr00t"\nversion = "0.1.0"\n',
+            encoding="utf-8",
+        )
+
+
+def _generated_env(tmp_path: Path, **overrides: object) -> WorkerEnv:
+    values: dict[str, object] = {
+        "framework": "gr00t",
+        "project": _GeneratedProject("a" * 40),
+        "worker": tmp_path / "worker.py",
+        "distribution": "demo-plugin",
+        "package": "gr00t",
+        "accelerators": ("cpu",),
+        "name": "openvino",
+        "python": "3.12",
+        "extras": {"cpu": ()},
+    }
+    values.update(overrides)
+    return WorkerEnv(**values)  # type: ignore[arg-type]
+
+
+def test_prepare_materializes_sources_with_python_and_mapped_extras(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    env = _generated_env(tmp_path)
+    monkeypatch.setenv("PHYSICALAI_ENGINE_CACHE", str(tmp_path / "cache"))
+    monkeypatch.setattr(_environment, "uv_bin", lambda: "/tools/uv")
+    monkeypatch.setattr(_environment, "_hardware_accelerators", lambda: {"cuda"})
+    commands: list[list[str]] = []
+    monkeypatch.setattr(_environment.subprocess, "run", lambda command, **_: commands.append(command))
+
+    prepared = _environment.prepare_environment(env)
+
+    assert prepared.name == "openvino"
+    assert prepared.accelerator == "cpu"
+    assert prepared.path.name == f"gr00t-openvino-cpu-{env.key()[:12]}"
+    assert commands == [["/tools/uv", "sync", "--frozen", "--project", str(prepared.project), "--python", "3.12"]]
+    assert str(_environment.locked_version(env, prepared.project)) == "0.1.0"
+    marker = json.loads((prepared.path / ".physicalai-engine.json").read_text(encoding="utf-8"))
+    assert marker["source"] == {"kind": "generated", "revision": "a" * 40}
+    with pytest.raises(ValueError, match="only after preparation"):
+        _environment.locked_version(env)
+
+
+def test_environment_keys_change_with_every_input(tmp_path: Path) -> None:
+    env = _generated_env(tmp_path)
+    variants = [
+        _generated_env(tmp_path, project=_GeneratedProject("b" * 40)),
+        _generated_env(tmp_path, name="native"),
+        _generated_env(tmp_path, python="3.10"),
+        _generated_env(tmp_path, extras={"cpu": ("cpu",)}),
+        _generated_env(tmp_path, framework="other"),
+    ]
+    assert env.key() == _generated_env(tmp_path).key()
+    assert len({env.key(), *(variant.key() for variant in variants)}) == len(variants) + 1
+
+
+def test_single_profile_environments_skip_hardware_selection(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_environment, "_torch_accelerators", lambda: {"xpu": False, "cuda": True})
+    monkeypatch.setattr(_environment, "_hardware_accelerators", lambda: {"cuda"})
+
+    assert _environment.resolve_accelerator("auto", allowed=("cpu",)) == "cpu"
+    with pytest.raises(ValueError, match="not supported"):
+        _environment.resolve_accelerator("xpu", allowed=("cpu",))
+
+
+def test_plugins_for_git_pinned_frameworks_declare_no_version_range(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(_environment.metadata, "requires", lambda distribution: ["physicalai~=0.3.0"])
+
+    assert _generated_env(tmp_path).supported() is None
