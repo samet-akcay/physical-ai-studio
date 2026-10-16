@@ -12,7 +12,7 @@ from pathlib import Path
 from jsonargparse import ArgumentParser, Namespace
 from physicalai.cli._spec import SubcommandSpec  # noqa: PLC2701
 
-from physicalai.engine import Engine
+from physicalai.engine import Engine, TrainingEngine
 
 HELP = "Train with a native policy framework."
 
@@ -35,9 +35,15 @@ def run(parser: ArgumentParser, cfg: Namespace) -> int:
 
     Returns:
         The native framework command's exit code.
+
+    Raises:
+        ValueError: If the engine does not train.
     """
     del parser
     engine_class = Engine.get(cfg.framework)
+    if not issubclass(engine_class, TrainingEngine):
+        msg = f"Engine {cfg.framework!r} packages and exports models but does not train."
+        raise ValueError(msg)  # noqa: TRY004  # A user-selected engine, not an argument type.
     return engine_class.cli(cfg.args, interpreter=cfg.interpreter)
 
 

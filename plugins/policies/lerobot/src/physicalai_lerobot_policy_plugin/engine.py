@@ -17,9 +17,9 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from packaging.version import Version
 from physicalai.engine import (
-    Engine,
     Run,
     TrainHooks,
+    TrainingEngine,
     WorkerEnv,
     interpreter_for,
     locked_version,
@@ -41,7 +41,7 @@ _PLUGIN_DISTRIBUTION = "physicalai-lerobot-policy-plugin"
 _PLUGIN_ROOT = resources.files(__package__)
 
 
-class LeRobotEngine(Engine):
+class LeRobotEngine(TrainingEngine):
     """Run LeRobot's own trainer in its version-locked worker environment."""
 
     framework: ClassVar[str] = "lerobot"
@@ -399,7 +399,7 @@ def _host_lerobot_version(env: WorkerEnv) -> Version:
         raise RuntimeError(msg) from exc
     required_version = locked_version(env)
     supported = supported_versions(env)
-    if host_version not in supported:
+    if supported is not None and host_version not in supported:
         msg = f"Host LeRobot version {host_version} is outside the plugin's supported range {supported}."
         raise RuntimeError(msg)
     if host_version != required_version:

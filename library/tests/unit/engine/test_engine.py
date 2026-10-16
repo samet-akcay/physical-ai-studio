@@ -14,7 +14,7 @@ from typing import Any, ClassVar
 
 import pytest
 
-from physicalai.engine import Enablement, Engine, Run, TrainHooks
+from physicalai.engine import Enablement, Engine, Run, TrainHooks, TrainingEngine, WorkerEnv
 
 
 class _EntryPoint:
@@ -28,7 +28,7 @@ class _EntryPoint:
         return self._engine_class
 
 
-class _FakeEngine(Engine):
+class _FakeEngine(TrainingEngine):
     framework: ClassVar[str] = "fake"
     env = None
     training_accelerators = ("cpu",)
@@ -180,3 +180,58 @@ def test_run_and_cli_are_framework_class_apis(monkeypatch: pytest.MonkeyPatch) -
         ("run", ({"policy": {"type": "tiny"}}, Path("dataset"), Path("output"), "cpu", None, None)),
         ("cli", (["--native", "flag"], None)),
     ]
+
+
+class _ExportOnlyEngine(Engine):
+    """A repository plugin that packages models but does not train."""
+
+    framework: ClassVar[str] = "export-only"
+    stock_export_formats = ("native",)
+    enablements: ClassVar[tuple[Enablement, ...]] = (
+        Enablement(name="openvino", provides={"tiny": {"export": ("openvino",), "train": ("xpu",)}}),
+    )
+
+    @classmethod
+    def export(cls, source: Run | str | Path, output_path: str | Path, backend: str | None = None) -> Path:
+        del source, backend
+        return Path(output_path)
+
+    @classmethod
+    def policies(cls) -> list[str]:
+        return ["tiny"]
+
+
+def test_engines_without_training_need_no_training_methods_and_report_none() -> None:
+    capabilities = _ExportOnlyEngine.capabilities("tiny")
+
+    assert not issubclass(_ExportOnlyEngine, TrainingEngine)
+    assert capabilities.training_accelerators == ()
+    assert capabilities.export_formats == ("native", "openvino")
+    assert capabilities.enablements == ("openvino",)
+
+
+def test_enablements_can_declare_their_own_environments(tmp_path: Path) -> None:
+    def make_env(name: str) -> WorkerEnv:
+        return WorkerEnv(
+            framework="fake", name=name, project=tmp_path, worker=tmp_path / "w.py", distribution="d", package="p"
+        )
+
+    class _WithEnvironments(_ExportOnlyEngine):
+        framework: ClassVar[str] = "fake"
+        env = make_env("default")
+        enablements: ClassVar[tuple[Enablement, ...]] = (
+            Enablement(name="openvino", env=make_env("openvino")),
+            Enablement(name="metadata-only"),
+        )
+
+    assert [item.name for item in _WithEnvironments.environments()] == ["default", "openvino"]
+    assert _WithEnvironments.environment().name == "default"
+    assert _WithEnvironments.environment("openvino").name == "openvino"
+    with pytest.raises(ValueError, match="no enablement environment 'metadata-only'"):
+        _WithEnvironments.environment("metadata-only")
+
+    class _Duplicate(_WithEnvironments):
+        enablements: ClassVar[tuple[Enablement, ...]] = (Enablement(name="openvino", env=make_env("default")),)
+
+    with pytest.raises(ValueError, match="duplicate environment names"):
+        _Duplicate.environments()

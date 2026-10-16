@@ -24,6 +24,7 @@ def build_parser() -> ArgumentParser:
     parser = ArgumentParser(prog="physicalai engine", description=HELP)
     parser.add_argument("action", choices=("prepare", "list", "prune"))
     parser.add_argument("framework", nargs="?", help="Engine identifier required by 'prepare'.")
+    parser.add_argument("--enablement", help="Prepare an enablement's environment instead of the engine's own.")
     parser.add_argument(
         "--accelerator",
         choices=("auto", "cpu", "cuda", "cu128", "xpu"),
@@ -49,11 +50,13 @@ def run(parser: ArgumentParser, cfg: Namespace) -> int:
             msg = "physicalai engine prepare requires an engine name."
             raise ValueError(msg)
         engine_class = Engine.get(cfg.framework)
-        if engine_class.env is None:
+        enablement = getattr(cfg, "enablement", None)
+        if enablement is None and engine_class.env is None:
             msg = f"Engine {cfg.framework!r} does not use a managed worker environment."
             raise ValueError(msg)
-        python = prepare(engine_class.env, cfg.accelerator, offline=cfg.offline)
-        print(f"Prepared {engine_class.framework} worker environment: {python}")  # noqa: T201
+        env = engine_class.env if enablement is None else engine_class.environment(enablement)
+        python = prepare(env, cfg.accelerator, offline=cfg.offline)
+        print(f"Prepared {engine_class.framework} {getattr(env, 'name', 'default')} worker environment: {python}")  # noqa: T201
         return 0
 
     if cfg.action == "list":
@@ -62,8 +65,8 @@ def run(parser: ArgumentParser, cfg: Namespace) -> int:
             print("No prepared worker environments.")  # noqa: T201
         for environment in environments:
             print(  # noqa: T201
-                f"{environment.framework}\t{environment.accelerator}\t"
-                f"{environment.lock_hash[:12]}\t{_format_size(environment.size_bytes)}\t{environment.path}",
+                f"{environment.framework}\t{environment.name}\t{environment.accelerator}\t"
+                f"{environment.key[:12]}\t{_format_size(environment.size_bytes)}\t{environment.path}",
             )
         return 0
 
@@ -78,9 +81,11 @@ def run(parser: ArgumentParser, cfg: Namespace) -> int:
 def print_help(prog: str) -> None:
     """Print concise command help without preparing any engine environment."""
     print(  # noqa: T201
-        f"usage: {prog} <prepare|list|prune> [framework] [--accelerator NAME] [--offline]\n\n"
+        f"usage: {prog} <prepare|list|prune> [framework] [--enablement NAME] [--accelerator NAME] [--offline]\n\n"
         f"{HELP}\n\n"
-        "Example: physicalai engine prepare lerobot --accelerator xpu",
+        "Examples:\n"
+        "  physicalai engine prepare lerobot --accelerator xpu\n"
+        "  physicalai engine prepare gr00t --enablement robotics-ai-suite-openvino",
     )
 
 

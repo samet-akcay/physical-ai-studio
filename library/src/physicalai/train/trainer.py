@@ -18,11 +18,11 @@ from lightning.pytorch.loggers import Logger  # noqa: TC002
 from lightning.pytorch.strategies import DDPStrategy
 from physicalai.config import instantiate
 
-from physicalai.engine import Capabilities, Enablement, Engine, Run, TrainHooks, WorkerEnv
+from physicalai.engine import Capabilities, Enablement, Run, TrainHooks, TrainingEngine, WorkerEnv
 from physicalai.train.callbacks import PolicyDatasetInteraction
 
 
-class Trainer(Engine, lightning.Trainer):
+class Trainer(TrainingEngine, lightning.Trainer):
     """Lightning Trainer subclass with physicalai-specific conveniences.
 
     This subclasses Lightning's Trainer to add:
