@@ -21,7 +21,16 @@ _COMMIT = "2960959ae6cc6d45150316ed6612f686c2d915b7"
 
 def _git(*arguments: str, cwd: Path) -> str:
     result = subprocess.run(
-        ["git", "-c", "user.name=t", "-c", "user.email=t@t", *arguments],
+        [
+            "git",
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            *arguments,
+        ],
         cwd=cwd,
         check=True,
         capture_output=True,

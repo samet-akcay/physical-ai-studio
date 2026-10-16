@@ -425,7 +425,15 @@ def _apply(series: PatchSeries, checkout: Path) -> None:
             files.append(str(path))
         logger.info("Applying %d %s patches.", len(files), series.identity()["kind"])
         _git(
-            ["am", "--quiet", "--whitespace=fix", "--committer-date-is-author-date", *files],
+            [
+                "-c",
+                "commit.gpgsign=false",
+                "am",
+                "--quiet",
+                "--whitespace=fix",
+                "--committer-date-is-author-date",
+                *files,
+            ],
             cwd=checkout,
             extra_env=_GIT_IDENTITY,
         )
