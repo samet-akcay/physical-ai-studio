@@ -152,6 +152,34 @@ def test_worker_runner_checks_handshake_reports_steps_and_returns_run(
     assert "native stderr" in caplog.text
 
 
+def test_worker_runner_reads_protocol_messages_after_progress_output(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Progress events remain readable when stderr emits carriage-return updates."""
+    monkeypatch.syspath_prepend(str(tmp_path))
+    worker = """\
+import json, os, sys
+fd = int(os.environ['PHYSICALAI_WORKER_PROTOCOL_FD'])
+prefix = bytes([30]) + b'physicalai-worker '
+def send(value): os.write(fd, prefix + (json.dumps(value) + '\\n').encode())
+send({'type': 'hello', 'protocol': 1, 'framework': 'demo', 'package': 'lerobot', 'version': '0.6.1'})
+os.write(2, b'Training: 1/5\\r')
+send({'type': 'progress', 'step': 1, 'total': 1, 'metrics': {'loss': 0.25}})
+send({'type': 'result', 'output_dir': None, 'checkpoint': None})
+"""
+    env = _worker_env(tmp_path, worker)
+    hooks = _Hooks()
+
+    with caplog.at_level(logging.INFO, logger="physicalai.engine._runner"):
+        result = run_worker(env, [], device="cpu", hooks=hooks, interpreter=sys.executable)
+
+    assert result == Run(framework="demo", output_dir=None, checkpoint=None)
+    assert hooks.steps == [(1, 1, {"loss": 0.25})]
+    assert "Training: 1/5" in caplog.text
+
+
 def test_worker_runner_rejects_a_version_outside_plugin_metadata(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

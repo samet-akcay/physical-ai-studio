@@ -399,8 +399,14 @@ def _read_protocol_line(
     events: queue.Queue[dict[str, Any] | BaseException | _ProtocolEOF],
     label: str,
 ) -> bool:
-    if line.startswith(_PROTOCOL_PREFIX):
-        return _enqueue_protocol_line(line[len(_PROTOCOL_PREFIX) :].rstrip(b"\r"), events)
+    # Console progress may share stderr without a newline before the tagged event.
+    protocol_offset = line.find(_PROTOCOL_PREFIX)
+    if protocol_offset >= 0:
+        text = line[:protocol_offset].decode(_STREAM_CHUNK_ENCODING, errors="replace").rstrip("\r")
+        if text:
+            logger.info("%s: %s", label, text)
+        payload = line[protocol_offset + len(_PROTOCOL_PREFIX) :].rstrip(b"\r")
+        return _enqueue_protocol_line(payload, events)
     text = line.decode(_STREAM_CHUNK_ENCODING, errors="replace").rstrip("\r")
     if text:
         logger.info("%s: %s", label, text)
