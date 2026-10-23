@@ -46,6 +46,11 @@ include = [
 "src/physicalai_lerobot_policy_plugin/env/pyproject.toml" = "src/physicalai_lerobot_policy_plugin/env/pyproject.toml"
 "src/physicalai_lerobot_policy_plugin/env/uv.lock" = "src/physicalai_lerobot_policy_plugin/env/uv.lock"
 
+[tool.uv.sources]
+physicalai = { git = "https://github.com/samet-akcay/physicalai", branch = "feat/physicalai-isolate" }
+# Keep the optional train extra on this checkout's Runtime source.
+physicalai-train = { path = "../../../library", editable = true }
+
 [tool.ruff]
 extend = "../../../pyproject.toml"
 src = ["src", "tests"]

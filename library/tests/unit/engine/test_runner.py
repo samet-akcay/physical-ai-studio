@@ -12,10 +12,12 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from physicalai import isolate
 from physicalai.engine import Run, TrainingCancelledError, WorkerEnv, run_worker
+from physicalai.engine import _environment, _runner
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
 
 
 def _worker_env(tmp_path: Path, source: str) -> WorkerEnv:
@@ -28,8 +30,7 @@ def _worker_env(tmp_path: Path, source: str) -> WorkerEnv:
     dist_info = tmp_path / "demo_plugin-1.0.dist-info"
     dist_info.mkdir()
     (dist_info / "METADATA").write_text(
-        "Metadata-Version: 2.3\nName: demo-plugin\nVersion: 1.0\n"
-        "Requires-Dist: lerobot[dataset]>=0.6.1,<0.7\n",
+        "Metadata-Version: 2.3\nName: demo-plugin\nVersion: 1.0\nRequires-Dist: lerobot[dataset]>=0.6.1,<0.7\n",
         encoding="utf-8",
     )
     return WorkerEnv(
@@ -46,7 +47,8 @@ def _protocol_writer(*messages: str) -> str:
         [
             "import json, os, sys",
             "fd = int(os.environ['PHYSICALAI_WORKER_PROTOCOL_FD'])",
-            "def send(value): os.write(fd, (json.dumps(value) + '\\n').encode())",
+            "prefix = bytes([30]) + b'physicalai-worker '",
+            "def send(value): os.write(fd, prefix + (json.dumps(value) + '\\n').encode())",
             *[f"send({message})" for message in messages],
         ],
     )
@@ -62,6 +64,65 @@ class _Hooks:
 
     def should_stop(self) -> bool:
         return self.stop_requested
+
+
+@pytest.mark.parametrize("use_override", [False, True])
+def test_worker_runner_launches_managed_entrypoints_through_runtime_isolate(
+    use_override: bool,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    source = _protocol_writer(
+        "{'type': 'hello', 'protocol': 1, 'framework': 'demo', 'package': 'lerobot', 'version': '0.6.1'}",
+        "{'type': 'result', 'output_dir': None, 'checkpoint': None}",
+    )
+    worker = tmp_path / "override_worker.py"
+    worker.write_text(source, encoding="utf-8")
+    env = _worker_env(tmp_path, source)
+    monkeypatch.syspath_prepend(str(tmp_path))
+    root = tmp_path / "prepared"
+    project = root / "project"
+    project.mkdir(parents=True)
+    (project / "uv.lock").write_text(
+        'version = 1\n\n[[package]]\nname = "lerobot"\nversion = "0.6.1"\n',
+        encoding="utf-8",
+    )
+    python = root / "venv" / "bin" / "python"
+    python.parent.mkdir(parents=True)
+    python.symlink_to(sys.executable)
+    declaration = _environment.to_isolate_environment(env, "cpu")
+    isolated = isolate.PreparedEnvironment(path=root, key=declaration.key(), profile=declaration.profile)
+    engine_prepared = _environment.PreparedEnvironment(
+        framework=env.framework,
+        name=env.name,
+        accelerator="cpu",
+        key=env.key(),
+        distribution=env.distribution,
+        path=root,
+        _isolate=isolated,
+    )
+    monkeypatch.setattr(_runner, "prepare_environment", lambda *_args: engine_prepared)
+    real_start = isolate.start
+    calls: list[tuple[object, object, tuple[str, ...]]] = []
+
+    def track_start(
+        prepared: isolate.PreparedEnvironment,
+        entrypoint: object,
+        args: Sequence[str] = (),
+        **kwargs: object,
+    ) -> isolate.Session:
+        calls.append((prepared, entrypoint, tuple(args)))
+        return real_start(prepared, entrypoint, args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(isolate, "start", track_start)
+
+    result = run_worker(env, ["--steps=1"], device="cpu", worker=worker if use_override else None)
+
+    assert result == Run(framework="demo", output_dir=None, checkpoint=None)
+    assert len(calls) == 1
+    assert calls[0][0] is isolated
+    assert calls[0][1] == (worker if use_override else env.worker)
+    assert calls[0][2] == ("--steps=1",)
 
 
 def test_worker_runner_checks_handshake_reports_steps_and_returns_run(
@@ -118,7 +179,8 @@ def test_worker_runner_delivers_cancellation_and_reports_last_step(
         [
             "import json, os, sys",
             "fd = int(os.environ['PHYSICALAI_WORKER_PROTOCOL_FD'])",
-            "def send(value): os.write(fd, (json.dumps(value) + '\\n').encode())",
+            "prefix = bytes([30]) + b'physicalai-worker '",
+            "def send(value): os.write(fd, prefix + (json.dumps(value) + '\\n').encode())",
             "send({'type': 'hello', 'protocol': 1, 'framework': 'demo', 'package': 'lerobot', 'version': '0.6.1'})",
             "send({'type': 'progress', 'step': 3, 'total': 5, 'metrics': {}})",
             "message = sys.stdin.readline()",

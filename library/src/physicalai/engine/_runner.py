@@ -10,7 +10,7 @@ import logging
 import os
 import queue
 import selectors
-import subprocess  # ruff: ignore[suspicious-subprocess-import]  # Workers are launched with an argv list and shell=False.
+import subprocess  # ruff: ignore[suspicious-subprocess-import]  # Unmanaged workers use argv lists with shell=False.
 import threading
 import time
 from dataclasses import dataclass, field
@@ -20,16 +20,19 @@ from typing import TYPE_CHECKING, Any
 
 from packaging.version import InvalidVersion, Version
 
+from physicalai import isolate
+
 from ._environment import locked_version, prepare_environment, supported_versions
 from ._types import Run, TrainHooks, TrainingCancelledError, WorkerEnv
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Callable, Mapping, Sequence
     from importlib.resources.abc import Traversable
     from typing import BinaryIO
 
 logger = logging.getLogger(__name__)
 _PROTOCOL_VERSION = 1
+_PROTOCOL_PREFIX = bytes([30]) + b"physicalai-worker "
 _STARTUP_TIMEOUT_SECONDS = 60.0
 _CANCEL_GRACE_SECONDS = 5.0
 _TERMINATE_GRACE_SECONDS = 5.0
@@ -62,7 +65,7 @@ class _WorkerState:
     env: WorkerEnv
     hooks: TrainHooks
     expected_version: Version | None
-    process: subprocess.Popen[bytes]
+    process: isolate.Session | subprocess.Popen[bytes]
     events: queue.Queue[dict[str, Any] | BaseException | _ProtocolEOF]
     started_at: float = field(default_factory=time.monotonic)
     hello_received: bool = False
@@ -144,8 +147,8 @@ def run_worker(
     """Run a framework worker with JSON-lines progress and cancellation.
 
     The framework's stdout and stderr are drained into the host logger. Worker
-    control and progress use a separate inherited pipe, so native framework
-    output never has to be rewritten or multiplexed with protocol messages.
+    events are tagged on stderr so the runner can use Runtime's portable process
+    API without requiring an inherited file descriptor.
 
     A managed environment is prepared on demand; its exact locked package
     version is then required, and ``PHYSICALAI_WORKER_PROJECT`` tells the worker
@@ -166,20 +169,21 @@ def run_worker(
         A :class:`Run` with the worker's native output and checkpoint paths.
 
     Raises:
-        NotImplementedError: If the host cannot pass the protocol file descriptor.
         TypeError: If any worker argument is not a string.
     """
     if not all(isinstance(argument, str) for argument in arguments):
         msg = "Worker arguments must be strings."
         raise TypeError(msg)
     if os.name == "nt":
-        msg = "Managed engine workers currently require an OS that supports inherited file descriptors."
+        msg = "Managed engine workers currently require POSIX pipe semantics for cancellation."
         raise NotImplementedError(msg)
 
     variables = dict(extra_env or {})
+    entrypoint = worker if worker is not None else env.worker
+    isolate_prepared: isolate.PreparedEnvironment | None = None
     if interpreter is None:
         prepared = prepare_environment(env, accelerator)
-        python = prepared.python
+        isolate_prepared = prepared.isolate
         variables["PHYSICALAI_WORKER_PROJECT"] = str(prepared.project)
         if expected_version is None:
             expected_version = locked_version(env, prepared.project)
@@ -187,21 +191,60 @@ def run_worker(
         python = Path(interpreter).expanduser()
     expected = Version(str(expected_version)) if expected_version is not None else None
 
-    with resources.as_file(worker if worker is not None else env.worker) as worker_path:
-        command = [str(python), str(worker_path), *arguments]
-        return _run_process(env, command, device=device, hooks=hooks, expected_version=expected, variables=variables)
+    if isolate_prepared is not None:
+
+        def launch_managed(child_env: Mapping[str, str]) -> isolate.Session:
+            return isolate.start(
+                isolate_prepared,
+                entrypoint=entrypoint,
+                args=arguments,
+                env=child_env,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+        return _run_process(
+            env,
+            launch_managed,
+            device=device,
+            hooks=hooks,
+            expected_version=expected,
+            variables=variables,
+        )
+
+    with resources.as_file(entrypoint) as entrypoint_path:
+
+        def launch_unmanaged(child_env: Mapping[str, str]) -> subprocess.Popen[bytes]:
+            return subprocess.Popen(  # ruff: ignore[subprocess-without-shell-equals-true]  # Explicit argv, no shell.
+                [str(python), str(entrypoint_path), *arguments],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=dict(child_env),
+                shell=False,
+            )
+
+        return _run_process(
+            env,
+            launch_unmanaged,
+            device=device,
+            hooks=hooks,
+            expected_version=expected,
+            variables=variables,
+        )
 
 
 def _run_process(
     env: WorkerEnv,
-    command: list[str],
+    launch: Callable[[Mapping[str, str]], isolate.Session | subprocess.Popen[bytes]],
     *,
     device: str,
     hooks: TrainHooks | None,
     expected_version: Version | None,
     variables: Mapping[str, str],
 ) -> Run:
-    state = _start_worker(env, command, device, hooks, expected_version, variables)
+    state = _start_worker(env, launch, device, hooks, expected_version, variables)
     try:
         return_code = _wait_for_worker(state)
     finally:
@@ -213,38 +256,21 @@ def _run_process(
 
 def _start_worker(
     engine_env: WorkerEnv,
-    command: list[str],
+    launch: Callable[[Mapping[str, str]], isolate.Session | subprocess.Popen[bytes]],
     device: str,
     hooks: TrainHooks | None,
     expected_version: Version | None,
     variables: Mapping[str, str],
 ) -> _WorkerState:
-    read_fd, write_fd = os.pipe()
-    inherit_protocol_fd = True
-    os.set_inheritable(write_fd, inherit_protocol_fd)
     child_env = {
         **os.environ,
         **variables,
-        "PHYSICALAI_WORKER_PROTOCOL_FD": str(write_fd),
+        "PHYSICALAI_WORKER_PROTOCOL_FD": "2",
         "PHYSICALAI_WORKER_FRAMEWORK": engine_env.framework,
         "PHYSICALAI_WORKER_PACKAGE": engine_env.package,
         "PHYSICALAI_WORKER_DEVICE": device,
     }
-    try:
-        process = subprocess.Popen(  # ruff: ignore[subprocess-without-shell-equals-true]  # argv is intentionally forwarded; shell execution is disabled.
-            command,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=child_env,
-            pass_fds=(write_fd,),
-            shell=False,
-        )
-    except BaseException:
-        os.close(read_fd)
-        os.close(write_fd)
-        raise
-    os.close(write_fd)
+    process = launch(child_env)
 
     events: queue.Queue[dict[str, Any] | BaseException | _ProtocolEOF] = queue.Queue()
     state = _WorkerState(
@@ -256,7 +282,12 @@ def _start_worker(
     )
     protocol_thread = threading.Thread(
         target=_read_protocol,
-        args=(read_fd, events, state.protocol_reader_stop),
+        args=(
+            process.stderr,
+            events,
+            state.protocol_reader_stop,
+            f"{engine_env.framework} worker stderr",
+        ),
         name=f"{engine_env.framework}-worker-protocol",
         daemon=True,
     )
@@ -265,15 +296,9 @@ def _start_worker(
         args=(process.stdout, logging.INFO, f"{engine_env.framework} worker stdout"),
         daemon=True,
     )
-    stderr_thread = threading.Thread(
-        target=_forward_stream,
-        args=(process.stderr, logging.INFO, f"{engine_env.framework} worker stderr"),
-        daemon=True,
-    )
-    state.threads = (protocol_thread, stdout_thread, stderr_thread)
+    state.threads = (protocol_thread, stdout_thread)
     protocol_thread.start()
     stdout_thread.start()
-    stderr_thread.start()
     return state
 
 
@@ -297,14 +322,19 @@ def _wait_for_worker(state: _WorkerState) -> int:
 
 
 def _close_worker(state: _WorkerState) -> None:
-    state.protocol_reader_stop.set()
     if state.process.stdin is not None:
         state.process.stdin.close()
-    for stream in (state.process.stdout, state.process.stderr):
-        if stream is not None:
-            stream.close()
     for thread in state.threads:
         thread.join(timeout=1.0)
+    state.protocol_reader_stop.set()
+    for thread in state.threads:
+        thread.join(timeout=1.0)
+    if isinstance(state.process, isolate.Session):
+        state.process.close()
+    else:
+        for stream in (state.process.stdout, state.process.stderr):
+            if stream is not None:
+                stream.close()
 
 
 def _worker_result(state: _WorkerState, return_code: int) -> Run:
@@ -332,14 +362,18 @@ def _worker_result(state: _WorkerState, return_code: int) -> Run:
 
 
 def _read_protocol(
-    file_descriptor: int,
+    stream: BinaryIO | None,
     events: queue.Queue[dict[str, Any] | BaseException | _ProtocolEOF],
     stop: threading.Event,
+    label: str,
 ) -> None:
-    pending = bytearray()
-    with selectors.DefaultSelector() as selector:
-        selector.register(file_descriptor, selectors.EVENT_READ)
-        try:
+    try:
+        if stream is None:
+            return
+        file_descriptor = stream.fileno()
+        pending = bytearray()
+        with selectors.DefaultSelector() as selector:
+            selector.register(file_descriptor, selectors.EVENT_READ)
             while not stop.is_set():
                 if not selector.select(timeout=0.1):
                     continue
@@ -350,15 +384,27 @@ def _read_protocol(
                 while b"\n" in pending:
                     line, _, rest = pending.partition(b"\n")
                     pending = bytearray(rest)
-                    if not _enqueue_protocol_line(bytes(line), events):
+                    if not _read_protocol_line(bytes(line), events, label):
                         return
-            if pending:
-                _enqueue_protocol_line(bytes(pending), events)
-        except OSError as exc:
-            events.put(exc)
-        finally:
-            os.close(file_descriptor)
-            events.put(_PROTOCOL_EOF)
+            if pending and not stop.is_set():
+                _read_protocol_line(bytes(pending), events, label)
+    except (OSError, ValueError) as exc:
+        events.put(exc)
+    finally:
+        events.put(_PROTOCOL_EOF)
+
+
+def _read_protocol_line(
+    line: bytes,
+    events: queue.Queue[dict[str, Any] | BaseException | _ProtocolEOF],
+    label: str,
+) -> bool:
+    if line.startswith(_PROTOCOL_PREFIX):
+        return _enqueue_protocol_line(line[len(_PROTOCOL_PREFIX) :].rstrip(b"\r"), events)
+    text = line.decode(_STREAM_CHUNK_ENCODING, errors="replace").rstrip("\r")
+    if text:
+        logger.info("%s: %s", label, text)
+    return True
 
 
 def _enqueue_protocol_line(
@@ -436,7 +482,7 @@ def _report_progress(hooks: TrainHooks, message: dict[str, Any]) -> int:
     return step
 
 
-def _send_cancel(process: subprocess.Popen[bytes]) -> None:
+def _send_cancel(process: isolate.Session | subprocess.Popen[bytes]) -> None:
     if process.stdin is None:
         return
     try:
@@ -446,7 +492,7 @@ def _send_cancel(process: subprocess.Popen[bytes]) -> None:
         logger.debug("Worker closed its control pipe before cancellation was delivered.")
 
 
-def _stop_process(process: subprocess.Popen[bytes]) -> None:
+def _stop_process(process: isolate.Session | subprocess.Popen[bytes]) -> None:
     if process.poll() is not None:
         return
     try:

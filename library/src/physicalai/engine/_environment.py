@@ -1,21 +1,20 @@
 # Copyright (C) 2026 Intel Corporation
 # SPDX-License-Identifier: Apache-2.0
 
-"""Provision and inspect locked uv worker environments."""
+"""Adapt Engine worker metadata to Runtime-managed isolated environments."""
 
 from __future__ import annotations
 
-import contextlib
 import hashlib
 import json
 import logging
 import os
 import re
 import shutil
-import subprocess  # ruff: ignore[suspicious-subprocess-import]  # Invokes pinned uv with shell=False and a fixed subcommand.
+import subprocess  # ruff: ignore[suspicious-subprocess-import]  # GPU probes use argv lists with shell disabled.
 import tempfile
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from importlib import metadata
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -24,17 +23,17 @@ from packaging.requirements import Requirement
 from packaging.specifiers import SpecifierSet
 from packaging.version import Version
 
+from physicalai import isolate
+
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
 
-    from ._sources import ProjectSource
     from ._types import WorkerEnv
 
 logger = logging.getLogger(__name__)
 _MARKER = ".physicalai-engine.json"
-_MARKER_VERSION = 2
+_MARKER_VERSION = 3
 _COMPONENT_RE = re.compile(r"[a-zA-Z0-9_.-]{1,128}")
-_KEY_PREFIX = 12
 _ACCELERATOR_ALIASES = {"cpu": "cpu", "cuda": "cu128", "cu128": "cu128", "xpu": "xpu"}
 _PCI_DISPLAY_CLASS = 0x03
 _PCI_VENDOR_INTEL = "0x8086"
@@ -43,16 +42,20 @@ _PCI_VENDOR_NVIDIA = "0x10de"
 
 @dataclass(frozen=True)
 class PreparedEnvironment:
-    """A managed worker environment.
+    """A managed worker environment with Engine metadata.
+
+    The Runtime-owned prepared environment is retained for process launch. The
+    remaining fields preserve Engine's framework, environment, and distribution
+    metadata for existing callers and the environment-management CLI.
 
     Attributes:
         framework: Engine identifier.
-        name: Environment name within the framework (``default`` or an enablement).
+        name: Environment name within the framework.
         accelerator: Accelerator profile that was synchronized.
-        key: Content key of the environment's inputs.
+        key: Engine content key for the declaration.
         distribution: Plugin distribution that declared the environment.
-        path: Environment root, containing ``project`` and ``venv``.
-        size_bytes: On-disk size, when measured.
+        path: Environment root containing ``project`` and ``venv``.
+        size_bytes: On-disk size when measured.
     """
 
     framework: str
@@ -62,6 +65,7 @@ class PreparedEnvironment:
     distribution: str
     path: Path
     size_bytes: int = 0
+    _isolate: isolate.PreparedEnvironment | None = field(default=None, repr=False, compare=False)
 
     @property
     def python(self) -> Path:
@@ -73,14 +77,30 @@ class PreparedEnvironment:
         """The materialized uv project the environment was built from."""
         return self.path / "project"
 
+    @property
+    def isolate(self) -> isolate.PreparedEnvironment:
+        """The Runtime environment used to launch managed worker processes.
+
+        Raises:
+            RuntimeError: If the Engine environment came from a cache listing.
+        """
+        if self._isolate is None:
+            msg = "A listed Engine environment must be prepared before it can launch a worker."
+            raise RuntimeError(msg)
+        return self._isolate
+
 
 def engine_cache_root() -> Path:
-    """Return the user-owned cache root for managed worker environments."""
-    configured = os.environ.get("PHYSICALAI_ENGINE_CACHE")
+    """Return the cache root used by Runtime's isolate provider.
+
+    ``PHYSICALAI_ENGINE_CACHE`` remains available for existing Engine
+    deployments. Otherwise, Engine and Runtime share the isolate cache.
+    """
+    configured = os.environ.get("PHYSICALAI_ENGINE_CACHE") or os.environ.get("PHYSICALAI_ISOLATE_CACHE")
     if configured:
         return Path(configured).expanduser().resolve()
     cache_home = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")).expanduser()
-    return (cache_home / "physicalai" / "engines").resolve()
+    return (cache_home / "physicalai" / "isolate").resolve()
 
 
 def resolve_accelerator(accelerator: str, *, allowed: tuple[str, ...] | None = None) -> str:
@@ -167,8 +187,8 @@ def _torch_accelerators() -> dict[str, bool]:
     return {"xpu": available("xpu"), "cuda": available("cuda")}
 
 
-def _hardware_accelerators(pci_devices: Path = Path("/sys/bus/pci/devices")) -> set[str]:
-    detected = _pci_gpu_hardware(pci_devices)
+def _hardware_accelerators(devices: Path = Path("/sys/bus/pci/devices")) -> set[str]:
+    detected = _pci_gpu_hardware(devices)
     if _command_reports_gpu("xpu-smi", ("discovery",), r"\bGPU\s*#?\s*\d+\b"):
         detected.add("xpu")
     if _command_reports_gpu("nvidia-smi", ("-L",), r"\bGPU\s+\d+\s*:"):
@@ -217,18 +237,15 @@ def _command_reports_gpu(command: str, arguments: tuple[str, ...], pattern: str)
     return result.returncode == 0 and re.search(pattern, result.stdout + result.stderr, re.IGNORECASE) is not None
 
 
-def uv_bin() -> str:
-    """Return the executable bundled by the pinned ``uv`` Python package.
+def to_isolate_environment(env: WorkerEnv, accelerator: str = "auto") -> isolate.Environment:
+    """Map an Engine worker declaration to Runtime's source and sync profile.
 
-    Raises:
-        RuntimeError: If the ``uv`` package is missing from the host environment.
+    Returns:
+        The Runtime environment with the selected Python version and uv extras.
     """
-    try:
-        from uv import find_uv_bin  # ruff: ignore[import-outside-top-level]  # Loaded only when an env is prepared.
-    except ImportError as exc:
-        msg = "Managed engine environments require the pinned 'uv' package; install physicalai-train first."
-        raise RuntimeError(msg) from exc
-    return str(find_uv_bin())
+    selected = resolve_accelerator(accelerator, allowed=env.accelerators)
+    profile = isolate.SyncProfile(python=env.python, extras=env.extras_for(selected))
+    return isolate.Environment(source=env.source, profile=profile)
 
 
 def lock_bytes(env: WorkerEnv, project: Path | None = None) -> bytes:
@@ -252,7 +269,8 @@ def lock_bytes(env: WorkerEnv, project: Path | None = None) -> bytes:
             msg = f"Worker project for {env.framework!r} does not include uv.lock."
             raise FileNotFoundError(msg)
         return lock.read_bytes()
-    lock_data = env.source.lock()
+    read_lock = getattr(env.source, "lock", None)
+    lock_data = read_lock() if callable(read_lock) else None
     if lock_data is None:
         msg = f"The {env.framework!r} {env.name!r} environment's lock is available only after preparation."
         raise ValueError(msg)
@@ -299,8 +317,8 @@ def locked_version(env: WorkerEnv, project: Path | None = None) -> Version:
 def supported_versions(env: WorkerEnv) -> SpecifierSet | None:
     """Read the package range declared by the plugin, if it declares one.
 
-    Plugins that depend on a PyPI framework (LeRobot) declare its range. Plugins
-    for frameworks pinned by Git commit declare none; their environments are
+    Plugins that depend on a PyPI framework declare their range. Plugins for
+    frameworks pinned by Git commit declare none; their environments are
     identified by content key and exact lock instead.
 
     Returns:
@@ -340,72 +358,65 @@ def prepare(env: WorkerEnv, accelerator: str = "auto", *, offline: bool = False)
 
 
 def prepare_environment(env: WorkerEnv, accelerator: str = "auto", *, offline: bool = False) -> PreparedEnvironment:
-    """Create or synchronize the immutable worker environment for *env*.
+    """Create or reuse the immutable worker environment for *env*.
 
-    The source is materialized outside the caller's working tree, so a host
-    project's ``[tool.uv]`` configuration cannot affect resolution, and
-    ``--frozen`` makes the project's lock the only resolution source. The cache
-    directory is keyed by framework, environment name, accelerator, and the
-    content key of every input.
+    Runtime owns project materialization, cache identity, and uv synchronization.
+    Engine resolves accelerator metadata and adds its framework-specific marker.
 
     Returns:
         The prepared environment.
-
-    Raises:
-        ValueError: If the worker framework, name, or accelerator is invalid.
     """
     selected = resolve_accelerator(accelerator, allowed=env.accelerators)
     for value, label in ((env.framework, "framework"), (env.name, "name"), (env.distribution, "distribution")):
         _validate_component(value, label)
+    environment = to_isolate_environment(env, selected)
+    prepared = isolate.prepare(
+        environment,
+        provider=isolate.UvProvider(cache_dir=engine_cache_root()),
+        offline=offline,
+    )
     key = env.key()
-    root = engine_cache_root() / f"{env.framework}-{env.name}-{selected}-{key[:_KEY_PREFIX]}"
-    project = root / "project"
-    venv = root / "venv"
-    if root.is_symlink() or venv.is_symlink():
-        msg = f"Worker environment cache path cannot be a symbolic link: {root}"
-        raise ValueError(msg)
-    root.mkdir(parents=True, exist_ok=True)
-    with _exclusive(root.parent / f".{root.name}.lock"):
-        _materialize_once(env.source, project, offline=offline)
-        command = [uv_bin(), "sync", "--frozen", "--project", str(project)]
-        if env.python is not None:
-            command.extend(["--python", env.python])
-        for extra in env.extras_for(selected):
-            command.extend(["--extra", extra])
-        if offline:
-            command.append("--offline")
-        child_env = {**os.environ, "UV_PROJECT_ENVIRONMENT": str(venv)}
-        logger.info("Preparing %s %s worker environment (%s).", env.framework, env.name, selected)
-        subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true]  # Only fixed uv subcommands and validated project paths are passed.
-            command,
-            cwd=project,
-            env=child_env,
-            check=True,
-            shell=False,
-        )
-        _write_marker(
-            root,
-            {
-                "format_version": _MARKER_VERSION,
-                "framework": env.framework,
-                "name": env.name,
-                "accelerator": selected,
-                "key": key,
-                "distribution": env.distribution,
-                "source": env.source.provenance(),
-            },
-        )
-    return PreparedEnvironment(env.framework, env.name, selected, key, env.distribution, root)
+    _write_marker(
+        prepared.path,
+        {
+            "format_version": _MARKER_VERSION,
+            "framework": env.framework,
+            "name": env.name,
+            "accelerator": selected,
+            "key": key,
+            "distribution": env.distribution,
+            "source": env.source.provenance(),
+            "isolate_key": prepared.key,
+        },
+    )
+    return PreparedEnvironment(
+        env.framework,
+        env.name,
+        selected,
+        key,
+        env.distribution,
+        prepared.path,
+        _isolate=prepared,
+    )
 
 
 def list_prepared() -> list[PreparedEnvironment]:
-    """List valid managed environments and their on-disk size.
+    """List Engine-managed environments and their on-disk size.
 
     Returns:
         Environments sorted by framework, name, accelerator, and path.
     """
     prepared: list[PreparedEnvironment] = []
     for root, marker in _markers():
+        isolate_marker = root / ".physicalai-isolate.json"
+        if isolate_marker.is_symlink() or not isolate_marker.is_file():
+            continue
+        if any((root / name).is_symlink() for name in ("project", "venv")):
+            continue
+        if not (root / "project").is_dir() or not (root / "venv").is_dir():
+            continue
+        if not _python_path(root / "venv").is_file():
+            continue
         prepared.append(
             PreparedEnvironment(
                 framework=_marker_string(marker, "framework"),
@@ -421,7 +432,9 @@ def list_prepared() -> list[PreparedEnvironment]:
 
 
 def prune_prepared(current: Iterable[WorkerEnv]) -> list[Path]:
-    """Remove managed environments that no current engine or enablement declares.
+    """Remove Engine-managed cache entries no current engine or enablement declares.
+
+    Runtime-owned cache entries without an Engine marker are left untouched.
 
     Args:
         current: Every environment declared by installed engines and their enablements.
@@ -443,12 +456,14 @@ def prune_prepared(current: Iterable[WorkerEnv]) -> list[Path]:
             continue
         try:
             marker = _read_marker(root)
-            identity = (_marker_string(marker, "framework"), _marker_string(marker, "name"))
-            key = _marker_string(marker, "key")
+            current_format = marker.get("format_version") == _MARKER_VERSION
+            if current_format:
+                identity = (_marker_string(marker, "framework"), _marker_string(marker, "name"))
+                key = _marker_string(marker, "key")
         except (OSError, json.JSONDecodeError, TypeError, ValueError):
             stale = True
         else:
-            stale = current_keys.get(identity) != key
+            stale = current_keys.get(identity) != key if current_format else True
         if stale:
             shutil.rmtree(root)
             removed.append(root)
@@ -489,8 +504,13 @@ def _markers() -> Iterator[tuple[Path, dict[str, Any]]]:
                 _marker_string(marker, key)
         except (OSError, json.JSONDecodeError, TypeError, ValueError):
             logger.warning(
-                "Skipping worker environment %s with an outdated or invalid marker; "
-                "`physicalai engine prune` removes it.",
+                "Skipping worker environment %s with an invalid Engine marker; `physicalai engine prune` removes it.",
+                root,
+            )
+            continue
+        if marker.get("format_version") != _MARKER_VERSION:
+            logger.warning(
+                "Skipping worker environment %s with an outdated Engine marker; `physicalai engine prune` removes it.",
                 root,
             )
             continue
@@ -522,52 +542,6 @@ def scripts_dir(interpreter: str | Path) -> Path:
     return Path(interpreter).expanduser().parent
 
 
-def _python_path(venv: Path) -> Path:
-    if os.name == "nt":
-        return venv / "Scripts" / "python.exe"
-    return venv / "bin" / "python"
-
-
-def _materialize_once(source: ProjectSource, destination: Path, *, offline: bool) -> None:
-    if destination.is_symlink():
-        msg = f"Worker project cache path cannot be a symbolic link: {destination}"
-        raise ValueError(msg)
-    if destination.is_dir():
-        return
-    if destination.exists():
-        msg = f"Worker project cache path is not a directory: {destination}"
-        raise ValueError(msg)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix=f".{destination.name}.", dir=destination.parent) as temporary:
-        staged = Path(temporary) / destination.name
-        source.materialize(staged, offline=offline)
-        try:
-            staged.rename(destination)
-        except FileExistsError:
-            if not destination.is_dir() or destination.is_symlink():
-                raise
-
-
-@contextlib.contextmanager
-def _exclusive(path: Path) -> Iterator[None]:
-    """Serialize preparation of one environment across processes on POSIX hosts.
-
-    Yields:
-        Control while the lock is held.
-    """
-    try:
-        import fcntl  # ruff: ignore[import-outside-top-level]  # POSIX-only module.
-    except ImportError:
-        yield
-        return
-    with path.open("a", encoding="utf-8") as handle:
-        fcntl.flock(handle, fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(handle, fcntl.LOCK_UN)
-
-
 def _write_marker(root: Path, marker: dict[str, Any]) -> None:
     marker_path = root / _MARKER
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=root, delete=False) as file:
@@ -586,10 +560,6 @@ def _read_marker(root: Path) -> dict[str, Any]:
     if not isinstance(marker, dict):
         msg = f"Worker environment marker is not an object: {marker_path}"
         raise TypeError(msg)
-    version = marker.get("format_version")
-    if isinstance(version, bool) or version != _MARKER_VERSION:
-        msg = f"Unsupported worker environment marker version {version!r}."
-        raise ValueError(msg)
     return marker
 
 
@@ -615,6 +585,12 @@ def _validate_component(value: str, label: str) -> None:
         raise ValueError(msg)
 
 
+def _python_path(venv: Path) -> Path:
+    if os.name == "nt":
+        return venv / "Scripts" / "python.exe"
+    return venv / "bin" / "python"
+
+
 def _normalize_distribution_name(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
 
@@ -633,5 +609,5 @@ __all__ = [
     "resolve_accelerator",
     "scripts_dir",
     "supported_versions",
-    "uv_bin",
+    "to_isolate_environment",
 ]
