@@ -238,12 +238,12 @@ conflicts = [[
 ]]
 
 [options]
-exclude-newer = "2026-10-15T16:18:54.669071448Z"
+exclude-newer = "2026-10-16T09:28:36.250884792Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
 openvino-tokenizers = false
-pyrealsense2 = { timestamp = "2026-10-21T16:18:54.66910431Z", span = "P1D" }
+pyrealsense2 = { timestamp = "2026-10-22T09:28:36.250911177Z", span = "P1D" }
 pynokhwa = false
 markupsafe = false
 openvino = false
@@ -3696,8 +3696,8 @@ wheels = [
 
 [[package]]
 name = "physicalai"
-version = "0.1.dev229+gc240e6294"
-source = { git = "https://github.com/samet-akcay/physicalai?branch=feat%2Fphysicalai-isolate#c240e62944be576538c33627eb3892066c1f64df" }
+version = "0.1.dev230+gc26a96952"
+source = { git = "https://github.com/samet-akcay/physicalai?branch=feat%2Fphysicalai-isolate#c26a96952d146a1f54d21a0e9edcd8cbd5f099d2" }
 dependencies = [
     { name = "huggingface-hub" },
     { name = "jsonargparse", extra = ["shtab", "signatures"] },
