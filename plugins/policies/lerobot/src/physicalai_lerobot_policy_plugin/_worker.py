@@ -22,13 +22,14 @@ if TYPE_CHECKING:
     from lerobot.configs.train import TrainPipelineConfig
 
 _PROTOCOL_VERSION = 1
+_PROTOCOL_PREFIX = bytes([30]) + b"physicalai-worker "
 _NON_METRIC_FIELDS = frozenset({"steps", "samples", "episodes", "epochs"})
 _CANCEL_EVENT = threading.Event()
 _CANCEL_LISTENER_STOP = threading.Event()
 
 
 def _send(message: dict[str, object]) -> None:
-    payload = json.dumps(message, separators=(",", ":"), allow_nan=False).encode("utf-8") + b"\n"
+    payload = _PROTOCOL_PREFIX + json.dumps(message, separators=(",", ":"), allow_nan=False).encode("utf-8") + b"\n"
     file_descriptor = int(os.environ["PHYSICALAI_WORKER_PROTOCOL_FD"])
     while payload:
         payload = payload[os.write(file_descriptor, payload) :]

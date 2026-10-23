@@ -30,6 +30,7 @@ from ._environment import (
     resolve_accelerator,
     scripts_dir,
     supported_versions,
+    to_isolate_environment,
 )
 from ._runner import run_worker
 from ._sources import (
@@ -301,4 +302,5 @@ __all__ = [
     "run_worker",
     "scripts_dir",
     "supported_versions",
+    "to_isolate_environment",
 ]

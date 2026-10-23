@@ -32,7 +32,7 @@ pai engine list
 pai engine prune
 ```
 
-The default interpreter is managed by `physicalai-train` and provisioned with the pinned `uv` package. `pai engine prepare --accelerator` selects only which worker environment to pre-provision; a later training call still follows its native device setting or automatic hardware detection. Python config objects passed to `LeRobotEngine.train()` must match the worker's exact LeRobot version; native CLI flags and config files only need to satisfy the plugin's supported version range.
+Managed environments are prepared by Runtime's `physicalai.isolate` `UvProvider`, which requires the `uv` executable on `PATH`. `pai engine prepare --accelerator` selects which worker profile to pre-provision; a later training call still follows its native device setting or automatic hardware detection. Python config objects passed to `LeRobotEngine.train()` must match the worker's exact LeRobot version; native CLI flags and config files only need to satisfy the plugin's supported version range.
 
 ## Python API
 
@@ -57,7 +57,7 @@ model = Engine.load(package)
 
 `Engine.get("lerobot")` returns the class, and `Engine.create("lerobot")` creates an engine instance. `LeRobotEngine.run()` accepts native settings and overrides `dataset.repo_id`, `dataset.root`, `output_dir`, and `policy.device` with its standard inputs. Its `device` argument selects both the LeRobot device and matching worker torch extra; use `device="auto"` for hardware-aware detection.
 
-LeRobot's worker project and lock ship as plugin package data. The core runner synchronizes that project into a cache keyed by framework, accelerator, and lock hash, checks the worker's version handshake, forwards JSON-lines progress, and propagates cancellation without redirecting native CLI output. The managed progress/cancellation runner currently requires POSIX inherited file descriptors; native CLI passthrough remains platform-native.
+LeRobot's worker project and lock ship as plugin package data. Runtime isolate synchronizes that project into a cache keyed by its source and Python/extras profile. Engine checks the worker's version handshake, forwards JSON-lines progress, and propagates cancellation; tagged protocol events share stderr while native stdout/stderr are forwarded to the host logger. The managed cancellation listener currently requires POSIX pipe semantics; native CLI passthrough remains platform-native.
 
 ## Runtime Packages
 
