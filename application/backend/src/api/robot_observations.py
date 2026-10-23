@@ -17,7 +17,7 @@ from fastapi.websockets import WebSocketDisconnect
 from loguru import logger
 from physicalai.robot import RobotError, SharedRobot
 
-from api.dependencies import RobotClientFactoryDep, get_project_id, get_robot_id, get_robot_service
+from api.dependencies import RobotClientFactoryDep, get_robot_service
 from exceptions import BaseException as AppBaseException
 from robots.shared_robot_errors import translate_robot_error
 from runtime.contract import ErrorEvent, ObservationEvent
@@ -71,7 +71,6 @@ async def _stream_joint_observations(websocket: WebSocket, shared_robot: SharedR
             data = observation_to_dict(
                 shared_robot.joint_names,
                 observation,
-                include_velocities=False,
             )
             if not sent_ready:
                 await websocket.send_json({"event": "state", "data": {"connected": True}})
@@ -97,8 +96,8 @@ async def robot_observations_websocket_openapi(
 @router.websocket("/{robot_id}/observations/ws")
 async def robot_observations_websocket(
     websocket: WebSocket,
-    project_id: Annotated[UUID, Depends(get_project_id)],
-    robot_id: Annotated[UUID, Depends(get_robot_id)],
+    project_id: UUID,
+    robot_id: UUID,
     robot_service: Annotated[RobotService, Depends(get_robot_service)],
     robot_client_factory: RobotClientFactoryDep,
     fps: Annotated[int, Query(ge=1)] = 30,

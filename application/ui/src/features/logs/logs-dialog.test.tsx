@@ -1,9 +1,9 @@
 // Copyright (C) 2026 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 
+import { rs } from '@rstest/core';
 import { screen } from '@testing-library/react';
 import { HttpResponse } from 'msw';
-import { vi } from 'vitest';
 
 import { http } from '../../api/utils';
 import { server } from '../../msw-node-setup';
@@ -16,11 +16,12 @@ import { LogsDialog } from './logs-dialog';
  * same pattern in `job-table.test.tsx`). This stub lets the test control exactly
  * what payload the "stream" emits before completing.
  */
-class StubEventSource {
+class StubEventSource extends EventTarget {
     onmessage: ((event: { data: string }) => void) | null = null;
     onerror: (() => void) | null = null;
 
     constructor(private readonly messages: string[]) {
+        super();
         queueMicrotask(() => {
             for (const data of this.messages) {
                 this.onmessage?.({ data });
@@ -33,7 +34,7 @@ class StubEventSource {
 }
 
 const stubEventSourceWith = (...messages: string[]) => {
-    vi.stubGlobal(
+    rs.stubGlobal(
         'EventSource',
         class extends StubEventSource {
             constructor() {
@@ -45,7 +46,7 @@ const stubEventSourceWith = (...messages: string[]) => {
 
 describe('LogsDialog', () => {
     afterEach(() => {
-        vi.unstubAllGlobals();
+        rs.unstubAllGlobals();
     });
 
     beforeEach(() => {
@@ -67,7 +68,7 @@ describe('LogsDialog', () => {
             })
         );
 
-        render(<LogsDialog close={vi.fn()} initialSourceId='job-abc' />);
+        render(<LogsDialog close={rs.fn()} initialSourceId='job-abc' />);
 
         expect(await screen.findByText('hello world')).toBeInTheDocument();
     });
@@ -94,7 +95,7 @@ describe('LogsDialog', () => {
             })
         );
 
-        render(<LogsDialog close={vi.fn()} initialSourceId='job-abc' />);
+        render(<LogsDialog close={rs.fn()} initialSourceId='job-abc' />);
 
         expect(await screen.findByText('No logs available')).toBeInTheDocument();
         // The dialog itself (and the rest of the app) must still be intact.

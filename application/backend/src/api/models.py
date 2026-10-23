@@ -7,7 +7,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Request
 from fastapi.exceptions import HTTPException
 from fastapi.responses import FileResponse
-from physicalai.config import to_yaml
+from physicalai.config import Config
 from physicalai.export.backends import ExportBackend
 from sse_starlette import EventSourceResponse
 from starlette import status
@@ -18,7 +18,6 @@ from api.dependencies import (
     get_dataset_service,
     get_job_service,
     get_model_download_service,
-    get_model_id,
     get_model_metrics_service,
     get_model_service,
     get_robot_catalog_service,
@@ -89,12 +88,12 @@ async def _runtime_recipe_texts(
 
     unresolved = runtime_config_change_me(document)
     comments = "".join(f"# CHANGE_ME: replace machine-specific device path {path}\n" for path in unresolved)
-    return comments + to_yaml(document), runtime_export_readme(document, unresolved=unresolved)
+    return comments + Config.from_dict(document).to_yaml(), runtime_export_readme(document, unresolved=unresolved)
 
 
 @router.get("/{model_id}")
 async def get_model_by_id(
-    model_id: Annotated[UUID, Depends(get_model_id)],
+    model_id: UUID,
     model_service: Annotated[ModelService, Depends(get_model_service)],
     job_service: Annotated[JobService, Depends(get_job_service)],
 ) -> ModelDetailResponse:
@@ -120,7 +119,7 @@ async def get_model_by_id(
 
 @router.get("/{model_id}/tasks")
 async def get_tasks_of_model(
-    model_id: Annotated[UUID, Depends(get_model_id)],
+    model_id: UUID,
     model_service: Annotated[ModelService, Depends(get_model_service)],
     dataset_service: Annotated[DatasetService, Depends(get_dataset_service)],
 ) -> list[str]:
@@ -134,7 +133,7 @@ async def get_tasks_of_model(
 
 @router.get("/{model_id}/download")
 async def model_download_endpoint(
-    model_id: Annotated[UUID, Depends(get_model_id)],
+    model_id: UUID,
     model_service: Annotated[ModelService, Depends(get_model_service)],
     model_download_service: Annotated[ModelDownloadService, Depends(get_model_download_service)],
     include_snapshot: bool = False,
@@ -167,7 +166,7 @@ async def model_download_endpoint(
 @router.get("/{model_id}/exports/{backend}/download")
 async def download_model_backend(  # noqa: PLR0913
     request: Request,
-    model_id: Annotated[UUID, Depends(get_model_id)],
+    model_id: UUID,
     backend: ExportBackend,
     model_service: Annotated[ModelService, Depends(get_model_service)],
     model_download_service: Annotated[ModelDownloadService, Depends(get_model_download_service)],
@@ -244,7 +243,7 @@ async def download_model_backend(  # noqa: PLR0913
 
 @router.get("/{model_id}/metrics")
 async def stream_metrics(
-    model_id: Annotated[UUID, Depends(get_model_id)],
+    model_id: UUID,
     model_service: Annotated[ModelService, Depends(get_model_service)],
     model_metrics_service: Annotated[ModelMetricsService, Depends(get_model_metrics_service)],
 ) -> EventSourceResponse:
@@ -258,7 +257,7 @@ async def stream_metrics(
 
 @router.delete("/{model_id}")
 async def remove_model(
-    model_id: Annotated[UUID, Depends(get_model_id)],
+    model_id: UUID,
     model_service: Annotated[ModelService, Depends(get_model_service)],
 ) -> None:
     """Fetch all projects."""

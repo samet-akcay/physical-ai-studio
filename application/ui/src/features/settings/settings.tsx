@@ -3,7 +3,7 @@ import { ReactNode, Suspense } from 'react';
 import { Item, Loading, TabList, TabPanels, Tabs } from '@geti-ui/ui';
 import { useMatch } from 'react-router';
 
-import { paths } from '../../router';
+import { paths } from '../../paths';
 import { GeneralSettings } from './general/general-settings';
 import { HotkeysSettings } from './hotkeys/hotkeys-settings';
 import { TrainingTargets } from './training-targets';

@@ -4,16 +4,16 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, status
 from fastapi.exceptions import HTTPException
 from fastapi.responses import Response
-from physicalai.config import to_yaml
+from physicalai.config import Config
 
-from api.dependencies import RobotClientFactoryDep, get_environment_id, get_environment_service, get_project_id
+from api.dependencies import RobotClientFactoryDep, get_environment_service
 from runtime.config_builder import RUNTIME_FPS, build_runtime_config, runtime_config_change_me
 from schemas.environment import Environment, EnvironmentWithRelations, TeleoperatorRobotWithRobot
 from services.environment_service import EnvironmentService
 
 router = APIRouter(prefix="/api/projects/{project_id}/environments", tags=["Project Environments"])
 
-ProjectID = Annotated[UUID, Depends(get_project_id)]
+ProjectID = UUID
 
 
 @router.get("")
@@ -37,8 +37,8 @@ async def create_project_environment(
 
 @router.get("/{environment_id}")
 async def get_project_environment(
-    project_id: Annotated[UUID, Depends(get_project_id)],
-    environment_id: Annotated[UUID, Depends(get_environment_id)],
+    project_id: ProjectID,
+    environment_id: UUID,
     environment_service: Annotated[EnvironmentService, Depends(get_environment_service)],
 ) -> EnvironmentWithRelations:
     """Get environment by id with eager loaded robots and cameras."""
@@ -47,8 +47,8 @@ async def get_project_environment(
 
 @router.get("/{environment_id}/runtime-config")
 async def get_runtime_config(
-    project_id: Annotated[UUID, Depends(get_project_id)],
-    environment_id: Annotated[UUID, Depends(get_environment_id)],
+    project_id: ProjectID,
+    environment_id: UUID,
     environment_service: Annotated[EnvironmentService, Depends(get_environment_service)],
     robot_client_factory: RobotClientFactoryDep,
 ) -> Response:
@@ -76,7 +76,7 @@ async def get_runtime_config(
     unresolved = runtime_config_change_me(document)
     comments = "".join(f"# CHANGE_ME: replace machine-specific device path {path}\n" for path in unresolved)
     return Response(
-        content=comments + to_yaml(document),
+        content=comments + Config.from_dict(document).to_yaml(),
         media_type="application/yaml",
         headers={"Content-Disposition": 'attachment; filename="runtime.yaml"'},
     )
@@ -84,8 +84,8 @@ async def get_runtime_config(
 
 @router.put("/{environment_id}")
 async def update_project_environment(
-    project_id: Annotated[UUID, Depends(get_project_id)],
-    environment_id: Annotated[UUID, Depends(get_environment_id)],
+    project_id: ProjectID,
+    environment_id: UUID,
     environment_service: Annotated[EnvironmentService, Depends(get_environment_service)],
     environment: Environment,
 ) -> EnvironmentWithRelations:
@@ -100,8 +100,8 @@ async def update_project_environment(
 
 @router.delete("/{environment_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_project_environment(
-    project_id: Annotated[UUID, Depends(get_project_id)],
-    environment_id: Annotated[UUID, Depends(get_environment_id)],
+    project_id: ProjectID,
+    environment_id: UUID,
     environment_service: Annotated[EnvironmentService, Depends(get_environment_service)],
 ) -> None:
     """Delete an environment."""

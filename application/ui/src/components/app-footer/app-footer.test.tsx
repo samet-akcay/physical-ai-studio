@@ -1,7 +1,7 @@
+import { rs } from '@rstest/core';
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { HttpResponse } from 'msw';
-import { vi } from 'vitest';
 
 import { http } from '../../api/utils';
 import { server } from '../../msw-node-setup';
@@ -26,10 +26,11 @@ class FakeWebSocket extends EventTarget {
     send() {}
 }
 
-class ImmediatelyClosingEventSource {
+class ImmediatelyClosingEventSource extends EventTarget {
     onmessage: ((event: { data: string }) => void) | null = null;
     onerror: (() => void) | null = null;
     constructor() {
+        super();
         queueMicrotask(() => this.onmessage?.({ data: 'DONE' }));
     }
     close() {}
@@ -48,13 +49,13 @@ const mockApi = () => {
 
 describe('AppFooter', () => {
     beforeEach(() => {
-        vi.stubGlobal('WebSocket', FakeWebSocket);
-        vi.stubGlobal('EventSource', ImmediatelyClosingEventSource);
+        rs.stubGlobal('WebSocket', FakeWebSocket);
+        rs.stubGlobal('EventSource', ImmediatelyClosingEventSource);
         mockApi();
     });
 
     afterEach(() => {
-        vi.unstubAllGlobals();
+        rs.unstubAllGlobals();
     });
 
     it('shows enabled Logs and Jobs buttons with no jobs, on a project route', async () => {
@@ -95,7 +96,7 @@ describe('AppFooter', () => {
 
         await user.click(await screen.findByRole('button', { name: 'Logs' }));
 
-        expect(await screen.findByRole('heading', { name: 'Logs' })).toBeInTheDocument();
+        expect(await screen.findByRole('dialog', { name: 'Logs' })).toBeInTheDocument();
         expect(screen.queryByRole('tab', { name: /all jobs/i })).not.toBeInTheDocument();
     });
 });
