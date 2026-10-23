@@ -8,22 +8,22 @@ This plugin connects NVIDIA [Isaac-GR00T](https://github.com/NVIDIA/Isaac-GR00T)
 
 ## How it is built
 
-The plugin only declares pins and wiring. Core `physicalai.engine` builds and verifies the environments:
+The plugin declares each project source and `physicalai.isolate` sync profile in `environments.py`. Runtime can prepare these environments with only `physicalai` and the plugin installed; it does not import `physicalai.engine` or require `physicalai-train`. The optional `engine.py` adapts the same declarations to Engine `WorkerEnv` and `Enablement` metadata for training and export:
 
 | Environment                  | Source (`environments.py`)                                                             | Used for                                |
 | ---------------------------- | -------------------------------------------------------------------------------------- | --------------------------------------- |
 | `default`                    | `GitProject`: Isaac-GR00T at the pinned commit, its own `uv.lock`                      | Training and PyTorch inference (CUDA)   |
 | `robotics-ai-suite-openvino` | Same commit plus the Suite's 8 OpenVINO patches, declared by the OpenVINO `Enablement` | OpenVINO export and inference (CPU/GPU) |
 
-GR00T pins `transformers==4.57.3`, `numpy==1.26.4`, `torch==2.7.1`, and Python `<3.13`; Physical AI Runtime requires `transformers>=5.15`. GR00T is therefore never imported in the host: training and export run through core `run_worker`, and Runtime inference runs in a worker of the package's environment.
+GR00T pins `transformers==4.57.3`, `numpy==1.26.4`, `torch==2.7.1`, and Python `<3.13`; Physical AI Runtime requires `transformers>=5.15`. GR00T is therefore never imported in the host: training and export run through Engine's `run_worker`, and Runtime inference runs in a worker of the package's environment.
 
-To materialize the `robotics-ai-suite-openvino` environment, core fetches the pinned upstream commit and checks `HEAD`. It then reads each patch, verifies its SHA-256, applies the series with `git am`, checks the resulting Git tree, and runs `uv sync --frozen` on the checkout's lock.
+To materialize the `robotics-ai-suite-openvino` environment, Runtime isolate fetches the pinned upstream commit and checks `HEAD`. It then reads each patch, verifies its SHA-256, applies the series with `git am`, checks the resulting Git tree, and runs `uv sync --frozen` on the checkout's lock.
 
-Environments are cached under `~/.cache/physicalai/engines/gr00t-<name>-<accelerator>-<key>` (override with `PHYSICALAI_ENGINE_CACHE`). The key hashes what determines the environment's contents, such as the commit and the reviewed patched tree, so a change builds a new environment while moving the same patches between repositories does not.
+Runtime isolate caches environments under `~/.cache/physicalai/isolate/<key>` (override with `PHYSICALAI_ISOLATE_CACHE`). The key hashes the source and sync profile, including the Python version; a changed commit, reviewed patched tree, or profile builds a new environment. Engine deployments can still set `PHYSICALAI_ENGINE_CACHE` as an Engine-only cache override.
 
 ## Where the patches live
 
-The Robotics AI Suite team owns the OpenVINO patches today, so `environments.py` declares them as `PublishedPatches` pinned to the Suite revision. Core downloads them, or reads a local mirror in `src/physicalai_gr00t_policy_plugin/patches/robotics-ai-suite-gr00t-n1d7-ov/`, and verifies the per-file digests.
+The Robotics AI Suite team owns the OpenVINO patches today, so `environments.py` declares them as `PublishedPatches` pinned to the Suite revision. Runtime isolate downloads them, or reads a local mirror in `src/physicalai_gr00t_policy_plugin/patches/robotics-ai-suite-gr00t-n1d7-ov/`, and verifies the per-file digests.
 
 If the patch maintainers contribute here instead, the patches live in the plugin, and only the declaration changes:
 
@@ -106,7 +106,7 @@ Gr00tEngine.export_openvino("GR00T-N1.7-LIBERO/libero_10", "exports/libero",
     └── openvino/            Suite single IR plus config/
 ```
 
-`package.json` records the environment name, its content key, and its pins (upstream commit, patch digests, patched tree). Runtime refuses a package whose environment key differs from the installed plugin's. The I/O mapping comes from the dataset's `meta/modality.json`: camera names, state slices, and action slices.
+`package.json` records the environment name, its stable package identity key, and its pins (upstream commit, patch digests, patched tree). Runtime refuses a package whose environment key differs from the installed plugin's. The I/O mapping comes from the dataset's `meta/modality.json`: camera names, state slices, and action slices.
 
 `Engine.load(package, seed=0)` draws GR00T's flow-matching noise from a seeded CPU generator, so native and OpenVINO packages receive identical noise and their actions can be compared directly.
 

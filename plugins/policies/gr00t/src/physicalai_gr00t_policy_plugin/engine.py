@@ -22,8 +22,8 @@ from physicalai.engine import Enablement, Run, TrainHooks, TrainingEngine, Worke
 
 from . import environments
 from .config import Gr00tTrainConfig
-from .environments import FORMAT_NATIVE, FORMAT_OPENVINO, FRAMEWORK, NATIVE, OPENVINO, OPENVINO_ENABLEMENT, POLICY
-from .package import IoSpec, read_run_info, write_native_package, write_openvino_package
+from .environments import FORMAT_NATIVE, FORMAT_OPENVINO, FRAMEWORK
+from .package import POLICY, IoSpec, read_run_info, write_native_package, write_openvino_package
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -31,6 +31,40 @@ if TYPE_CHECKING:
 BACKBONE_SOURCE_ENV = "PHYSICALAI_GR00T_BACKBONE_SOURCE"
 _EXPORT_RECORD = "physicalai_export.json"
 _RUN_INFO = "physicalai_run.json"
+
+
+def _worker_env(declaration: environments.WorkerEnvironmentSpec) -> WorkerEnv:
+    """Adapt a Runtime isolate declaration to the optional Engine API.
+
+    Returns:
+        The equivalent Engine worker declaration.
+    """
+    return WorkerEnv(
+        framework=declaration.framework,
+        name=declaration.name,
+        project=declaration.source,
+        worker=declaration.worker,
+        distribution=declaration.distribution,
+        package=declaration.package,
+        accelerators=declaration.accelerators,
+        python=declaration.profile.python,
+        extras=dict.fromkeys(declaration.accelerators, declaration.profile.extras),
+    )
+
+
+NATIVE = _worker_env(environments.NATIVE)
+OPENVINO = _worker_env(environments.OPENVINO)
+OPENVINO_ENABLEMENT = Enablement(
+    name=OPENVINO.name,
+    provides={POLICY: {"export": (FORMAT_OPENVINO,)}},
+    upstream=(
+        f"{environments.UPSTREAM.repository}@{environments.UPSTREAM.revision} + "
+        f"{environments.ROBOTICS_AI_SUITE_OPENVINO.repository}@"
+        f"{environments.ROBOTICS_AI_SUITE_OPENVINO.revision}:"
+        f"{environments.ROBOTICS_AI_SUITE_OPENVINO.directory}"
+    ),
+    env=OPENVINO,
+)
 
 
 class Gr00tEngine(TrainingEngine):
@@ -78,7 +112,11 @@ class Gr00tEngine(TrainingEngine):
         else:
             argv = [str(token) for token in config]
         if self._interpreter is not None:
-            _, project, _ = environments.resolve(NATIVE, interpreter=self._interpreter, project=self._project)
+            _, project, _ = environments.resolve(
+                environments.NATIVE,
+                interpreter=self._interpreter,
+                project=self._project,
+            )
             variables[environments.PROJECT_ENV] = str(project)
         run = run_worker(
             NATIVE,
@@ -90,7 +128,7 @@ class Gr00tEngine(TrainingEngine):
             extra_env=variables,
         )
         if run.checkpoint is not None:
-            _record_environment(run.checkpoint, NATIVE)
+            _record_environment(run.checkpoint, environments.NATIVE)
         return run
 
     @classmethod
@@ -100,7 +138,7 @@ class Gr00tEngine(TrainingEngine):
         Returns:
             The native command's exit status.
         """
-        python, project, _ = environments.resolve(NATIVE, interpreter=interpreter)
+        python, project, _ = environments.resolve(environments.NATIVE, interpreter=interpreter)
         with resources.as_file(environments.TRAIN_WORKER) as worker:
             return subprocess.call(  # ruff: ignore[subprocess-without-shell-equals-true]  # argv list; shell disabled.
                 [str(python), str(worker), *argv],
@@ -172,7 +210,7 @@ class Gr00tEngine(TrainingEngine):
             Path(output_path),
             io=_io_spec(run_info, dataset_path),
             run_info=run_info,
-            environment=environments.provenance(NATIVE),
+            environment=environments.provenance(environments.NATIVE),
         )
 
     @classmethod
@@ -210,7 +248,11 @@ class Gr00tEngine(TrainingEngine):
         sample = dataset_path or run_info.get("dataset_path")
         variables: dict[str, str] = {}
         if interpreter is not None:
-            _, checkout, _ = environments.resolve(OPENVINO, interpreter=interpreter, project=project)
+            _, checkout, _ = environments.resolve(
+                environments.OPENVINO,
+                interpreter=interpreter,
+                project=project,
+            )
             variables[environments.PROJECT_ENV] = str(checkout)
 
         def export(ov_dir: Path) -> dict[str, Any]:
@@ -242,7 +284,7 @@ class Gr00tEngine(TrainingEngine):
             checkpoint=checkpoint,
             io=io,
             run_info=run_info,
-            environment=environments.provenance(OPENVINO),
+            environment=environments.provenance(environments.OPENVINO),
         )
 
     @classmethod
@@ -280,7 +322,7 @@ def _device_env(device: str) -> dict[str, str]:
     raise ValueError(msg)
 
 
-def _record_environment(checkpoint: Path, env: WorkerEnv) -> None:
+def _record_environment(checkpoint: Path, env: environments.WorkerEnvironmentSpec) -> None:
     path = checkpoint / _RUN_INFO
     if not path.is_file():
         return

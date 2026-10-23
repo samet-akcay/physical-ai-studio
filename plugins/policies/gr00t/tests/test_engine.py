@@ -91,7 +91,7 @@ def test_training_runs_the_native_worker_through_core_and_records_provenance(
     )
 
     assert run.checkpoint == checkpoint
-    assert calls[0]["env"] is environments.NATIVE
+    assert calls[0]["env"] is engine.NATIVE
     assert calls[0]["worker"] is environments.TRAIN_WORKER
     assert calls[0]["interpreter"] is None
     assert calls[0]["extra_env"] == {
@@ -134,7 +134,7 @@ def test_openvino_export_runs_the_patched_environment_and_packages_its_record(
     requests: list[dict[str, Any]] = []
 
     def fake_run_worker(env: object, argv: list[str], **kwargs: Any) -> Run:  # ruff: ignore[any-type]
-        assert env is environments.OPENVINO
+        assert env is engine.OPENVINO
         assert kwargs["worker"] is environments.EXPORT_WORKER
         request = json.loads(argv[0])
         requests.append(request)

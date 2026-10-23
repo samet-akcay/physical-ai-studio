@@ -22,6 +22,7 @@ from typing import Any
 
 PROTOCOL_VERSION = 1
 _PROTOCOL_FD_ENV = "PHYSICALAI_WORKER_PROTOCOL_FD"
+_PROTOCOL_PREFIX = bytes([30]) + b"physicalai-worker "
 _PROJECT_ENV = "PHYSICALAI_WORKER_PROJECT"
 _AUTO_MODULES = (
     "transformers.models.auto.configuration_auto",
@@ -77,7 +78,7 @@ def identity() -> dict[str, Any]:
 
 
 class EventChannel:
-    """JSON-lines event stream to the host over an inherited file descriptor."""
+    """Tagged JSON-lines event stream multiplexed onto worker stderr."""
 
     def __init__(self) -> None:
         """Bind to the protocol descriptor when the host provides one."""
@@ -93,7 +94,7 @@ class EventChannel:
         """Send one event; a no-op when no host is listening."""
         if self._fd is None:
             return
-        payload = (json.dumps(_finite(message), separators=(",", ":")) + "\n").encode("utf-8")
+        payload = _PROTOCOL_PREFIX + (json.dumps(_finite(message), separators=(",", ":")) + "\n").encode("utf-8")
         while payload:
             payload = payload[os.write(self._fd, payload) :]
 

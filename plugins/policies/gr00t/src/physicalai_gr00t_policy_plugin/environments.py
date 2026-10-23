@@ -1,41 +1,48 @@
 # Copyright (C) 2026 Intel Corporation
 # SPDX-License-Identifier: Apache-2.0
 
-"""Pinned GR00T sources and the worker environments built from them.
+"""Runtime-isolate sources and worker metadata for GR00T environments.
 
-This module only declares pins. Core ``physicalai.engine`` materializes them:
-it checks out the upstream commit, verifies and applies the Robotics AI Suite
-patch series, checks the patched tree, and synchronizes the checkout's own
-``uv.lock`` into a cached environment keyed by every pin.
-
-The OpenVINO patches are published by the Robotics AI Suite, so they are
-declared as :class:`~physicalai.engine.PublishedPatches`. If their maintainers
-move them into this plugin, the declaration becomes
-``BundledPatches(_PACKAGE / "patches" / "openvino", tree=...)``; nothing else changes.
-
-Two environments come from the same upstream commit:
-
-- ``default``: upstream Isaac-GR00T (Python 3.10, CUDA 12.8) for training and
-  native PyTorch inference;
-- ``robotics-ai-suite-openvino``: the same commit plus the Suite's OpenVINO
-  patches (Python 3.12, CPU PyTorch, OpenVINO) for export and inference.
+This module is safe to import on Runtime-only hosts. It declares isolate
+sources and profiles without importing ``physicalai.engine`` or
+``physicalai-train``; the optional training engine adapts these declarations to
+its ``WorkerEnv`` and ``Enablement`` types.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
+import re
+import tomllib
+from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from physicalai.engine import Enablement, GitProject, PatchFile, PublishedPatches, WorkerEnv, prepare_environment
+from physicalai.isolate import (
+    Environment,
+    GitProject,
+    PatchFile,
+    ProjectSource,
+    PublishedPatches,
+    SyncProfile,
+)
+from physicalai.isolate import (
+    prepare as isolate_prepare,
+)
+
+if TYPE_CHECKING:
+    from importlib.resources.abc import Traversable
 
 from .package import BACKEND as FRAMEWORK
-from .package import FORMAT_NATIVE, FORMAT_OPENVINO, POLICY
+from .package import FORMAT_NATIVE, FORMAT_OPENVINO
 
 DISTRIBUTION = "physicalai-gr00t-policy-plugin"
 PROJECT_ENV = "PHYSICALAI_WORKER_PROJECT"
-
 _PACKAGE = resources.files("physicalai_gr00t_policy_plugin")
+
 TRAIN_WORKER = _PACKAGE / "_worker" / "gr00t_train_worker.py"
 EXPORT_WORKER = _PACKAGE / "_worker" / "gr00t_export_worker.py"
 INFER_WORKER = _PACKAGE / "_worker" / "gr00t_infer_worker.py"
@@ -88,46 +95,76 @@ ROBOTICS_AI_SUITE_OPENVINO = PublishedPatches(
     mirror=_PACKAGE / "patches" / "robotics-ai-suite-gr00t-n1d7-ov",
 )
 
-NATIVE = WorkerEnv(
+
+@dataclass(frozen=True)
+class WorkerEnvironmentSpec:
+    """Runtime-only isolate declaration plus Engine worker metadata."""
+
+    framework: str
+    name: str
+    environment: Environment
+    worker: Traversable
+    distribution: str
+    package: str
+    accelerators: tuple[str, ...]
+
+    @property
+    def source(self) -> ProjectSource:
+        """Project source consumed by Runtime's isolate provider."""
+        return self.environment.source
+
+    @property
+    def profile(self) -> SyncProfile:
+        """Sync profile selected for this named worker environment."""
+        return self.environment.profile
+
+    def key(self) -> str:
+        """Return the stable package identity used to verify GR00T environment pins.
+
+        The identity retains the Engine package-key format so artifacts produced
+        before this plugin switched to Runtime isolate remain loadable.
+        """
+        identity = {
+            "format": 2,
+            "framework": self.framework,
+            "name": self.name,
+            "python": self.profile.python,
+            "extras": {accelerator: list(self.profile.extras) for accelerator in sorted(self.accelerators)},
+            "source": self.source.identity(),
+        }
+        payload = json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return hashlib.sha256(payload).hexdigest()
+
+
+NATIVE = WorkerEnvironmentSpec(
     framework=FRAMEWORK,
-    project=UPSTREAM,
+    name="default",
+    environment=Environment(source=UPSTREAM, profile=SyncProfile(python="3.10")),
     worker=TRAIN_WORKER,
     distribution=DISTRIBUTION,
     package="gr00t",
     accelerators=("cu128",),
-    python="3.10",
-    extras={"cu128": ()},
 )
 
-OPENVINO = WorkerEnv(
+OPENVINO = WorkerEnvironmentSpec(
     framework=FRAMEWORK,
     name="robotics-ai-suite-openvino",
-    project=GitProject(UPSTREAM.repository, UPSTREAM.revision, patches=ROBOTICS_AI_SUITE_OPENVINO),
+    environment=Environment(
+        source=GitProject(UPSTREAM.repository, UPSTREAM.revision, patches=ROBOTICS_AI_SUITE_OPENVINO),
+        profile=SyncProfile(python="3.12"),
+    ),
     worker=EXPORT_WORKER,
     distribution=DISTRIBUTION,
     package="gr00t",
     accelerators=("cpu",),
-    python="3.12",
-    extras={"cpu": ()},
 )
 
-OPENVINO_ENABLEMENT = Enablement(
-    name=OPENVINO.name,
-    provides={POLICY: {"export": (FORMAT_OPENVINO,)}},
-    upstream=(
-        f"{UPSTREAM.repository}@{UPSTREAM.revision} + "
-        f"{ROBOTICS_AI_SUITE_OPENVINO.repository}@{ROBOTICS_AI_SUITE_OPENVINO.revision}:"
-        f"{ROBOTICS_AI_SUITE_OPENVINO.directory}"
-    ),
-    env=OPENVINO,
-)
-
-ENVIRONMENTS: dict[str, WorkerEnv] = {NATIVE.name: NATIVE, OPENVINO.name: OPENVINO}
-PACKAGE_ENVIRONMENTS: dict[str, WorkerEnv] = {FORMAT_NATIVE: NATIVE, FORMAT_OPENVINO: OPENVINO}
+ENVIRONMENTS: dict[str, WorkerEnvironmentSpec] = {NATIVE.name: NATIVE, OPENVINO.name: OPENVINO}
+PACKAGE_ENVIRONMENTS: dict[str, WorkerEnvironmentSpec] = {FORMAT_NATIVE: NATIVE, FORMAT_OPENVINO: OPENVINO}
 
 
 def resolve(
-    env: WorkerEnv,
+    env: WorkerEnvironmentSpec,
     *,
     interpreter: str | Path | None = None,
     project: str | Path | None = None,
@@ -135,18 +172,18 @@ def resolve(
     """Return the interpreter and checkout for *env*, preparing it when needed.
 
     Args:
-        env: Environment to use.
-        interpreter: User-managed interpreter that bypasses provisioning.
+        env: Runtime-isolate environment declaration.
+        interpreter: User-managed worker interpreter that bypasses provisioning.
         project: Checkout used by *interpreter*; defaults to ``$PHYSICALAI_WORKER_PROJECT``.
 
     Returns:
-        Interpreter, upstream checkout, and whether core manages the environment.
+        Interpreter, upstream checkout, and whether isolate manages the environment.
 
     Raises:
         ValueError: If a user-managed interpreter has no checkout.
     """
     if interpreter is None:
-        prepared = prepare_environment(env)
+        prepared = isolate_prepare(env.environment)
         return prepared.python, prepared.project, True
     checkout = project if project is not None else os.environ.get(PROJECT_ENV)
     if not checkout:
@@ -155,10 +192,44 @@ def resolve(
     return Path(interpreter).expanduser(), Path(checkout).expanduser(), False
 
 
-def provenance(env: WorkerEnv) -> dict[str, object]:
+def locked_version(env: WorkerEnvironmentSpec, project: Path) -> str:
+    """Read the exact GR00T version from a prepared isolate project lock.
+
+    Returns:
+        The version pinned for the GR00T distribution.
+
+    Raises:
+        ValueError: If the lock is invalid or does not pin exactly one GR00T package.
+    """
+    lock_path = project / "uv.lock"
+    try:
+        lock = tomllib.loads(lock_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
+        msg = f"Could not read the GR00T environment lock at {lock_path}."
+        raise ValueError(msg) from exc
+    package_name = _normalize_distribution_name(env.package)
+    versions = {
+        package["version"]
+        for package in lock.get("package", [])
+        if isinstance(package, dict)
+        and isinstance(package.get("name"), str)
+        and _normalize_distribution_name(package["name"]) == package_name
+        and isinstance(package.get("version"), str)
+    }
+    if len(versions) != 1:
+        msg = f"Expected one locked version of {env.package!r}, found {sorted(versions)}."
+        raise ValueError(msg)
+    return next(iter(versions))
+
+
+def provenance(env: WorkerEnvironmentSpec) -> dict[str, object]:
     """Describe an environment for package and run records.
 
     Returns:
-        Environment name, content key, and where the source and patches come from.
+        Environment name, stable package identity key, and source provenance.
     """
     return {"framework": env.framework, "name": env.name, "key": env.key(), "source": env.source.provenance()}
+
+
+def _normalize_distribution_name(name: str) -> str:
+    return re.sub(r"[-_.]+", "-", name).lower()

@@ -28,6 +28,25 @@ def workers(monkeypatch: pytest.MonkeyPatch) -> dict[str, ModuleType]:
     return {name: importlib.import_module(name) for name in names}
 
 
+def test_event_channel_tags_protocol_messages_on_stderr(
+    workers: dict[str, ModuleType],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    common = workers["gr00t_worker_common"]
+    writes: list[tuple[int, bytes]] = []
+
+    def write(file_descriptor: int, payload: bytes) -> int:
+        writes.append((file_descriptor, payload))
+        return len(payload)
+
+    monkeypatch.setenv("PHYSICALAI_WORKER_PROTOCOL_FD", "2")
+    monkeypatch.setattr(common.os, "write", write)
+    common.EventChannel().send({"type": "hello", "protocol": 1})
+
+    expected = bytes([30]) + b'physicalai-worker {"type":"hello","protocol":1}' + bytes([10])
+    assert writes == [(2, expected)]
+
+
 def test_seeded_noise_is_identical_across_call_styles_devices_and_dtypes(workers: dict[str, ModuleType]) -> None:
     torch = pytest.importorskip("torch")
     seeded_noise = workers["gr00t_infer_worker"]._seeded_noise

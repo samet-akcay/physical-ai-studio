@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import json
 import logging
-import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, ClassVar
@@ -267,22 +266,33 @@ def test_workers_reporting_another_framework_or_locked_version_are_rejected(tmp_
         runtime._check_worker({"framework": "lerobot", "package": "lerobot"}, None, tmp_path)
 
 
-def test_without_core_a_user_managed_interpreter_and_checkout_are_required(
-    artifact: Path,
+def test_managed_environment_uses_runtime_isolate_prepare(
     monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
+    tmp_path: Path,
 ) -> None:
-    import physicalai_gr00t_policy_plugin  # ruff: ignore[import-outside-top-level]  # Mutated for this test only.
+    prepared = SimpleNamespace(python=tmp_path / "python", project=tmp_path / "project")
+    calls: list[object] = []
 
-    # Simulate a Runtime-only host: importing the environment declarations needs physicalai-train.
-    monkeypatch.delattr(physicalai_gr00t_policy_plugin, "environments")
-    monkeypatch.setitem(sys.modules, "physicalai_gr00t_policy_plugin.environments", None)
-    with pytest.raises(RuntimeError, match="Install physicalai-train"):
-        runtime.Gr00tRuntimeAdapter().load(artifact)
+    def fake_prepare(environment: object) -> object:
+        calls.append(environment)
+        return prepared
 
-    adapter = runtime.Gr00tRuntimeAdapter(interpreter="/opt/gr00t/bin/python", project="/opt/gr00t/src")
-    with caplog.at_level(logging.WARNING):
-        adapter.load(artifact)
-    assert "not verified" in caplog.text
-    assert _FakeWorker.instances[-1].python == Path("/opt/gr00t/bin/python")
-    assert _FakeWorker.instances[-1].project == Path("/opt/gr00t/src")
+    monkeypatch.setattr(environments, "isolate_prepare", fake_prepare)
+    adapter = runtime.Gr00tRuntimeAdapter()
+    descriptor = {"environment": environments.provenance(environments.NATIVE)}
+
+    python, project, managed = adapter._environment(descriptor)
+
+    assert (python, project, managed) == (prepared.python, prepared.project, environments.NATIVE)
+    assert calls == [environments.NATIVE.environment]
+
+
+def test_user_managed_environment_still_requires_its_gr00t_checkout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("PHYSICALAI_WORKER_PROJECT", raising=False)
+    adapter = runtime.Gr00tRuntimeAdapter(interpreter="/opt/gr00t/bin/python")
+    descriptor = {"environment": environments.provenance(environments.NATIVE)}
+
+    with pytest.raises(ValueError, match="Isaac-GR00T checkout"):
+        adapter._environment(descriptor)

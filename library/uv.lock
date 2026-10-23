@@ -238,12 +238,12 @@ conflicts = [[
 ]]
 
 [options]
-exclude-newer = "2026-10-09T10:22:07.113022481Z"
+exclude-newer = "2026-10-15T16:18:54.669071448Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
 openvino-tokenizers = false
-pyrealsense2 = { timestamp = "2026-10-15T10:22:07.113039155Z", span = "P1D" }
+pyrealsense2 = { timestamp = "2026-10-21T16:18:54.66910431Z", span = "P1D" }
 pynokhwa = false
 markupsafe = false
 openvino = false
@@ -3696,8 +3696,8 @@ wheels = [
 
 [[package]]
 name = "physicalai"
-version = "0.3.1.dev9+gd0f379d"
-source = { git = "https://github.com/openvinotoolkit/physicalai.git?rev=d0f379d7a067b0f8e1ca27d1bdcd00e896d4c6df#d0f379d7a067b0f8e1ca27d1bdcd00e896d4c6df" }
+version = "0.1.dev229+gc240e6294"
+source = { git = "https://github.com/samet-akcay/physicalai?branch=feat%2Fphysicalai-isolate#c240e62944be576538c33627eb3892066c1f64df" }
 dependencies = [
     { name = "huggingface-hub" },
     { name = "jsonargparse", extra = ["shtab", "signatures"] },
@@ -3735,8 +3735,8 @@ train = [
 [package.metadata]
 requires-dist = [
     { name = "numpy", specifier = ">=1.26" },
-    { name = "physicalai", specifier = "~=0.3.0" },
-    { name = "physicalai-train", marker = "extra == 'train'", specifier = ">=0.3.0" },
+    { name = "physicalai", git = "https://github.com/samet-akcay/physicalai?branch=feat%2Fphysicalai-isolate" },
+    { name = "physicalai-train", marker = "extra == 'train'", editable = "." },
     { name = "pytest", marker = "extra == 'tests'", specifier = ">=9.0.3" },
     { name = "uv", specifier = ">=0.10,<0.11" },
 ]
@@ -3763,8 +3763,8 @@ requires-dist = [
     { name = "diffusers", marker = "extra == 'train'", specifier = ">=0.38.0,<0.40.0" },
     { name = "lerobot", extras = ["dataset"], specifier = ">=0.6.1,<0.7" },
     { name = "lerobot", extras = ["training"], marker = "extra == 'train'" },
-    { name = "physicalai", specifier = "~=0.3.0" },
-    { name = "physicalai-train", marker = "extra == 'train'", specifier = ">=0.3.0" },
+    { name = "physicalai", git = "https://github.com/samet-akcay/physicalai?branch=feat%2Fphysicalai-isolate" },
+    { name = "physicalai-train", marker = "extra == 'train'", editable = "." },
     { name = "pytest", marker = "extra == 'tests'", specifier = ">=9.0.3" },
 ]
 provides-extras = ["train", "tests"]
@@ -3944,7 +3944,7 @@ requires-dist = [
     { name = "peft", marker = "extra == 'cosmos3'", specifier = ">=0.13.0,<1.0.0" },
     { name = "peft", marker = "extra == 'molmoact2'", specifier = ">=0.13.0,<1.0.0" },
     { name = "peft", marker = "extra == 'rldx1'", specifier = ">=0.13.0,<1.0.0" },
-    { name = "physicalai", git = "https://github.com/openvinotoolkit/physicalai.git?rev=d0f379d7a067b0f8e1ca27d1bdcd00e896d4c6df" },
+    { name = "physicalai", git = "https://github.com/samet-akcay/physicalai?branch=feat%2Fphysicalai-isolate" },
     { name = "physicalai-gr00t-policy-plugin", extras = ["train"], marker = "extra == 'gr00t'", editable = "../plugins/policies/gr00t" },
     { name = "physicalai-lerobot-policy-plugin", extras = ["train"], marker = "extra == 'lerobot'", editable = "../plugins/policies/lerobot" },
     { name = "physicalai-train", extras = ["cosmos3"], marker = "extra == 'policies'" },

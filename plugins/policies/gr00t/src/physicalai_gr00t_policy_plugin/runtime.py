@@ -32,8 +32,9 @@ from ._worker import gr00t_worker_protocol as protocol
 from .package import ARTIFACT_SUFFIX, BACKEND, FORMAT_OPENVINO, IoSpec, load_descriptor
 
 if TYPE_CHECKING:
-    from physicalai.engine import WorkerEnv
     from physicalai.inference.model import InferenceModel
+
+    from .environments import WorkerEnvironmentSpec
 
 logger = logging.getLogger(__name__)
 
@@ -188,34 +189,22 @@ class Gr00tRuntimeAdapter(RuntimeAdapter):
         """Whether the loaded package runs the OpenVINO single IR."""
         return bool(self.descriptor and self.descriptor["format"] == FORMAT_OPENVINO)
 
-    def _environment(self, descriptor: Mapping[str, Any]) -> tuple[Path, Path, WorkerEnv | None]:
+    def _environment(self, descriptor: Mapping[str, Any]) -> tuple[Path, Path, WorkerEnvironmentSpec | None]:
         """Resolve the worker environment recorded by the package.
 
-        With ``physicalai.engine`` available, the package's environment key must
-        match the installed plugin's pins, and the environment is prepared on
-        demand. Without it, a user-managed interpreter and checkout are required
-        and the pins cannot be verified.
+        The package's stable environment identity must match the installed plugin's
+        pins. Runtime prepares managed environments through ``physicalai.isolate``;
+        user-managed interpreters bypass preparation and lock verification.
 
         Returns:
             Interpreter, checkout, and the managed environment (``None`` when unverified).
 
         Raises:
-            RuntimeError: If neither core environment management nor an interpreter is available.
-            ValueError: If the package was built from different pins.
+            ValueError: If a user-managed interpreter has no checkout or the package was built from different pins.
         """
         recorded = descriptor["environment"]
-        try:
-            from . import environments  # ruff: ignore[import-outside-top-level]  # Requires physicalai-train.
-        except ImportError as exc:
-            if self._interpreter is None:
-                msg = "Install physicalai-train to prepare GR00T environments, or pass interpreter= and project=."
-                raise RuntimeError(msg) from exc
-            checkout = self._project if self._project is not None else os.environ.get(_PROJECT_ENV)
-            if not checkout:
-                msg = f"Pass project= or set {_PROJECT_ENV} with a user-managed interpreter."
-                raise ValueError(msg) from exc
-            logger.warning("physicalai.engine is unavailable; the package's environment pins are not verified.")
-            return Path(self._interpreter).expanduser(), Path(checkout).expanduser(), None
+        from . import environments  # ruff: ignore[import-outside-top-level]  # Load plugin-owned isolate declarations lazily.
+
         env = environments.ENVIRONMENTS.get(recorded["name"])
         if env is None or recorded.get("key") != env.key():
             msg = (
@@ -224,6 +213,8 @@ class Gr00tRuntimeAdapter(RuntimeAdapter):
             )
             raise ValueError(msg)
         python, checkout, managed = environments.resolve(env, interpreter=self._interpreter, project=self._project)
+        if not managed:
+            logger.warning("Using a user-managed GR00T environment; the package's lock is not verified.")
         return python, checkout, env if managed else None
 
     def _openvino_cache(self, artifact: Path) -> Path:
@@ -364,7 +355,7 @@ def _task(inputs: Mapping[str, Any]) -> str:
     return task
 
 
-def _check_worker(hello: Mapping[str, Any], env: WorkerEnv | None, project: Path) -> None:
+def _check_worker(hello: Mapping[str, Any], env: WorkerEnvironmentSpec | None, project: Path) -> None:
     """Check that the worker runs GR00T, at the locked version for managed environments.
 
     Raises:
@@ -375,9 +366,9 @@ def _check_worker(hello: Mapping[str, Any], env: WorkerEnv | None, project: Path
         raise RuntimeError(msg)
     if env is None:
         return
-    from physicalai.engine import locked_version  # ruff: ignore[import-outside-top-level]  # Requires physicalai-train.
+    from .environments import locked_version  # ruff: ignore[import-outside-top-level]  # Read the isolate project's lock.
 
-    expected = str(locked_version(env, project))
+    expected = locked_version(env, project)
     if hello.get("version") != expected:
         msg = f"Worker reported gr00t {hello.get('version')}, but the environment lock pins {expected}."
         raise RuntimeError(msg)
