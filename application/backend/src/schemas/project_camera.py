@@ -1,10 +1,10 @@
 from abc import ABC
-from datetime import datetime
 from typing import Annotated, Any, Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
-from schemas.base import BaseIDModel
+from schemas.base import BaseIDModel, UTCDatetime
 
 SupportedCameraDriver = Literal[
     "usb_camera",
@@ -12,14 +12,15 @@ SupportedCameraDriver = Literal[
     "basler",
     "realsense",
     "genicam",
+    "simulation",
 ]
 
 
 class BaseCamera(BaseIDModel, ABC):
     driver: SupportedCameraDriver
 
-    created_at: datetime | None = Field(None)
-    updated_at: datetime | None = Field(None)
+    created_at: UTCDatetime | None = Field(None)
+    updated_at: UTCDatetime | None = Field(None)
 
     name: str = Field(..., description="Human-readable camera name")
     fingerprint: dict[str, Any] | None = Field(
@@ -51,6 +52,17 @@ class IPCameraPayload(BaseModel):
     width: int | None = Field(None, ge=160, le=4096, description="Frame width in pixels (if supported)")
     height: int | None = Field(None, ge=120, le=2160, description="Frame height in pixels (if supported)")
     fps: int = Field(25, ge=1, le=60, description="Expected frame rate")
+
+
+class SimulationCameraPayload(BaseModel):
+    """A camera of a simulated robot's simulation.
+
+    Its stream URL, size and frame rate are not stored: the simulation reports them while it runs, on
+    an address that changes with every start.
+    """
+
+    robot_id: UUID = Field(..., description="The simulated robot whose simulation renders the camera")
+    camera: str = Field(..., min_length=1, description="The camera's name in the simulation")
 
 
 class BaslerCameraPayload(BaseModel):
@@ -139,6 +151,25 @@ class IPCamera(BaseCamera):
     )
 
 
+class SimulationCamera(BaseCamera):
+    """A camera of a simulated robot's simulation; it streams while the simulation runs."""
+
+    driver: Literal["simulation"] = "simulation"  # type: ignore[assignment]
+    payload: SimulationCameraPayload
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "name": "Sim arm wrist",
+                "driver": "simulation",
+                "fingerprint": {"robot_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6", "camera": "wrist"},
+                "hardware_name": "wrist",
+                "payload": {"robot_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6", "camera": "wrist"},
+            }
+        }
+    )
+
+
 class BaslerCamera(BaseCamera):
     """Basler industrial camera using BaslerCapture (pypylon)."""
 
@@ -209,8 +240,20 @@ class GenicamCamera(BaseCamera):
 
 # Discriminated union of all camera types
 Camera = Annotated[
-    USBCamera | IPCamera | BaslerCamera | RealsenseCamera | GenicamCamera,
+    USBCamera | IPCamera | BaslerCamera | RealsenseCamera | GenicamCamera | SimulationCamera,
     Field(discriminator="driver"),
 ]
 
 CameraAdapter: TypeAdapter[Camera] = TypeAdapter(Camera)
+
+StreamedCamera = USBCamera | IPCamera | BaslerCamera | RealsenseCamera | GenicamCamera
+"""A camera Studio streams from itself; a simulation camera streams from its simulation."""
+
+
+def streamed_camera(camera: Camera) -> StreamedCamera:
+    """Return *camera*, which must not be a simulation camera: resolve one to its stream first."""
+    if isinstance(camera, SimulationCamera):
+        raise ValueError(
+            f"Camera {camera.name!r} streams from its simulation; load it through an environment to use it."
+        )
+    return camera

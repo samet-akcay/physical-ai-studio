@@ -19,6 +19,7 @@ from torch import nn
 
 from physicalai.data.constants import (
     IMAGE_MASKS,
+    NOISE,
     RTC_EXECUTION_HORIZON,
     RTC_INFERENCE_DELAY,
     RTC_MAX_GUIDANCE_WEIGHT,
@@ -341,6 +342,7 @@ class SmolVLAModel(RTCModelMixin, Model):
             lang_tokens,
             lang_masks,
             state,
+            noise=batch.get(NOISE),
             **rtc_kwargs,
         )
 
@@ -2108,7 +2110,9 @@ class _SmolVLMWithExpertModel(nn.Module):
 
         att_weights = att_weights.to(dtype=torch.float32)
         big_neg = torch.finfo(att_weights.dtype).min  # -2.3819763e38  # See gemma/modules.py
-        masked_att_weights = torch.where(attention_mask[:, None, :, :], att_weights, big_neg)
+        # Unmask fully masked (padding) rows: big_neg overflows to -inf in bf16/f16 backends and softmax returns NaN.
+        att_mask = attention_mask | ~attention_mask.any(dim=-1, keepdim=True)
+        masked_att_weights = torch.where(att_mask[:, None, :, :], att_weights, big_neg)
         probs = nn.functional.softmax(masked_att_weights, dim=-1)
         probs = probs.to(dtype=value_states.dtype)
 

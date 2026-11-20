@@ -8,12 +8,12 @@ from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
+from physicalai_trossen_plugin.studio_catalog import TrossenBimanualPayload
 
 from repositories.mappers.project_robot_mapper import ProjectRobotMapper
 from robots.catalog.registry import RobotCatalogRegistry
-from robots.catalog.widowxai import TrossenBimanualPayload, TrossenBimanualRobot
 from schemas.environment import RobotWithTeleoperator, TeleoperatorNoneWithRobot
-from schemas.robot import UnavailableRobot
+from schemas.robot import RobotAdapter, UnavailableRobot
 
 
 def _make_bimanual_db_model(robot_type: str):
@@ -56,14 +56,16 @@ class TestProjectRobotMapperBimanual:
     )
     def test_roundtrip_to_schema_and_back(self, robot_type):
         """to_schema then from_schema should preserve all payload fields."""
-        original = TrossenBimanualRobot(
-            id=uuid4(),
-            name="Roundtrip Robot",
-            type=robot_type,
-            payload=TrossenBimanualPayload(
-                connection_string_left="192.168.10.1",
-                connection_string_right="192.168.10.2",
-            ),
+        original = RobotAdapter.validate_python(
+            {
+                "id": uuid4(),
+                "name": "Roundtrip Robot",
+                "type": robot_type,
+                "payload": {
+                    "connection_string_left": "192.168.10.1",
+                    "connection_string_right": "192.168.10.2",
+                },
+            }
         )
 
         db_obj = ProjectRobotMapper.to_schema(original)
@@ -82,12 +84,12 @@ class TestProjectRobotMapperBimanual:
         assert restored.payload.connection_string_right == "192.168.10.2"
 
     def test_from_schema_preserves_robot_from_unavailable_plugin(self):
-        db_model = _make_bimanual_db_model("MuJoCo_SO101_Follower")
+        db_model = _make_bimanual_db_model("Missing_Plugin_Follower")
 
         result = ProjectRobotMapper.from_schema(db_model, RobotCatalogRegistry())
 
         assert isinstance(result, UnavailableRobot)
-        assert result.type == "MuJoCo_SO101_Follower"
+        assert result.type == "Missing_Plugin_Follower"
         assert result.unavailable is True
         assert result.payload == db_model.payload
 

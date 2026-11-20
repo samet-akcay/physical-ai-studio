@@ -5,12 +5,12 @@ import { useNavigate } from 'react-router';
 import { v4 as uuidv4 } from 'uuid';
 
 import { $api } from '../../../../api/client';
-import { paths } from '../../../../router';
+import { paths } from '../../../../paths';
 import { useProjectId } from '../../../projects/use-project';
 import { buildRobotBody } from '../../robot-form/form-data';
 import { useRobotForm } from '../../robot-form/provider';
 import { SchemaRobotType } from '../../robot-types';
-import { useSynchronizeModelJoints } from '../../use-joint-state';
+import { useSynchronizeModelJoints } from '../../use-synchronize-model-joints';
 import { InlineAlert } from '../shared/inline-alert';
 import { SetupRobotViewer } from '../shared/setup-robot-viewer';
 import { StatusBadge } from '../shared/status-badge';
@@ -32,7 +32,7 @@ const jointLabel = (key: string) => (key.endsWith('.pos') ? key.slice(0, -4) : k
 
 const LiveViewer = ({ robotType, joints }: { robotType: SchemaRobotType; joints: Record<string, number> | null }) => {
     const jointList = useMemo(() => Object.entries(joints ?? {}).map(([name, value]) => ({ name, value })), [joints]);
-    useSynchronizeModelJoints(jointList, robotType);
+    useSynchronizeModelJoints(jointList, { type: robotType });
 
     return (
         <View

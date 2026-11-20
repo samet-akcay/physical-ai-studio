@@ -14,14 +14,18 @@
 x-common: &common
     ports:
       - "${PORT:-7860}:${PORT:-7860}"
+      # Rerun has no authentication; expose it only on Docker host loopback.
+      - "127.0.0.1:${RERUN_PORT:-9876}:${RERUN_PORT:-9876}"
     environment:
       - HOST=${HOST:-0.0.0.0}
       - PORT=${PORT:-7860}
+      - RERUN_BIND_HOST=0.0.0.0
     env_file:
       - path: .env
         required: false
     restart: unless-stopped
-    stop_grace_period: 35s
+    # Room for a follower to park on shutdown (RobotWorker waits up to 40 s) and the rest of the teardown.
+    stop_grace_period: 60s
 
     # PyTorch DataLoader workers need shared memory (/dev/shm) beyond
     # Docker's 64 MB default. Using ipc: host shares the host's /dev/shm
@@ -103,6 +107,11 @@ x-common-build: &common-build
     args:
       - APP_UID=${APP_UID:-1000}
       - APP_GID=${APP_GID:-1000}
+      # Set these from the checkout when building a local image, e.g.
+      # GIT_SHA=$(git rev-parse HEAD) GIT_COMMIT_DATE=$(git show -s --format=%cI HEAD).
+      - GIT_SHA=${GIT_SHA:-unknown}
+      - GIT_COMMIT_DATE=${GIT_COMMIT_DATE:-unknown}
+      - GIT_TAG=${GIT_TAG:-}
       - HTTP_PROXY=${HTTP_PROXY}
       - HTTPS_PROXY=${HTTPS_PROXY}
       - NO_PROXY=${NO_PROXY}
@@ -129,6 +138,7 @@ services:
       <<: *common-build
       target: physical-ai-studio-xpu
     environment:
+      - RERUN_BIND_HOST=0.0.0.0
       - SYCL_CACHE_PERSISTENT=${SYCL_CACHE_PERSISTENT:-1}
       - SYCL_CACHE_DIR=${SYCL_CACHE_DIR:-'/app/storage/.sycl-cache'}
       - SYCL_UR_USE_LEVEL_ZERO_V2=${SYCL_UR_USE_LEVEL_ZERO_V2:-0}

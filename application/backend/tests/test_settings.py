@@ -1,7 +1,21 @@
 from pathlib import Path
 
+import pytest
+
+import build_info as build_info_module
 import settings as settings_module
-from settings import Settings, get_default_storage_dir, load_user_settings_file, merge_user_settings
+from build_info import get_build_info
+from settings import RerunSettings, Settings, get_default_storage_dir, load_user_settings_file, merge_user_settings
+
+
+def test_rerun_listener_is_loopback_only_by_default(monkeypatch) -> None:
+    monkeypatch.delenv("RERUN_BIND_HOST", raising=False)
+    assert Settings().rerun_bind_host == "127.0.0.1"
+
+
+def test_rerun_listener_bind_host_is_deployment_configurable(monkeypatch) -> None:
+    monkeypatch.setenv("RERUN_BIND_HOST", "0.0.0.0")
+    assert Settings().rerun_bind_host == "0.0.0.0"
 
 
 def test_default_storage_dir_uses_xdg_data_home(monkeypatch, tmp_path: Path) -> None:
@@ -39,6 +53,54 @@ def test_application_version_comes_from_distribution_metadata(monkeypatch) -> No
     monkeypatch.setattr(settings_module, "distribution_version", lambda name: "0.3.0")
 
     assert Settings().version == "0.3.0"
+
+
+def test_build_info_uses_injected_metadata(monkeypatch) -> None:
+    monkeypatch.setenv("STUDIO_GIT_SHA", "a" * 40)
+    monkeypatch.setenv("STUDIO_GIT_COMMIT_DATE", "2026-10-09T09:46:34Z")
+    monkeypatch.setenv("STUDIO_GIT_TAG", "app/v0.3.0")
+    monkeypatch.setenv("STUDIO_GIT_DIRTY", "true")
+
+    assert get_build_info().git_sha == "a" * 40
+    assert get_build_info().git_commit_date == "2026-10-09T09:46:34Z"
+    assert get_build_info().git_tag == "app/v0.3.0"
+    assert get_build_info().git_dirty is True
+
+
+def test_build_info_reads_checkout_metadata_in_two_git_calls(monkeypatch) -> None:
+    for name in ("STUDIO_GIT_SHA", "STUDIO_GIT_COMMIT_DATE", "STUDIO_GIT_TAG", "STUDIO_GIT_DIRTY"):
+        monkeypatch.delenv(name, raising=False)
+
+    calls: list[tuple[str, ...]] = []
+
+    def run_git(*args: str) -> str | None:
+        calls.append(args)
+        if args[0] == "show":
+            return "a" * 40 + "\n2026-10-09T09:46:34Z\ntag: app/v0.3.0"
+        if args[0] == "status":
+            return None
+        return None
+
+    monkeypatch.setattr(build_info_module, "_run_git", run_git)
+
+    assert get_build_info() == build_info_module.BuildInfo(
+        git_sha="a" * 40,
+        git_commit_date="2026-10-09T09:46:34Z",
+        git_tag="app/v0.3.0",
+    )
+    assert calls == [
+        ("show", "-s", "--format=%H%n%cI%n%D", "HEAD"),
+        ("status", "--porcelain"),
+    ]
+
+
+def test_build_info_does_not_probe_git_when_build_metadata_is_injected(monkeypatch) -> None:
+    monkeypatch.setenv("STUDIO_GIT_SHA", "a" * 40)
+    monkeypatch.delenv("STUDIO_GIT_COMMIT_DATE", raising=False)
+    monkeypatch.delenv("STUDIO_GIT_TAG", raising=False)
+    monkeypatch.setattr(build_info_module, "_run_git", lambda *_: pytest.fail("Git should not be called"))
+
+    assert get_build_info() == build_info_module.BuildInfo(git_sha="a" * 40)
 
 
 def test_data_dir_is_storage_backed_even_with_data_dir_env(monkeypatch, tmp_path: Path) -> None:
@@ -104,3 +166,45 @@ def test_hotkey_bindings_patch_replaces_whole_map(monkeypatch, tmp_path: Path) -
 
     settings = Settings()
     assert settings.hotkeys.bindings == {"a": "Z"}
+
+
+def test_video_recording_settings_are_loaded_from_json(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("SETTINGS_FILE", str(tmp_path / "settings.json"))
+    merge_user_settings({"video_recording": {"preset": "cpu-h264"}})
+
+    settings = Settings()
+    assert settings.video_recording.preset == "cpu-h264"
+
+
+def test_rerun_defaults_to_background_logging() -> None:
+    settings = RerunSettings()
+    assert settings.enabled
+    assert settings.mode == "spawn"
+    assert not settings.open_viewer
+    assert settings.spawn_port == 9876
+
+
+def test_rerun_settings_persist_merge_and_reset(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("SETTINGS_FILE", str(tmp_path / "settings.json"))
+    merge_user_settings({"rerun": {"mode": "connect", "connect_addr": "host:1234"}})
+    merge_user_settings({"rerun": {"enabled": False}})
+    assert Settings().rerun == RerunSettings(mode="connect", connect_addr="host:1234", enabled=False)
+    merge_user_settings({"rerun": None})
+    assert Settings().rerun == RerunSettings()
+
+
+@pytest.mark.parametrize("port", [0, -1, 65536])
+def test_rerun_rejects_invalid_spawn_ports(port: int) -> None:
+    with pytest.raises(ValueError):
+        RerunSettings(spawn_port=port)
+
+
+@pytest.mark.parametrize("addr", ["", "host", "host:0", "host:65536", "http://host:9876", "host:9876/path", "a b:123"])
+def test_rerun_rejects_invalid_connection_addresses(addr: str) -> None:
+    with pytest.raises(ValueError):
+        RerunSettings(connect_addr=addr)
+
+
+@pytest.mark.parametrize("addr", ["host:1234", "rerun+http://host:1234/proxy", "rerun+http://host:1234"])
+def test_rerun_normalizes_connection_addresses(addr: str) -> None:
+    assert RerunSettings(connect_addr=addr).connect_url == "rerun+http://host:1234/proxy"

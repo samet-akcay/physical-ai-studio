@@ -3,6 +3,9 @@
 import os
 import shutil
 import tempfile
+from contextlib import nullcontext
+
+os.environ.setdefault("AWS_ENABLED", "true")
 
 # Isolate the test session from the developer's real Studio storage/database.
 #
@@ -21,16 +24,25 @@ if _STORAGE_DIR_CREATED:
     _TEST_STORAGE_DIR = tempfile.mkdtemp(prefix="physicalai-backend-tests-")
     os.environ["STORAGE_DIR"] = _TEST_STORAGE_DIR
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
+from physicalai.runtime.callbacks.gpu_stats import GpuStatsSample
 
-from robots.robot_client import RobotClient
 from robots.robot_client_factory import RobotClientFactory
 from schemas.dataset import Dataset
 from schemas.environment import EnvironmentWithRelations
 from schemas.model import Model
+
+
+@pytest.fixture(autouse=True)
+def no_rerun_viewer(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep runtime tests from opening a native viewer on the developer's desktop."""
+    monkeypatch.setattr("rerun.spawn", lambda **_kwargs: None)
+    monkeypatch.setattr("runtime_session.rerun._background_server", lambda _port, **_kwargs: nullcontext())
+    monkeypatch.setattr("rerun.RecordingStream.connect_grpc", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("physicalai.runtime.callbacks.system_monitor.collect_gpu_stats", GpuStatsSample)
 
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
@@ -41,38 +53,8 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
 
 
 @pytest.fixture
-def mock_robot_client():
-    client = MagicMock(spec=RobotClient)
-    client.features.return_value = [
-        "shoulder_pan.pos",
-        "shoulder_lift.pos",
-        "elbow_flex.pos",
-        "wrist_flex.pos",
-        "wrist_roll.pos",
-        "gripper.pos",
-    ]
-    client.connect = MagicMock()
-    client.disconnect = MagicMock()
-    client.read_state = MagicMock(
-        return_value={
-            "state": {
-                "shoulder_pan.pos": -8.705526116578355,
-                "shoulder_lift.pos": -98.16753926701571,
-                "elbow_flex.pos": 95.98393574297188,
-                "wrist_flex.pos": 73.85993485342019,
-                "wrist_roll.pos": -13.84615384615384,
-                "gripper.pos": 26.885644768856448,
-            }
-        }
-    )
-    return client
-
-
-@pytest.fixture
-def mock_robot_client_factory(mock_robot_client):
-    factory = MagicMock(spec=RobotClientFactory)
-    factory.build = AsyncMock(return_value=mock_robot_client)
-    return factory
+def mock_robot_client_factory():
+    return MagicMock(spec=RobotClientFactory)
 
 
 @pytest.fixture
@@ -168,3 +150,7 @@ def test_dataset():
             "environment_id": "7656679b-25fe-4af5-a19d-73e7df16f384",
         }
     )
+
+
+# Loaded after this module, so after STORAGE_DIR is set above.
+pytest_plugins = ["tests.runtime_session.fixtures"]

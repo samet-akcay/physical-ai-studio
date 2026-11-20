@@ -7,8 +7,9 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Request
 from fastapi.exceptions import HTTPException
 from fastapi.responses import FileResponse
-from physicalai.config import to_yaml
+from physicalai.config import Config
 from physicalai.export.backends import ExportBackend
+from pydantic import BaseModel, StringConstraints
 from sse_starlette import EventSourceResponse
 from starlette import status
 from starlette.background import BackgroundTask
@@ -18,33 +19,33 @@ from api.dependencies import (
     get_dataset_service,
     get_job_service,
     get_model_download_service,
-    get_model_id,
     get_model_metrics_service,
     get_model_service,
     get_robot_catalog_service,
     get_robot_client_factory,
     get_robot_manager_service,
 )
+from api.robot_simulation import resolve_export_cameras
 from api.utils import safe_archive_name
 from exceptions import ResourceNotFoundError, ResourceType
 from internal_datasets.utils import get_internal_read_dataset
 from robots.robot_client_factory import RobotClientFactory
-from runtime.config_builder import (
+from schemas import Model, ModelDetailResponse
+from schemas.job import TrainJob
+from services import DatasetService, JobService, ModelDownloadService, ModelMetricsService, ModelService
+from services.environment_service import EnvironmentService
+from services.runtime_export import (
     RUNTIME_FPS,
     build_runtime_config,
     policy_source_fragment,
     runtime_config_change_me,
     runtime_export_readme,
 )
-from schemas import Model, ModelDetailResponse
-from schemas.job import TrainJob
-from services import DatasetService, JobService, ModelDownloadService, ModelMetricsService, ModelService
-from services.environment_service import EnvironmentService
 
 router = APIRouter(prefix="/api/models", tags=["Models"])
 
 
-async def _runtime_recipe_texts(
+async def _runtime_recipe_texts(  # noqa: PLR0913 - the download endpoint's dependencies
     *,
     model: Model,
     environment_id: UUID,
@@ -53,6 +54,7 @@ async def _runtime_recipe_texts(
     task: str | None,
     environment_service: EnvironmentService,
     robot_client_factory: RobotClientFactory,
+    request: Request,
 ) -> tuple[str, str]:
     """Build runtime.yaml and README for a model download that includes a recipe."""
     if backend.value not in model.available_backends:
@@ -78,7 +80,9 @@ async def _runtime_recipe_texts(
         document = await build_runtime_config(
             follower=environment.robots[0].robot,
             leader=None,
-            cameras=environment.cameras,
+            cameras=await resolve_export_cameras(
+                request, environment_service.session, model.project_id, environment.cameras
+            ),
             robot_factory=robot_client_factory,
             fps=RUNTIME_FPS,
             allow_stored_port=True,
@@ -89,12 +93,12 @@ async def _runtime_recipe_texts(
 
     unresolved = runtime_config_change_me(document)
     comments = "".join(f"# CHANGE_ME: replace machine-specific device path {path}\n" for path in unresolved)
-    return comments + to_yaml(document), runtime_export_readme(document, unresolved=unresolved)
+    return comments + Config.from_dict(document).to_yaml(), runtime_export_readme(document, unresolved=unresolved)
 
 
 @router.get("/{model_id}")
 async def get_model_by_id(
-    model_id: Annotated[UUID, Depends(get_model_id)],
+    model_id: UUID,
     model_service: Annotated[ModelService, Depends(get_model_service)],
     job_service: Annotated[JobService, Depends(get_job_service)],
 ) -> ModelDetailResponse:
@@ -118,9 +122,24 @@ async def get_model_by_id(
     )
 
 
+class ModelNameUpdate(BaseModel):
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+
+@router.patch("/{model_id}")
+async def update_model(
+    model_id: UUID,
+    payload: ModelNameUpdate,
+    model_service: Annotated[ModelService, Depends(get_model_service)],
+) -> Model:
+    """Update a model's display name without changing its files or training history."""
+    model = await model_service.get_model_by_id(model_id)
+    return await model_service.update_model(model, payload.model_dump())
+
+
 @router.get("/{model_id}/tasks")
 async def get_tasks_of_model(
-    model_id: Annotated[UUID, Depends(get_model_id)],
+    model_id: UUID,
     model_service: Annotated[ModelService, Depends(get_model_service)],
     dataset_service: Annotated[DatasetService, Depends(get_dataset_service)],
 ) -> list[str]:
@@ -134,7 +153,7 @@ async def get_tasks_of_model(
 
 @router.get("/{model_id}/download")
 async def model_download_endpoint(
-    model_id: Annotated[UUID, Depends(get_model_id)],
+    model_id: UUID,
     model_service: Annotated[ModelService, Depends(get_model_service)],
     model_download_service: Annotated[ModelDownloadService, Depends(get_model_download_service)],
     include_snapshot: bool = False,
@@ -167,7 +186,7 @@ async def model_download_endpoint(
 @router.get("/{model_id}/exports/{backend}/download")
 async def download_model_backend(  # noqa: PLR0913
     request: Request,
-    model_id: Annotated[UUID, Depends(get_model_id)],
+    model_id: UUID,
     backend: ExportBackend,
     model_service: Annotated[ModelService, Depends(get_model_service)],
     model_download_service: Annotated[ModelDownloadService, Depends(get_model_download_service)],
@@ -223,6 +242,7 @@ async def download_model_backend(  # noqa: PLR0913
             task=task,
             environment_service=environment_service,
             robot_client_factory=robot_client_factory,
+            request=request,
         )
         archive_path = await asyncio.to_thread(
             model_download_service.create_runtime_export,
@@ -244,7 +264,7 @@ async def download_model_backend(  # noqa: PLR0913
 
 @router.get("/{model_id}/metrics")
 async def stream_metrics(
-    model_id: Annotated[UUID, Depends(get_model_id)],
+    model_id: UUID,
     model_service: Annotated[ModelService, Depends(get_model_service)],
     model_metrics_service: Annotated[ModelMetricsService, Depends(get_model_metrics_service)],
 ) -> EventSourceResponse:
@@ -258,7 +278,7 @@ async def stream_metrics(
 
 @router.delete("/{model_id}")
 async def remove_model(
-    model_id: Annotated[UUID, Depends(get_model_id)],
+    model_id: UUID,
     model_service: Annotated[ModelService, Depends(get_model_service)],
 ) -> None:
     """Fetch all projects."""

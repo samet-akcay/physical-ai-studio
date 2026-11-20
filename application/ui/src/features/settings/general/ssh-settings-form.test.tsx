@@ -4,6 +4,7 @@ import { HttpResponse } from 'msw';
 
 import { http } from '../../../api/utils';
 import { server } from '../../../msw-node-setup';
+import { getMockedRerunSettings } from '../../../test-utils/mocks/mock-settings';
 import { render } from '../../../test-utils/render';
 import { SshSettingsForm } from './ssh-settings-form';
 
@@ -29,6 +30,7 @@ describe('SshSettingsForm', () => {
             http.patch('/api/settings', async ({ request }) => {
                 patchedBody = await request.json();
                 return HttpResponse.json({
+                    video_recording: { preset: null },
                     trainer: {
                         request_timeout_s: 30,
                         download_read_timeout_s: 120,
@@ -38,6 +40,7 @@ describe('SshSettingsForm', () => {
                     huggingface: { hf_token: null },
                     ssh: { ...baseSsh, connect_timeout_s: 42 },
                     hotkeys: { bindings: {} },
+                    rerun: getMockedRerunSettings(),
                 });
             })
         );
@@ -48,6 +51,7 @@ describe('SshSettingsForm', () => {
         const connectTimeoutField = screen.getByRole('textbox', { name: /connect timeout/i });
         await user.clear(connectTimeoutField);
         await user.type(connectTimeoutField, '42');
+        await user.tab();
         await user.click(screen.getByRole('button', { name: /save/i }));
 
         expect(await screen.findByText('Saved')).toBeInTheDocument();
@@ -60,6 +64,7 @@ describe('SshSettingsForm', () => {
             http.patch('/api/settings', async ({ request }) => {
                 patchedBody = await request.json();
                 return HttpResponse.json({
+                    video_recording: { preset: null },
                     trainer: {
                         request_timeout_s: 30,
                         download_read_timeout_s: 120,
@@ -69,6 +74,7 @@ describe('SshSettingsForm', () => {
                     huggingface: { hf_token: null },
                     ssh: { ...baseSsh, trainer_shm_size_gb: 48 },
                     hotkeys: { bindings: {} },
+                    rerun: getMockedRerunSettings(),
                 });
             })
         );
@@ -78,6 +84,7 @@ describe('SshSettingsForm', () => {
         const shmField = screen.getByRole('textbox', { name: /trainer shared memory/i });
         await user.clear(shmField);
         await user.type(shmField, '48');
+        await user.tab();
         await user.click(screen.getByRole('button', { name: /save/i }));
 
         expect(await screen.findByText('Saved')).toBeInTheDocument();

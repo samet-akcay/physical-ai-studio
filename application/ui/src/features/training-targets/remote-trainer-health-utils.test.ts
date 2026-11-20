@@ -12,6 +12,23 @@ const startingHealth: SchemaRemoteTrainerHealth = {
 };
 
 describe('remote-trainer-health-utils starting status', () => {
+    it.each([
+        ['authentication_required', 'Authentication required', 'Authentication is required'],
+        ['access_denied', 'Access denied', 'Check permissions'],
+        ['resource_missing', 'Resource missing', 'could not be found'],
+        ['resource_disabled', 'Resource unavailable', 'disabled or invalid'],
+        ['service_error', 'Degraded', 'service returned an error'],
+    ])('displays the provider-independent reason %s without a toast issue', (reason, label, detail) => {
+        const health: SchemaRemoteTrainerHealth = {
+            ...startingHealth,
+            status: 'degraded',
+            reason_code: reason,
+            issues: [],
+        };
+        expect(healthLabel(health)).toBe(label);
+        expect(healthDescription(health)).toContain(detail);
+    });
+
     it('shows the current startup phase instead of a generic status', () => {
         expect(healthLabel(startingHealth)).toBe('Starting: Pulling trainer image');
         expect(healthLabel({ ...startingHealth, reason_code: null })).toBe('Starting');
@@ -47,6 +64,12 @@ describe('remote-trainer-health-utils starting status', () => {
         );
     });
 
+    it('explains a remote port collision and how to resolve it', () => {
+        expect(healthDescription({ ...startingHealth, status: 'degraded', reason_code: 'remote_port_in_use' })).toBe(
+            'The remote port is already in use on the SSH host. Go to Settings → Training Targets, edit this trainer, and choose another remote port under Advanced settings.'
+        );
+    });
+
     it('explains missing Docker for a Studio-managed trainer', () => {
         expect(healthDescription({ ...startingHealth, status: 'degraded', reason_code: 'docker_unavailable' })).toBe(
             'Docker must be running and accessible to the SSH user. If Docker was just installed, log out of the SSH host and back in, then retry setup.'
@@ -57,6 +80,9 @@ describe('remote-trainer-health-utils starting status', () => {
         expect(
             healthDescription({ ...startingHealth, status: 'degraded', reason_code: 'accelerator_unavailable' })
         ).toBe('Studio-managed training requires a working CUDA or XPU driver on the SSH host.');
+        expect(
+            healthDescription({ ...startingHealth, status: 'degraded', reason_code: 'nvidia_driver_unavailable' })
+        ).toContain('CUDA 13.2 requires NVIDIA driver branch 595 or newer');
     });
 
     it('explains when the running managed container cannot access an accelerator', () => {

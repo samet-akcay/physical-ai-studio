@@ -8,6 +8,8 @@ Use remote training when the Studio backend host does not meet the policy's GPU 
 
 If you select **Set up Docker and GPU support** for an Ubuntu SSH trainer, Studio installs missing packages and configures Docker on that host. The SSH user needs passwordless sudo for these changes (and for a separately confirmed reboot); an already-ready host does not need it for the prerequisite check. A root SSH user does not need sudo.
 
+CUDA trainers need NVIDIA driver branch 595 or newer. Automatic setup may install or upgrade the driver and require a host reboot.
+
 On the **SSH host**, have an administrator grant the dedicated SSH user non-interactive sudo. For example, replace `trainer` with the SSH username you enter in Studio:
 
 ```bash
@@ -28,6 +30,8 @@ Verify the file has permissions `0440` (`sudo chmod 0440 /etc/sudoers.d/physical
 ## AWS
 
 Studio can create a GPU-backed remote trainer in your AWS account and connect to it through an SSH tunnel.
+
+For cloud-based remote training, the Hugging Face token may be exposed in logs depending on your cloud provider settings. We recommend using short-lived tokens scoped to the access required for training.
 
 > [!WARNING]
 > Delete the CloudFormation stack when you finish training to terminate the EC2 instance and avoid additional AWS charges.
@@ -53,9 +57,9 @@ When running Studio with Docker Compose, set these variables in `application/doc
 
 ### Deploy the stack
 
-1. In Studio, open **Settings**, then **Compute**.
-2. Under **Remote Trainers**, select **New remote trainer**.
-3. Select **Deploy AWS stack**.
+1. In Studio, open **Settings**, then **Training Targets**.
+2. Under **Add a training target**, select **SSH Remote Trainer**.
+3. Select **Deploy AWS stack**. The template requires **US East (N. Virginia)** (`us-east-1`).
 4. Set **Policy to train** to the policy that will run on this trainer.
 5. Paste the SSH public key corresponding to the private key on the Studio host.
 6. Click apply and wait until the stack status is `CREATE_COMPLETE`.
@@ -64,23 +68,154 @@ Stack creation can take up to 5-10 minutes.
 
 ### Register the trainer
 
-Open the completed stack's **Outputs** tab, then return to the **Add remote trainer** dialog in Studio.
+Open the completed stack's **Outputs** tab, then return to the **Add training target** dialog in Studio.
 
 1. Enter a name for the trainer.
-2. Select **SSH tunnel** and **Connection details**.
+2. Select **Connection details**.
 3. Copy the stack outputs into the form:
 
-| CloudFormation output | Studio field    |
-| --------------------- | --------------- |
-| `SshHost`             | **Host**        |
-| `SshPort`             | **Port**        |
-| `SshUserName`         | **User**        |
+| CloudFormation output | Studio field |
+| --------------------- | ------------ |
+| `SshHost`             | **Host**     |
+| `SshPort`             | **Port**     |
+| `SshUserName`         | **User**     |
 
 4. Set **Key path** to the private key file corresponding to the public key passed to CloudFormation. The path is resolved on the Studio backend host.
-6. Select **Add trainer**.
+5. Select **Add training target**.
 
-After adding the trainer, return to [Training Policies](./06-training-policies.md) to create and start a model training job.
+Studio automatically assigns an available local loopback port for each SSH trainer. After adding the trainer, return to [Training Policies](./06-training-policies.md) to create and start a model training job.
 
-## Remove an AWS trainer
+### Remove an EC2 trainer
 
-Delete the CloudFormation stack when training is complete. Removing the trainer from Studio does not delete the AWS resources or stop AWS charges.
+The EC2 instance keeps running after training finishes. Delete its CloudFormation stack when you finish using the trainer to terminate the instance and stop its compute charges. Removing the trainer from Studio only deletes its registration; the AWS resources remain deployed.
+
+## AWS Batch provider
+
+The **AWS Provider** training target runs one-off training jobs on AWS Batch.
+
+For cloud-based remote training, the Hugging Face token may be exposed in logs depending on your cloud provider settings. We recommend using short-lived tokens scoped to the access required for training.
+
+The supplied stack scales compute to zero when idle. Keep it deployed for future training jobs; storage charges still apply.
+
+### Deploy the stack
+
+1. In Studio, open **Settings**, then **Training Targets**, and select **AWS Provider**.
+2. Select **Deploy AWS Batch stack** to open the CloudFormation template in the AWS Console, or use an existing deployment. Switch the AWS Console to a region supported by the template.
+3. Select the IAM acknowledgement checkbox and create the stack.
+4. Wait until the stack status is `CREATE_COMPLETE`, then copy `StackIdentifier` (`<account-id>-<region>-<stack-uuid>`) from the stack's **Outputs** tab.
+
+### Provision robot identity
+
+A robot identity gives the robot its own machine identity so Studio can authenticate with external services such as AWS.
+
+> [!NOTE]
+> Using host AWS credentials (`~/.aws` profiles) is intended for development only and is not recommended in production. To use a host profile during development, skip to [Register the training target](#register-the-training-target).
+
+Before provisioning, ensure:
+
+- the administrator machine has AWS CLI v2 authenticated for the stack's account, `curl`, and `ssh`/`scp`;
+- the Studio host has `snapd`, `sudo` access, and outbound HTTPS (443) connectivity to AWS IoT endpoints.
+
+From the administrator machine, run [`provision-robot.sh`](../cloudformation/provision-robot.sh) with the `StackIdentifier` output from the stack:
+
+```bash
+application/cloudformation/provision-robot.sh \
+  --thing-name robot-01 \
+  --stack-identifier 123456789012-us-east-1-6ba57d60 \
+  --ssh <user>@<studio-host>
+```
+
+The script creates an AWS IoT thing and active X.509 certificate, delivers the bundle to the robot/Studio host over SSH, installs the `aws-iot-greengrass` snap, and writes `/var/snap/aws-iot-greengrass/common/greengrass/v2/config.yaml` (override with `GREENGRASS_CONFIG_PATH` if stored at a custom path). When this configuration file is present on the Studio backend host, Studio exchanges the device certificate for temporary AWS credentials automatically.
+
+For Docker deployments, add a read-only bind mount of `/var/snap/aws-iot-greengrass/common/greengrass/v2` at the same path inside the Studio container, ensure the backend container user can read the configuration and certificate files, and recreate the container. `GREENGRASS_CONFIG_PATH` must point to a path inside the container; setting it alone does not expose host files.
+
+Without SSH access from the administrator machine, omit `--ssh` to write the bundle to `./robot-bundles/<thing-name>`, copy that directory to the Studio host, and run `sudo ./install-greengrass-snap.sh <bundle-dir>` there.
+
+> [!WARNING]
+> A copy of the private key (`private.pem.key`) remains in the local bundle directory on the administrator machine. Delete the local bundle directory once installation completes.
+
+To prevent a robot from obtaining new temporary AWS credentials without removing its installation, deactivate its certificate using the certificate ID printed during provisioning. Credentials already issued remain valid until they expire (up to `RobotCredentialDurationSeconds`, which can be 12 hours); certificate deactivation alone does not immediately revoke existing role sessions:
+
+```bash
+aws iot update-certificate --region <region> --certificate-id <certificate-id> --new-status INACTIVE
+```
+
+To remove a robot identity and uninstall the Greengrass snap completely, run [`deprovision-robot.sh`](../cloudformation/deprovision-robot.sh) from the administrator machine. Deprovision all robots before deleting the CloudFormation stack so no certificates remain attached to the stack's IoT policy:
+
+```bash
+application/cloudformation/deprovision-robot.sh \
+  --thing-name robot-01 \
+  --stack-identifier 123456789012-us-east-1-6ba57d60 \
+  --ssh <user>@<studio-host>
+```
+
+### Register the training target
+
+Return to the **Deploy and configure AWS stack** dialog in Studio (**Settings > Training Targets > AWS Provider**):
+
+1. Enter a **Name** for the training target.
+2. Paste `StackIdentifier` into **AWS stack ID**.
+3. Connect to the stack:
+   - **With a provisioned robot identity**: Select **Connect**. Studio exchanges the device certificate for temporary credentials, verifies the stack's AWS Batch job queues, and saves the target.
+   - **With a host AWS profile (development only)**: Select **Next**, choose an **AWS profile** that is configured and authenticated on the Studio backend host, and select **Connect**. If validation fails, an error toast explains recovery and the form preserves your inputs. **Back** returns to the stack ID step without discarding your profile selection.
+
+Editing a target uses the same dialog prefilled with the saved stack ID (and profile, when used), without the deployment link. Select **Save changes** to validate and save it.
+
+### Host AWS profiles (development only)
+
+> [!WARNING]
+> Authenticating with a named AWS profile on the Studio backend host is for development only and is not recommended in production. For production deployments, [provision a robot identity](#provision-robot-identity) instead.
+
+When no robot certificate is configured on the host, Studio lists named profiles from `~/.aws` on the backend host. Configure and authenticate a profile with permission to assume the stack's Studio role (for example, using `aws login` or `aws configure --profile studio`), then verify it:
+
+```bash
+aws sts get-caller-identity --profile studio
+```
+
+In Docker deployments, mount `~/.aws` so it is readable by the backend container user.
+
+Select the profile in Studio when connecting the target (reopen the dropdown to refresh after setup). If the profile's session expires later, renew it on the backend host and select **Check status** in Studio; running jobs continue on AWS and resume reporting in Studio once credentials are renewed.
+
+### Train with AWS Batch
+
+Select **AWS Provider** in the training dialog and choose a policy. Studio selects the instance type, queue, and job definition automatically:
+
+| Policy       | Instance type  |
+| ------------ | -------------- |
+| ACT, SmolVLA | `g4dn.2xlarge` |
+| Pi0.5        | `g6e.2xlarge`  |
+| MolmoAct2    | `g7e.8xlarge`  |
+
+Studio uploads the dataset snapshot to S3, submits the Batch job, streams logs and live metrics while it runs, and downloads the trained model when it finishes. Canceling a job in Studio terminates the AWS Batch job.
+
+## Security Model and Known Limitations
+
+### Local file permissions on the robot private key
+
+`install-greengrass-snap.sh` sets permissions `0644` on `/var/snap/aws-iot-greengrass/common/greengrass/v2/private.pem.key` so non-root processes on the robot (such as the Studio backend) can use the certificate to request AWS credentials. Any local user or process on that host can read the file and obtain temporary `StudioRole` credentials while the certificate is active.
+
+On hosts shared by multiple users, restrict `/var/snap/aws-iot-greengrass/common/greengrass/v2/private.pem.key` to the user or group that runs Studio (for example, `0640` or `0600`).
+
+### Shared IoT topic scope across robots in the stack
+
+`RobotIoTPolicy` in `aws-batch-trainer.yaml` allows `iot:Publish`, `iot:Receive`, and `iot:Subscribe` on `topic/*` and `topicfilter/*` in the stack's AWS account and region rather than scoping them per robot.
+
+If you need per-robot topic isolation, deploy the stack in a dedicated AWS account or scope `RobotIoTPolicy` to per-robot topic prefixes.
+
+### Certificate cleanup after an interrupted `provision-robot.sh` run
+
+If `provision-robot.sh` fails after attaching the IoT policy (`aws iot attach-policy`) and before linking the certificate to the thing (`aws iot attach-thing-principal`), the newly created certificate remains active and attached to `pai-robot-<stack-uuid>` without being linked to the thing. `deprovision-robot.sh` only looks up certificates attached to the thing and will not remove it automatically.
+
+If provisioning fails after printing `Created ACTIVE certificate <cert-id>`, deactivate, detach, and delete that certificate manually (`aws iot update-certificate --new-status INACTIVE`, `aws iot detach-policy`, and `aws iot delete-certificate`).
+
+### Deprovisioning an offline robot with `--ssh`
+
+When `deprovision-robot.sh` is run with `--ssh <user>@<host>`, it removes the `aws-iot-greengrass` snap over SSH before revoking the robot's certificates in AWS. If the robot cannot be reached over SSH, the script exits before revoking the AWS certificate.
+
+If the robot is offline, run `deprovision-robot.sh` without `--ssh` to remove the AWS resources first, then uninstall the snap on the robot later.
+
+### Certificate deletion during `deprovision-robot.sh`
+
+`deprovision-robot.sh` checks `aws iot list-principal-things` right after detaching the certificate from the thing. If AWS IoT Core has not yet propagated the detachment, the check can still return the thing being removed and skip deleting the certificate.
+
+If the script outputs `Certificate <cert-id> is still used by other things; detached from <thing-name> only` for a certificate that belongs only to that robot, deactivate, detach, and delete the certificate manually.

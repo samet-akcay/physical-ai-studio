@@ -1,12 +1,13 @@
 // Copyright (C) 2026 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 
+import { rs } from '@rstest/core';
 import { screen } from '@testing-library/react';
 import { HttpResponse } from 'msw';
-import { vi } from 'vitest';
 
 import { http } from '../../api/utils';
 import { server } from '../../msw-node-setup';
+import { createQueryClient } from '../../query-client/query-client';
 import { render } from '../../test-utils/render';
 import { LogsDialog } from './logs-dialog';
 
@@ -16,11 +17,12 @@ import { LogsDialog } from './logs-dialog';
  * same pattern in `job-table.test.tsx`). This stub lets the test control exactly
  * what payload the "stream" emits before completing.
  */
-class StubEventSource {
+class StubEventSource extends EventTarget {
     onmessage: ((event: { data: string }) => void) | null = null;
     onerror: (() => void) | null = null;
 
     constructor(private readonly messages: string[]) {
+        super();
         queueMicrotask(() => {
             for (const data of this.messages) {
                 this.onmessage?.({ data });
@@ -33,7 +35,7 @@ class StubEventSource {
 }
 
 const stubEventSourceWith = (...messages: string[]) => {
-    vi.stubGlobal(
+    rs.stubGlobal(
         'EventSource',
         class extends StubEventSource {
             constructor() {
@@ -45,7 +47,7 @@ const stubEventSourceWith = (...messages: string[]) => {
 
 describe('LogsDialog', () => {
     afterEach(() => {
-        vi.unstubAllGlobals();
+        rs.unstubAllGlobals();
     });
 
     beforeEach(() => {
@@ -67,9 +69,53 @@ describe('LogsDialog', () => {
             })
         );
 
-        render(<LogsDialog close={vi.fn()} initialSourceId='job-abc' />);
+        render(<LogsDialog close={rs.fn()} initialSourceId='job-abc' />);
 
         expect(await screen.findByText('hello world')).toBeInTheDocument();
+    });
+
+    it('reconnects to live logs when reopening a cached source', async () => {
+        const queryClient = createQueryClient();
+        let message = 'before closing';
+        const close = rs.fn();
+        rs.stubGlobal(
+            'EventSource',
+            class extends EventTarget {
+                onmessage: ((event: { data: string }) => void) | null = null;
+                onerror: (() => void) | null = null;
+
+                constructor() {
+                    super();
+                    queueMicrotask(() => {
+                        this.onmessage?.({
+                            data: JSON.stringify({
+                                record: {
+                                    message,
+                                    module: 'training_worker',
+                                    function: 'run',
+                                    line: 12,
+                                    level: { name: 'INFO' },
+                                    time: { timestamp: 1_700_000_000, repr: '2023-11-14 22:13:20' },
+                                },
+                            }),
+                        });
+                    });
+                }
+
+                close = close;
+            }
+        );
+
+        const first = render(<LogsDialog close={rs.fn()} initialSourceId='job-abc' />, { queryClient });
+        expect(await screen.findByText('before closing')).toBeInTheDocument();
+        first.unmount();
+        expect(close).toHaveBeenCalled();
+
+        message = 'after reopening';
+        const reopened = render(<LogsDialog close={rs.fn()} initialSourceId='job-abc' />, { queryClient });
+        expect(await screen.findByText('after reopening')).toBeInTheDocument();
+        reopened.unmount();
+        queryClient.clear();
     });
 
     // Regression test: a just-started job's log source can briefly surface
@@ -94,7 +140,7 @@ describe('LogsDialog', () => {
             })
         );
 
-        render(<LogsDialog close={vi.fn()} initialSourceId='job-abc' />);
+        render(<LogsDialog close={rs.fn()} initialSourceId='job-abc' />);
 
         expect(await screen.findByText('No logs available')).toBeInTheDocument();
         // The dialog itself (and the rest of the app) must still be intact.

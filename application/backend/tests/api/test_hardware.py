@@ -1,4 +1,5 @@
 import asyncio
+import threading
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -23,6 +24,13 @@ def _make_device(
         driver="uvc",
         hardware_payload=hardware_fingerprint,
     )
+
+
+@pytest.fixture(autouse=True)
+def no_v4l2_fixup():
+    """Keep these tests hardware-isolated: never touch the host's /dev/video* nodes."""
+    with patch("api.hardware.fix_zero_frame_intervals", return_value=[]) as fixup:
+        yield fixup
 
 
 @pytest.fixture
@@ -65,6 +73,22 @@ class TestGetCameras:
         assert len(cameras) == 1
         assert cameras[0].driver == "realsense"
         assert cameras[0].fingerprint == {"serial": "123456789"}
+
+    def test_discovers_off_the_event_loop(self, event_loop, no_v4l2_fixup):
+        # Discovery blocks for ~300ms; on the event loop it stalls live camera previews.
+        loop_thread = threading.get_ident()
+        discovery_threads: list[int] = []
+
+        def discover(**_kwargs):
+            discovery_threads.append(threading.get_ident())
+            return {}
+
+        no_v4l2_fixup.side_effect = lambda: discovery_threads.append(threading.get_ident()) or []
+        with patch("api.hardware.discover_all", side_effect=discover):
+            event_loop.run_until_complete(get_cameras())
+
+        assert len(discovery_threads) == 2
+        assert loop_thread not in discovery_threads
 
     def test_skips_devices_without_hardware_payload(self, event_loop):
         devices = {"uvc": [_make_device()]}
@@ -128,7 +152,9 @@ class TestHardwareApi:
 
         try:
             client = TestClient(app)
-            with patch("robots.catalog.so101.identify_so101_robot_visually", new_callable=Mock) as identify:
+            with patch(
+                "physicalai_so101_plugin.studio_catalog.identify_so101_robot_visually", new_callable=Mock
+            ) as identify:
                 response = client.post(
                     "/api/robots/catalog/SO101_Follower/identify",
                     json={"connection_string": "/dev/ttyUSB0", "serial_number": ""},
@@ -141,13 +167,57 @@ class TestHardwareApi:
         (connection_string,) = identify.call_args.args
         assert connection_string == "/dev/ttyUSB0"
 
+    def test_identify_so101_maps_plugin_overload_error(self):
+        robot_manager = _StubRobotManager([SerialPortInfo(connection_string="/dev/ttyUSB0", serial_number=None)])
+        app.dependency_overrides[get_robot_manager_service] = lambda: robot_manager
+
+        try:
+            client = TestClient(app, raise_server_exceptions=False)
+            with patch(
+                "physicalai_so101_plugin.studio_catalog.identify_so101_robot_visually",
+                side_effect=RuntimeError(
+                    "Robot identify failed: gripper stopped responding during motion. "
+                    "The servo may have tripped overload protection. Power-cycle the robot and try again."
+                ),
+            ):
+                response = client.post(
+                    "/api/robots/catalog/SO101_Follower/identify",
+                    json={"connection_string": "/dev/ttyUSB0", "serial_number": ""},
+                )
+        finally:
+            app.dependency_overrides.clear()
+
+        assert response.status_code == 400, response.text
+        assert response.json()["error_code"] == "robot_identify_error"
+
+    def test_identify_so101_preserves_unrelated_runtime_errors(self):
+        robot_manager = _StubRobotManager([SerialPortInfo(connection_string="/dev/ttyUSB0", serial_number=None)])
+        app.dependency_overrides[get_robot_manager_service] = lambda: robot_manager
+
+        try:
+            client = TestClient(app, raise_server_exceptions=False)
+            with patch(
+                "physicalai_so101_plugin.studio_catalog.identify_so101_robot_visually",
+                side_effect=RuntimeError("unexpected driver failure"),
+            ):
+                response = client.post(
+                    "/api/robots/catalog/SO101_Follower/identify",
+                    json={"connection_string": "/dev/ttyUSB0", "serial_number": ""},
+                )
+        finally:
+            app.dependency_overrides.clear()
+
+        assert response.status_code == 500, response.text
+
     def test_identify_trossen_calls_trossen_identifier(self):
         robot_manager = _StubRobotManager([])
         app.dependency_overrides[get_robot_manager_service] = lambda: robot_manager
 
         try:
             client = TestClient(app)
-            with patch("robots.catalog.widowxai.identify_trossen_robot_visually", new_callable=AsyncMock) as identify:
+            with patch(
+                "physicalai_trossen_plugin.studio_catalog.identify_trossen_robot_visually", new_callable=AsyncMock
+            ) as identify:
                 response = client.post(
                     "/api/robots/catalog/Trossen_WidowXAI_Follower/identify",
                     json={"connection_string": "192.168.1.100"},
@@ -158,5 +228,4 @@ class TestHardwareApi:
         assert response.status_code == 200, response.text
         identify.assert_awaited_once()
         (robot_arg,) = identify.await_args.args
-        assert robot_arg.type == "Trossen_WidowXAI_Follower"
-        assert robot_arg.payload.connection_string == "192.168.1.100"
+        assert robot_arg.connection_string == "192.168.1.100"

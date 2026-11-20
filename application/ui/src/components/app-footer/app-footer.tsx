@@ -1,21 +1,25 @@
 import { ActionButton, DialogTrigger, Divider, Flex, Icon, View } from '@geti-ui/ui';
 import { Manifest } from '@geti-ui/ui/icons';
 
+import { FeedbackButton } from '../../features/feedback/feedback-button';
 import { JobStatus } from '../../features/jobs/footer/job-status';
 import { JobsButton } from '../../features/jobs/footer/jobs-button';
 import { useJobUpdates } from '../../features/jobs/use-job-updates';
 import { LogsDialog } from '../../features/logs/logs-dialog';
 import { useOptionalProjectId } from '../../features/projects/use-project';
 import { RuntimeSessionStatus } from '../../features/runtime-sessions/runtime-sessions';
+import { useSimulationUpdates } from '../../features/simulation/use-simulation';
 import { RestartRequiredBanner } from '../../features/system/restart-required-banner';
 
 export const AppFooter = ({ gridArea = 'footer' }: { gridArea?: string }) => {
     const { project_id } = useOptionalProjectId();
 
     useJobUpdates(project_id);
+    useSimulationUpdates();
 
     return (
         <View
+            elementType='footer'
             gridArea={gridArea}
             borderTopColor={'gray-300'}
             borderTopWidth={'thin'}
@@ -48,6 +52,9 @@ export const AppFooter = ({ gridArea = 'footer' }: { gridArea?: string }) => {
                     <Divider orientation='vertical' size='S' />
                     <JobStatus />
                     <RuntimeSessionStatus />
+                    <View marginStart='auto'>
+                        <FeedbackButton />
+                    </View>
                 </Flex>
                 <RestartRequiredBanner />
             </Flex>

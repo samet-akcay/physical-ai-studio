@@ -59,7 +59,7 @@ describe('CreateEnvironmentForm', () => {
                             id: 'robot-1',
                             type: 'SO101_Follower',
                             name: 'Test Robot',
-                            payload: { connection_string: '', serial_number: '' },
+                            payload: { connection_string: '', serial_number: '', unit: 'normalized' },
                         },
                     ])
                 )
@@ -88,7 +88,7 @@ describe('CreateEnvironmentForm', () => {
                             id: 'robot-1',
                             type: 'SO101_Follower',
                             name: 'Test Robot',
-                            payload: { connection_string: '', serial_number: '' },
+                            payload: { connection_string: '', serial_number: '', unit: 'normalized' },
                         },
                     ])
                 )
@@ -105,7 +105,7 @@ describe('CreateEnvironmentForm', () => {
 
     it('submits exactly once when pressing Enter in the name field', async () => {
         server.use(http.get(ROBOTS_PATH, () => HttpResponse.json([])));
-        const createEnvironmentSpy = vi.fn();
+        const createEnvironmentSpy = rs.fn();
 
         server.use(
             http.post(ENVIRONMENTS_PATH, async ({ request }) => {

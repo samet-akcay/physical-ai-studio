@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 
+import { DatasetCamera, useDatasetCameras } from '../../datasets/use-dataset-cameras';
 import { getPolicyCameraSlots, PolicyCameraSlot } from './policy-camera-slots';
-import { DatasetCamera, useDatasetCameras } from './use-dataset-cameras';
 
 export interface FeatureMapping {
     /** The policy's camera slots, in slot order. Empty when the policy has no fixed order. */
@@ -28,8 +28,6 @@ export interface FeatureMapping {
      * nothing in the batch.
      */
     imageKeyReorderMap: Record<string, number>;
-    /** Camera slots the policy reads, including the ones left empty. */
-    numCameras: number;
 }
 
 /**
@@ -37,8 +35,7 @@ export interface FeatureMapping {
  *
  * Every dataset camera has to end up in a slot: the training side matches the
  * mapping against the batch's image keys and rejects a mapping that doesn't
- * cover them exactly. Slots may stay empty — those are filled with masked empty
- * images at training time.
+ * cover them exactly. Slots may stay empty; the policy then skips them.
  */
 export const useFeatureMapping = (policy: string, datasetId: string | undefined): FeatureMapping => {
     const slots = useMemo(() => getPolicyCameraSlots(policy), [policy]);
@@ -126,6 +123,5 @@ export const useFeatureMapping = (policy: string, datasetId: string | undefined)
         isDatasetEmpty,
         error,
         imageKeyReorderMap,
-        numCameras: slots.length,
     };
 };

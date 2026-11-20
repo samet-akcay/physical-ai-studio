@@ -1,9 +1,7 @@
 from functools import lru_cache
 from typing import Annotated, cast
-from uuid import UUID
 
-from fastapi import Depends, status
-from fastapi.exceptions import HTTPException
+from fastapi import Depends
 from fastapi.requests import HTTPConnection
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,6 +10,7 @@ from core.security import SshFeatureAvailability, get_ssh_feature_availability
 from db.engine import get_async_db_session
 from exceptions import SshFeatureDisabledError
 from robots.robot_client_factory import RobotClientFactory
+from runtime_session.registry import RuntimeSessionRegistry
 from services import (
     DatasetDownloadService,
     DatasetService,
@@ -33,7 +32,8 @@ from services.health_service import HealthService
 from services.job_service import JobService
 from services.log_service import LogService
 from services.robot_catalog_service import RobotCatalogService
-from services.runtime_session_service import RuntimeSessionService
+from services.robot_simulation_service import RobotSimulationService
+from services.simulation_manager import SimulationManager
 from services.snapshot_service import SnapshotService
 from services.system_service import SystemService
 from settings import Settings, get_settings
@@ -43,19 +43,6 @@ SettingsDep = Annotated[Settings, Depends(get_settings)]
 AsyncSessionDep = Annotated[AsyncSession, Depends(get_async_db_session)]
 
 
-def is_valid_uuid(identifier: str) -> bool:
-    """Check if a given string identifier is formatted as a valid UUID.
-
-    :param identifier: String to check
-    :return: True if valid UUID, False otherwise
-    """
-    try:
-        UUID(identifier)
-    except ValueError:
-        return False
-    return True
-
-
 @lru_cache
 def get_system_service() -> SystemService:
     """Provide a SystemService instance for querying system hardware."""
@@ -63,12 +50,6 @@ def get_system_service() -> SystemService:
 
 
 SystemServiceDep = Annotated[SystemService, Depends(get_system_service)]
-
-
-@lru_cache
-def get_runtime_session_service() -> RuntimeSessionService:
-    """Provide a RuntimeSessionService for listing and stopping runtime sessions."""
-    return RuntimeSessionService()
 
 
 def get_health_service(request: HTTPConnection) -> HealthService:
@@ -269,55 +250,6 @@ def get_log_service(settings: SettingsDep, job_service: JobServiceDep) -> LogSer
 LogServiceDep = Annotated[LogService, Depends(get_log_service)]
 
 
-def get_project_id(project_id: str) -> UUID:
-    """Initialize and validates a project ID."""
-    if not is_valid_uuid(project_id):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid project ID")
-    return UUID(project_id)
-
-
-def get_dataset_id(dataset_id: str) -> UUID:
-    """Initialize and validates a dataset ID."""
-    if not is_valid_uuid(dataset_id):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid dataset ID")
-    return UUID(dataset_id)
-
-
-def get_model_id(model_id: str) -> UUID:
-    """Initialize and validates a model ID."""
-    if not is_valid_uuid(model_id):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid model ID")
-    return UUID(model_id)
-
-
-def get_robot_id(robot_id: str) -> UUID:
-    """Initialize and validates a robot ID."""
-    if not is_valid_uuid(robot_id):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid robot ID")
-    return UUID(robot_id)
-
-
-def get_camera_id(camera_id: str) -> UUID:
-    """Initialize and validates a camera ID."""
-    if not is_valid_uuid(camera_id):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid camera ID")
-    return UUID(camera_id)
-
-
-def get_job_id(job_id: str) -> UUID:
-    """Initialize and validates a project ID."""
-    if not is_valid_uuid(job_id):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid job ID")
-    return UUID(job_id)
-
-
-def get_environment_id(environment_id: str) -> UUID:
-    """Initialize and validates an environment ID."""
-    if not is_valid_uuid(environment_id):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid environment ID")
-    return UUID(environment_id)
-
-
 def get_scheduler(request: HTTPConnection) -> Scheduler:
     """Provide the global Scheduler instance.
 
@@ -346,3 +278,35 @@ def get_camera_claim_registry(request: HTTPConnection) -> CameraClaimRegistry:
 
 
 CameraClaimRegistryDep = Annotated[CameraClaimRegistry, Depends(get_camera_claim_registry)]
+
+
+def get_runtime_session_registry(request: HTTPConnection) -> RuntimeSessionRegistry:
+    """Return the process-local registry of live runtime sessions."""
+    registry = getattr(request.app.state, "runtime_session_registry", None)
+    if registry is None:
+        raise RuntimeError("Runtime session registry is not initialized")
+    return cast("RuntimeSessionRegistry", registry)
+
+
+RuntimeSessionRegistryDep = Annotated[RuntimeSessionRegistry, Depends(get_runtime_session_registry)]
+
+
+def get_simulation_manager(request: HTTPConnection) -> SimulationManager:
+    """Return the process-wide simulation manager."""
+    manager = getattr(request.app.state, "simulation_manager", None)
+    if manager is None:
+        raise RuntimeError("Simulation manager is not initialized")
+    return cast("SimulationManager", manager)
+
+
+SimulationManagerDep = Annotated[SimulationManager, Depends(get_simulation_manager)]
+
+
+def get_robot_simulation_service(
+    session: AsyncSessionDep, catalog_service: RobotCatalogServiceDep, manager: SimulationManagerDep
+) -> RobotSimulationService:
+    """Provide a RobotSimulationService for the request's database session."""
+    return RobotSimulationService(session, catalog_service.registry, manager)
+
+
+RobotSimulationServiceDep = Annotated[RobotSimulationService, Depends(get_robot_simulation_service)]
