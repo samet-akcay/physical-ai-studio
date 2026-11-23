@@ -19,7 +19,7 @@ from lightning.pytorch.strategies import DDPStrategy
 from lightning.pytorch.utilities.rank_zero import rank_zero_info
 from physicalai.config import instantiate
 
-from physicalai.engine import Capabilities, Enablement, Run, TrainHooks, TrainingEngine, WorkerEnv
+from physicalai.engine import Capabilities, Run, TrainHooks, TrainingEngine, WorkerEnv
 from physicalai.train.callbacks import PolicyDatasetInteraction
 
 
@@ -69,7 +69,6 @@ class Trainer(TrainingEngine, lightning.Trainer):
 
     framework: ClassVar[str] = "physicalai"
     env: ClassVar[WorkerEnv | None] = None
-    enablements: ClassVar[tuple[Enablement, ...]] = ()
     training_accelerators: ClassVar[tuple[str, ...]] = ("cpu", "cuda", "xpu")
 
     def __init__(  # noqa: PLR0913

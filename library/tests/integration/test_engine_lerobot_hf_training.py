@@ -354,7 +354,7 @@ def test_native_lerobot_training_matches_engine_on_pinned_pusht(
     import numpy as np
     import torch
     from physicalai import isolate
-    from physicalai.engine import prepare_environment, resolve_accelerator
+    from physicalai.engine import prepare, resolve_accelerator
     from safetensors.torch import load_file
     from physicalai_lerobot_policy_plugin.engine import LeRobotEngine
 
@@ -386,12 +386,12 @@ def test_native_lerobot_training_matches_engine_on_pinned_pusht(
     assert native_config is not engine_config
     assert native_output != engine_output
 
-    environment = prepare_environment(LeRobotEngine.environment_for_policy("act"), resolve_accelerator(device))
+    environment = prepare(LeRobotEngine.env, resolve_accelerator(device))
     native_config_dir = tmp_path / "native-config"
     native_config.save_pretrained(native_config_dir)
     native_losses_path = tmp_path / "native-losses.json"
     native = isolate.run(
-        environment.isolate,
+        environment,
         _NATIVE_TRAINER,
         [str(native_config_dir / "train_config.json"), str(native_losses_path)],
         check=False,

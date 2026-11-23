@@ -2,13 +2,6 @@
 
 Robotics policies come from different frameworks, each with its own configuration, training loop, checkpoint format and inference processing. Reimplementing those recipes in one training loop can change their behavior. Engines let a framework or model repository keep its own training, while Physical AI provides one place to discover engines, launch native training in isolated environments, and load the results through Runtime.
 
-A new model is enabled in the earliest of these stages that meets its quality and deployment needs:
-
-1. **Framework plugin**: expose the policies a training framework already supports, such as LeRobot.
-2. **Repository plugin**: support one model from its own repository, early.
-3. **Enablement**: add a capability, such as accelerator training or an optimized export, preferably upstream.
-4. **First-party policy**: implement the policy in Studio when an external integration is too fragile.
-
 ## Architecture
 
 ```text
@@ -34,9 +27,7 @@ Engines and plugins do not import Studio. Studio owns presentation, projects, tr
 ```python
 class Engine(ABC):
     framework: ClassVar[str]
-    env: ClassVar[WorkerEnv | None] = None                       # the engine's own environment
-    policy_envs: ClassVar[Mapping[str, WorkerEnv]] = {}           # environments for specific policies
-    enablements: ClassVar[tuple[Enablement, ...]] = ()
+    env: ClassVar[WorkerEnv | None] = None
 
     def export(self, source, output_path, backend=None) -> Path: ...   # abstract
     def policies(self) -> list[str]: ...                               # abstract
@@ -98,22 +89,21 @@ Everything after the framework name goes to the framework's own CLI unchanged, w
 
 ## Worker environments
 
-Conflicting framework and Runtime dependencies are never installed into one interpreter. `physicalai.isolate` prepares, caches and launches locked environments; the engine adds accelerator selection, version checks and the training protocol.
+Conflicting framework and Runtime dependencies are never installed into one interpreter. `physicalai.isolate` owns project sources (`BundledProject`, `GitProject`, `PatchSeries`), caching, synchronization, and process launch. `WorkerEnv` is a thin descriptor over `physicalai.isolate.Environment` that adds accelerator selection, lock/version checks, and the training worker protocol.
 
-| `WorkerEnv` field  | Purpose                                                                                                                                            |
-| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `project`          | `BundledProject` (a project and lock shipped in the plugin) or `GitProject` (a framework's own project at a commit, optionally with patch series). |
-| `name`             | The engine's own environment (`default`), a policy family's, or an enablement's.                                                                   |
-| `python`, `extras` | uv `--python` version and the uv extras for each accelerator profile (`cpu`, `cuda`, `xpu`), for example `{"cuda": ("cu132",)}`.                   |
-| `worker`           | Worker script; `run_worker(..., worker=...)` selects another, such as an export worker.                                                            |
+| `WorkerEnv` field  | Purpose                                                                                                                               |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `project`          | A `physicalai.isolate.ProjectSource` (`BundledProject`, `GitProject`) or a bundled project directory with `pyproject.toml`/`uv.lock`. |
+| `name`             | Environment identifier within its framework (defaults to `default`).                                                                  |
+| `python`, `extras` | uv `--python` version and the uv extras for each accelerator profile (`cpu`, `cuda`, `xpu`), for example `{"cuda": ("cu132",)}`.      |
+| `worker`           | Worker script; `run_worker(..., worker=...)` selects another entrypoint when needed.                                                  |
 
-Environments are cached by source and sync profile under `~/.cache/physicalai/isolate/<key>` (`PHYSICALAI_ISOLATE_CACHE` overrides it). A bundled project's lock must be current (`uv sync --locked`); an upstream Git project's lock is installed as is (`uv sync --frozen`). The worker reports its framework version, which must match the lock and the plugin's declared range; the host then acknowledges, and only then does training start.
+Environments are cached by `physicalai.isolate` under `~/.cache/physicalai/isolate/<key>` (`PHYSICALAI_ISOLATE_CACHE` overrides it). `physicalai.engine.prepare()` delegates directly to `physicalai.isolate.prepare()` and returns `physicalai.isolate.PreparedEnvironment`. The worker reports its framework version, which must match the lock and the plugin's declared range; the host then acknowledges, and only then does training start.
 
-The LeRobot plugin ships one worker project, `env/`, built for CPU, CUDA 13.2 (`cu132`) and XPU, matching Studio's host build. Policy families with their own LeRobot extras (`smolvla`, the `pi` family, `molmoact2`) are mutually exclusive extras of that project: each trains in its own environment, every other policy uses the project without one, and all share one lock.
+The LeRobot plugin ships one locked worker project, `env/`, covering all supported LeRobot policies (`act`, `diffusion`, `pi05`, `smolvla`) with CPU, CUDA 13.2 (`cu132`) and XPU PyTorch profiles matching Studio's host build.
 
 ```bash
-pai engine prepare lerobot --accelerator cuda   # pre-provision an environment
-pai engine prepare lerobot --policy smolvla     # a policy family's environment
+pai engine prepare lerobot --accelerator cuda   # pre-provision the worker environment
 pai engine list                                 # show cached environments
 pai engine prune                                # remove environments no engine declares
 ```
@@ -122,27 +112,4 @@ pai engine prune                                # remove environments no engine 
 
 The LeRobot engine packages the native `pretrained_model/` folder with a Runtime manifest. The plugin's Runtime adapter runs LeRobot's own preprocessor, `select_action()`, postprocessor and reset, one step at a time; executable code stays in the installed plugin, not the package.
 
-The plugin supports only policy types whose training, packaging and Runtime inference have been checked: ACT, Diffusion, SmolVLA and Pi0.5. Training, the CLI, export and the Runtime adapter reject other types before any LeRobot code runs; several LeRobot policies load remote code without a pinned revision. Policies that need a different inference loop than `select_action()` are out of scope until checked. Before LeRobot loads a checkpoint's saved processors, each step must be a registered LeRobot step or a class under `lerobot.`, and each state file a `.safetensors` file in the checkpoint.
-
-## Enablements
-
-An engine declares capabilities it has validated for each policy. An enablement that needs different code or dependencies brings its own environment:
-
-```python
-Enablement(
-    name="openvino",
-    provides={"acme_policy": {"export": ("openvino",)}},
-    env=WorkerEnv(..., name="openvino", project=GitProject(upstream, commit, patches=series)),
-)
-```
-
-A capability is offered only after a test passes: for training, the native run uses the expected device and recipe; for export, the package loads through the plugin's Runtime adapter and matches the native model's actions.
-
-Changes are contributed upstream first, and a plugin then pins the upstream release. Until then, an enablement can apply a patch series to a pinned upstream commit:
-
-| Series             | Patches live                                   | Pinned by                                           |
-| ------------------ | ---------------------------------------------- | --------------------------------------------------- |
-| `PublishedPatches` | In another repository at an immutable revision | Per-file SHA-256 digests and the resulting Git tree |
-| `BundledPatches`   | In the plugin, reviewed in this repository     | Digests computed from the files; optional tree pin  |
-
-Runtime applies patches with `git am` to a clean cached checkout only, never to a user's checkout or a model package. Moving the same patches between repositories keeps the environment's identity. Applying another team's patches requires SDL and license review.
+The plugin supports only policy types whose training, packaging and Runtime inference have been checked: ACT, Diffusion, SmolVLA and Pi0.5. Training, the CLI, export, the worker, and the Runtime adapter reject other types before any LeRobot code runs; several LeRobot policies load remote code without a pinned revision. Before LeRobot loads a checkpoint's saved processors, each step must be a registered LeRobot step or a class under `lerobot.`, and each state file a `.safetensors` file in the checkpoint.

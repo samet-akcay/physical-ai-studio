@@ -3757,12 +3757,14 @@ train = [
 requires-dist = [
     { name = "diffusers", specifier = ">=0.38.0" },
     { name = "lerobot", extras = ["dataset"], specifier = ">=0.7,<0.8" },
+    { name = "lerobot", extras = ["pi"], marker = "extra == 'pi'", specifier = ">=0.7,<0.8" },
+    { name = "lerobot", extras = ["smolvla"], marker = "extra == 'smolvla'", specifier = ">=0.7,<0.8" },
     { name = "lerobot", extras = ["training"], marker = "extra == 'train'" },
     { name = "physicalai", git = "https://github.com/n3puiol/physicalai.git?rev=08f33c6b442ab17b8537769f816fbe41d15e5bcf" },
     { name = "physicalai-train", marker = "extra == 'train'", editable = "." },
     { name = "pytest", marker = "extra == 'tests'", specifier = ">=9.0.3" },
 ]
-provides-extras = ["train", "tests"]
+provides-extras = ["train", "smolvla", "pi", "tests"]
 
 [[package]]
 name = "physicalai-train"

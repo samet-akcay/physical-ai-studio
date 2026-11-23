@@ -24,11 +24,6 @@ def build_parser() -> ArgumentParser:
     parser = ArgumentParser(prog="physicalai engine", description=HELP)
     parser.add_argument("action", choices=("prepare", "list", "prune"))
     parser.add_argument("framework", nargs="?", help="Engine identifier required by 'prepare'.")
-    parser.add_argument("--enablement", help="Prepare an enablement's environment instead of the engine's own.")
-    parser.add_argument(
-        "--policy",
-        help="Prepare the environment that trains this policy type (falls back to the engine's own).",
-    )
     parser.add_argument(
         "--accelerator",
         choices=("auto", "cpu", "cuda", "cu128", "cu132", "xpu"),
@@ -46,8 +41,7 @@ def run(parser: ArgumentParser, cfg: Namespace) -> int:
         Zero after a successful command.
 
     Raises:
-        ValueError: If ``prepare`` has no engine name, ``--policy`` names a policy the engine does not
-            provide, or the selected engine has no worker environment.
+        ValueError: If ``prepare`` has no engine name or the selected engine has no worker environment.
     """
     del parser
     if cfg.action == "prepare":
@@ -55,20 +49,9 @@ def run(parser: ArgumentParser, cfg: Namespace) -> int:
             msg = "physicalai engine prepare requires an engine name."
             raise ValueError(msg)
         engine_class = Engine.get(cfg.framework)
-        enablement = getattr(cfg, "enablement", None)
-        policy = getattr(cfg, "policy", None)
-        if enablement is not None and policy is not None:
-            msg = "Choose either --enablement or --policy, not both."
-            raise ValueError(msg)
-        if enablement is not None:
-            env = engine_class.environment(enablement)
-        else:
-            if policy is not None and policy not in (known := engine_class.policies()):
-                msg = f"{engine_class.framework} has no policy {policy!r}; choose one of: {', '.join(sorted(known))}."
-                raise ValueError(msg)
-            env = engine_class.environment_for_policy(policy)
-        python = prepare(env, cfg.accelerator, offline=cfg.offline)
-        print(f"Prepared {engine_class.framework} {getattr(env, 'name', 'default')} worker environment: {python}")  # noqa: T201
+        env = engine_class.environment()
+        prepared = prepare(env, cfg.accelerator, offline=cfg.offline)
+        print(f"Prepared {engine_class.framework} worker environment: {prepared.python}")  # noqa: T201
         return 0
 
     if cfg.action == "list":
@@ -93,12 +76,12 @@ def run(parser: ArgumentParser, cfg: Namespace) -> int:
 def print_help(prog: str) -> None:
     """Print concise command help without preparing any engine environment."""
     print(  # noqa: T201
-        f"usage: {prog} <prepare|list|prune> [framework] [--enablement NAME | --policy TYPE] [--accelerator NAME]"
-        " [--offline]\n\n"
+        f"usage: {prog} <prepare|list|prune> [framework] [--accelerator NAME] [--offline]\n\n"
         f"{HELP}\n\n"
         "Examples:\n"
         "  physicalai engine prepare lerobot --accelerator xpu\n"
-        "  physicalai engine prepare lerobot --policy smolvla --accelerator cuda",
+        "  physicalai engine list\n"
+        "  physicalai engine prune",
     )
 
 

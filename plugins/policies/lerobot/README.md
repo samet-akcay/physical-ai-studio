@@ -12,6 +12,14 @@ uv sync --extra cu132 --extra lerobot
 
 Use `--extra cpu` or `--extra xpu` instead when appropriate. This host extra controls host-side PyTorch and first-party training; it does not select LeRobot's managed worker. The worker has its own locked CPU, CUDA 13.2 (`cu132`), and XPU torch variants and follows LeRobot's native device selection.
 
+For robot deployments without `physicalai-train`, install the plugin with any policy-specific Runtime extras needed for inference (`act` and `diffusion` are covered by the base install):
+
+```bash
+uv pip install physicalai-lerobot-policy-plugin           # ACT, Diffusion
+uv pip install "physicalai-lerobot-policy-plugin[smolvla]" # SmolVLA
+uv pip install "physicalai-lerobot-policy-plugin[pi]"      # Pi0.5
+```
+
 ## Native CLI
 
 `pai train lerobot` passes native arguments to LeRobot's `lerobot-train` command. The worker's standard output, standard error, and exit code are passed through unchanged:

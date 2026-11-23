@@ -23,7 +23,7 @@ from packaging.version import InvalidVersion, Version
 
 from physicalai import isolate
 
-from ._environment import locked_version, prepare_environment, supported_versions
+from ._environment import locked_version, prepare, supported_versions
 from ._types import Run, TrainHooks, TrainingCancelledError, WorkerEnv
 
 if TYPE_CHECKING:
@@ -192,11 +192,10 @@ def run_worker(
     entrypoint = worker if worker is not None else env.worker
     isolate_prepared: isolate.PreparedEnvironment | None = None
     if interpreter is None:
-        prepared = prepare_environment(env, accelerator)
-        isolate_prepared = prepared.isolate
-        variables["PHYSICALAI_WORKER_PROJECT"] = str(prepared.project)
+        isolate_prepared = prepare(env, accelerator)
+        variables["PHYSICALAI_WORKER_PROJECT"] = str(isolate_prepared.project)
         if expected_version is None:
-            expected_version = locked_version(env, prepared.project)
+            expected_version = locked_version(env, isolate_prepared.project)
     else:
         python = Path(interpreter).expanduser()
     expected = Version(str(expected_version)) if expected_version is not None else None
@@ -258,8 +257,6 @@ def _run_process(
     try:
         return_code = _wait_for_worker(state)
     finally:
-        if state.process.poll() is None:
-            _stop_process(state.process)
         _close_worker(state)
     return _worker_result(state, return_code)
 
@@ -337,12 +334,15 @@ def _wait_for_worker(state: _WorkerState) -> int:
 
 
 def _close_worker(state: _WorkerState) -> None:
-    if state.process.stdin is not None:
-        # Closing flushes any control message the worker exited before reading.
-        try:
-            state.process.stdin.close()
-        except BrokenPipeError:
-            logger.debug("Worker exited before reading its last control message.")
+    if isinstance(state.process, isolate.Session):
+        if state.process.poll() is None:
+            state.process.close()
+        else:
+            _close_stdin(state.process)
+    else:
+        if state.process.poll() is None:
+            _stop_process(state.process)
+        _close_stdin(state.process)
     for thread in state.threads:
         thread.join(timeout=1.0)
     state.protocol_reader_stop.set()
@@ -354,6 +354,15 @@ def _close_worker(state: _WorkerState) -> None:
         for stream in (state.process.stdout, state.process.stderr):
             if stream is not None:
                 stream.close()
+
+
+def _close_stdin(process: isolate.Session | subprocess.Popen[bytes]) -> None:
+    if process.stdin is None:
+        return
+    try:
+        process.stdin.close()
+    except BrokenPipeError:
+        logger.debug("Worker exited before reading its last control message.")
 
 
 def _worker_result(state: _WorkerState, return_code: int) -> Run:

@@ -5,20 +5,15 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
+
+from physicalai import isolate
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
     from importlib.resources.abc import Traversable  # nosemgrep  # Python 3.10+ only.
     from pathlib import Path
-
-    from packaging.specifiers import SpecifierSet
-    from packaging.version import Version
-
-    from ._sources import ProjectSource
 
 
 class TrainingCancelledError(RuntimeError):
@@ -55,39 +50,16 @@ class Capabilities:
 
     training_accelerators: tuple[str, ...] = ()
     export_formats: tuple[str, ...] = ()
-    enablements: tuple[str, ...] = ()
-
-
-@dataclass(frozen=True)
-class Enablement:
-    """Validated capabilities that an engine adds beyond its stock framework.
-
-    An enablement that needs different framework code or dependencies declares
-    its own :class:`WorkerEnv` in ``env``; for example, an upstream checkout with
-    a verified downstream patch series. Capabilities are listed only after they
-    pass validation.
-
-    Attributes:
-        name: Enablement identifier, unique within its engine.
-        provides: Per-policy operations and formats, such as ``{"act": {"export": ("openvino",)}}``.
-        upstream: Human-readable reference of the code providing the capability.
-        env: Worker environment providing the capability, if it differs from the engine's.
-    """
-
-    name: str
-    provides: Mapping[str, Mapping[str, tuple[str, ...]]] = field(default_factory=dict)
-    upstream: str | None = None
-    env: WorkerEnv | None = None
 
 
 @dataclass(frozen=True)
 class WorkerEnv:
-    """Locked, isolated Python project used by an engine worker.
+    """Thin Engine descriptor over a ``physicalai.isolate.Environment``.
 
-    ``project`` is a :class:`~physicalai.engine.ProjectSource`, or a directory
-    containing ``pyproject.toml`` and ``uv.lock`` (shorthand for
-    :class:`~physicalai.engine.BundledProject`). ``worker`` is the default
-    standard-library-compatible script executed by the environment's interpreter.
+    ``project`` is a :class:`physicalai.isolate.ProjectSource`, or a directory
+    containing ``pyproject.toml`` and ``uv.lock`` (wrapped as
+    :class:`physicalai.isolate.BundledProject`). ``worker`` is the default
+    standard-library-compatible script executed inside the isolated environment.
 
     Attributes:
         framework: Engine identifier that owns the environment.
@@ -96,14 +68,14 @@ class WorkerEnv:
         distribution: Plugin distribution that declares the environment.
         package: Framework distribution installed in the environment; workers report its version.
         accelerators: Accelerator profiles the environment supports.
-        name: Environment name, unique within its framework. Enablements use their own names.
+        name: Environment name, unique within its framework.
         python: Python version requested from uv, or ``None`` to follow the project.
         extras: uv extras per accelerator profile, for example ``{"cuda": ("cu132",)}``. Without it,
             a profile installs the extra named like the declared profile.
     """
 
     framework: str
-    project: Path | Traversable | ProjectSource
+    project: Path | Traversable | isolate.ProjectSource
     worker: Path | Traversable
     distribution: str
     package: str
@@ -113,13 +85,11 @@ class WorkerEnv:
     extras: Mapping[str, tuple[str, ...]] | None = field(default=None, hash=False)
 
     @property
-    def source(self) -> ProjectSource:
-        """The project source, wrapping a plain directory as a bundled project."""
-        from ._sources import BundledProject, ProjectSource  # ruff: ignore[import-outside-top-level]  # Avoid an import cycle.
-
-        if isinstance(self.project, ProjectSource):
+    def source(self) -> isolate.ProjectSource:
+        """The Runtime isolation project source."""
+        if isinstance(self.project, isolate.ProjectSource):
             return self.project
-        return BundledProject(self.project)
+        return isolate.BundledProject(self.project)
 
     def extras_for(self, accelerator: str) -> tuple[str, ...]:
         """Return the uv extras that select *accelerator*.
@@ -140,45 +110,21 @@ class WorkerEnv:
                 return tuple(extras)
         return ()
 
-    def key(self) -> str:
-        """Hash every input that determines the environment's contents.
+    def to_isolate(self, accelerator: str = "auto") -> isolate.Environment:
+        """Build the ``physicalai.isolate.Environment`` for *accelerator*.
 
         Returns:
-            Hexadecimal SHA-256 key.
+            Runtime isolation environment with the resolved Python and uv extras.
         """
-        identity = {
-            "format": 2,
-            "framework": self.framework,
-            "name": self.name,
-            "python": self.python,
-            "extras": {accelerator: list(self.extras_for(accelerator)) for accelerator in sorted(self.accelerators)},
-            "source": self.source.identity(),
-        }
-        payload = json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("utf-8")
-        return hashlib.sha256(payload).hexdigest()
+        from ._environment import resolve_accelerator  # ruff: ignore[import-outside-top-level]  # Lazy to avoid an import cycle.
 
-    def supported(self) -> SpecifierSet | None:
-        """Return the package range declared by the plugin, if any."""
-        from ._environment import supported_versions  # ruff: ignore[import-outside-top-level]  # Lazy to avoid an import cycle.
-
-        return supported_versions(self)
-
-    def pinned(self) -> Version:
-        """Return the exact package version from a bundled worker lock."""
-        from ._environment import locked_version  # ruff: ignore[import-outside-top-level]  # Lazy to avoid an import cycle.
-
-        return locked_version(self)
-
-    def lock_hash(self) -> str:
-        """Return the SHA-256 digest of a bundled worker lock."""
-        from ._environment import lock_hash  # ruff: ignore[import-outside-top-level]  # Lazy to avoid an import cycle.
-
-        return lock_hash(self)
+        selected = resolve_accelerator(accelerator, allowed=self.accelerators)
+        profile = isolate.SyncProfile(python=self.python, extras=self.extras_for(selected))
+        return isolate.Environment(source=self.source, profile=profile)
 
 
 __all__ = [
     "Capabilities",
-    "Enablement",
     "Run",
     "TrainHooks",
     "TrainingCancelledError",

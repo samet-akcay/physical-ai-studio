@@ -90,18 +90,9 @@ def test_worker_runner_launches_managed_entrypoints_through_runtime_isolate(
     python = root / "venv" / "bin" / "python"
     python.parent.mkdir(parents=True)
     python.symlink_to(sys.executable)
-    declaration = _environment.to_isolate_environment(env, "cpu")
+    declaration = env.to_isolate("cpu")
     isolated = isolate.PreparedEnvironment(path=root, key=declaration.key(), profile=declaration.profile)
-    engine_prepared = _environment.PreparedEnvironment(
-        framework=env.framework,
-        name=env.name,
-        accelerator="cpu",
-        key=env.key(),
-        distribution=env.distribution,
-        path=root,
-        _isolate=isolated,
-    )
-    monkeypatch.setattr(_runner, "prepare_environment", lambda *_args: engine_prepared)
+    monkeypatch.setattr(_runner, "prepare", lambda *_args: isolated)
     real_start = isolate.start
     calls: list[tuple[object, object, tuple[str, ...]]] = []
 

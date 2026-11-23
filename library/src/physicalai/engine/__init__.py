@@ -5,45 +5,28 @@
 
 Engine classes are discovered lazily from the ``physicalai.engines`` entry
 point group. Every engine packages models for Runtime; :class:`TrainingEngine`
-subclasses also train. Worker environments are declared as :class:`WorkerEnv`
-values built from a bundled project or a pinned Git checkout with optional
-patch series that are bundled with the plugin or published elsewhere. Importing this module does not import Lightning,
-LeRobot, PyTorch, or Runtime inference adapters.
+subclasses also train. Worker environments delegate isolation, caching, and
+process launch to ``physicalai.isolate``. Importing this module does not import
+Lightning, LeRobot, PyTorch, or Runtime inference adapters.
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from types import MappingProxyType
 from typing import TYPE_CHECKING, ClassVar, Literal, overload
 
 from . import _registry
 from ._environment import (
-    PreparedEnvironment,
-    engine_cache_root,
-    interpreter_for,
+    CachedEnvironment,
     list_prepared,
     locked_version,
     prepare,
-    prepare_environment,
     prune,
-    prune_prepared,
     resolve_accelerator,
-    scripts_dir,
     supported_versions,
-    to_isolate_environment,
 )
 from ._runner import run_worker
-from ._sources import (
-    BundledPatches,
-    BundledProject,
-    GitProject,
-    PatchFile,
-    PatchSeries,
-    ProjectSource,
-    PublishedPatches,
-)
-from ._types import Capabilities, Enablement, Run, TrainHooks, TrainingCancelledError, WorkerEnv
+from ._types import Capabilities, Run, TrainHooks, TrainingCancelledError, WorkerEnv
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -60,19 +43,11 @@ class Engine(ABC):
     """Common contract for one framework or model repository.
 
     Every engine packages models for Runtime and reports what it provides.
-    Engines that also train subclass :class:`TrainingEngine`. Capabilities that
-    need different framework code, such as a patched export path, are declared
-    as :class:`Enablement` entries, each optionally with its own environment.
-
-    Policies whose dependencies differ from the engine's default environment map
-    to their own locked environment in ``policy_envs``. Several policies may share
-    one environment; every other policy uses ``env``.
+    Engines that also train subclass :class:`TrainingEngine`.
     """
 
     framework: ClassVar[str]
     env: ClassVar[WorkerEnv | None] = None
-    policy_envs: ClassVar[Mapping[str, WorkerEnv]] = MappingProxyType({})
-    enablements: ClassVar[tuple[Enablement, ...]] = ()
     stock_export_formats: ClassVar[tuple[str, ...]] = ()
 
     @classmethod
@@ -92,70 +67,31 @@ class Engine(ABC):
 
     @classmethod
     def environments(cls) -> tuple[WorkerEnv, ...]:
-        """Return the engine's own, per-policy, and enablement environments.
-
-        A policy environment shared by several policies, or equal to the engine's own,
-        is listed once.
+        """Return the worker environments declared by this engine.
 
         Returns:
-            Declared worker environments.
+            A one-element tuple containing ``env`` when managed, else an empty tuple.
+        """
+        return (cls.env,) if cls.env is not None else ()
+
+    @classmethod
+    def environment(cls) -> WorkerEnv:
+        """Return the engine's managed worker environment.
+
+        Returns:
+            The declared worker environment.
 
         Raises:
-            ValueError: If two environments share a name.
+            ValueError: If the engine does not use a managed worker environment.
         """
-        declared = [cls.env] if cls.env is not None else []
-        for env in cls.policy_envs.values():
-            if env not in declared:
-                declared.append(env)
-        declared.extend(enablement.env for enablement in cls.enablements if enablement.env is not None)
-        names = [env.name for env in declared]
-        if len(names) != len(set(names)):
-            msg = f"Engine {cls.framework!r} declares duplicate environment names: {names}."
+        if cls.env is None:
+            msg = f"Engine {cls.framework!r} does not use a managed worker environment."
             raise ValueError(msg)
-        return tuple(declared)
-
-    @classmethod
-    def environment_for_policy(cls, policy: str | None) -> WorkerEnv:
-        """Return the worker environment that trains *policy*.
-
-        Like :meth:`environment`, this raises ``ValueError`` when neither the policy nor the
-        engine declares an environment.
-
-        Args:
-            policy: Native policy type, or ``None`` when it is not known.
-
-        Returns:
-            The policy's own environment when declared, otherwise the engine's.
-        """
-        if policy is not None and policy in cls.policy_envs:
-            return cls.policy_envs[policy]
-        return cls.environment()
-
-    @classmethod
-    def environment(cls, name: str | None = None) -> WorkerEnv:
-        """Return the engine's environment, or the environment of enablement *name*.
-
-        Returns:
-            The selected worker environment.
-
-        Raises:
-            ValueError: If the engine or enablement declares no such environment.
-        """
-        if name is None:
-            if cls.env is None:
-                msg = f"Engine {cls.framework!r} does not use a managed worker environment."
-                raise ValueError(msg)
-            return cls.env
-        for enablement in cls.enablements:
-            if enablement.name == name and enablement.env is not None:
-                return enablement.env
-        available = ", ".join(enablement.name for enablement in cls.enablements if enablement.env is not None)
-        msg = f"Engine {cls.framework!r} has no enablement environment {name!r}. Available: {available or '<none>'}."
-        raise ValueError(msg)
+        return cls.env
 
     @classmethod
     def capabilities(cls, policy: str) -> Capabilities:
-        """Return stock and validated enablement capabilities for *policy*.
+        """Return training accelerators and export formats supported for *policy*.
 
         Training accelerators are reported only by :class:`TrainingEngine` subclasses.
 
@@ -166,27 +102,14 @@ class Engine(ABC):
             msg = f"Unknown {cls.framework} policy {policy!r}."
             raise ValueError(msg)
 
-        trains = issubclass(cls, TrainingEngine)
         accelerators: set[str] = set()
-        if trains:
+        if issubclass(cls, TrainingEngine):
             accelerators.update(getattr(cls, "training_accelerators", ()))
-            policy_env = cls.policy_envs.get(policy, cls.env)
-            if policy_env is not None:
-                accelerators.update(policy_env.accelerators)
-        export_formats = set(cls.stock_export_formats)
-        active_enablements: list[str] = []
-        for enablement in cls.enablements:
-            provides = enablement.provides.get(policy)
-            if provides is None:
-                continue
-            if trains:
-                accelerators.update(provides.get("train", ()))
-            export_formats.update(provides.get("export", ()))
-            active_enablements.append(enablement.name)
+            if cls.env is not None:
+                accelerators.update(cls.env.accelerators)
         return Capabilities(
             training_accelerators=tuple(sorted(accelerators)),
-            export_formats=tuple(sorted(export_formats)),
-            enablements=tuple(sorted(active_enablements)),
+            export_formats=tuple(sorted(cls.stock_export_formats)),
         )
 
     @overload
@@ -221,7 +144,7 @@ class Engine(ABC):
         """Instantiate the engine registered as *name*.
 
         Returns:
-            An instance of the selected engine. Prefer its concrete class for static option checking.
+            An instance of the selected engine.
         """
         engine_class = cls.get(name)
         return engine_class(**options)
@@ -304,33 +227,19 @@ class TrainingEngine(Engine):
 
 
 __all__ = [
-    "BundledPatches",
-    "BundledProject",
+    "CachedEnvironment",
     "Capabilities",
-    "Enablement",
     "Engine",
-    "GitProject",
-    "PatchFile",
-    "PatchSeries",
-    "PreparedEnvironment",
-    "ProjectSource",
-    "PublishedPatches",
     "Run",
     "TrainHooks",
     "TrainingCancelledError",
     "TrainingEngine",
     "WorkerEnv",
-    "engine_cache_root",
-    "interpreter_for",
     "list_prepared",
     "locked_version",
     "prepare",
-    "prepare_environment",
     "prune",
-    "prune_prepared",
     "resolve_accelerator",
     "run_worker",
-    "scripts_dir",
     "supported_versions",
-    "to_isolate_environment",
 ]

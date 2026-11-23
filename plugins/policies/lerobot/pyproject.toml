@@ -22,6 +22,8 @@ train = [
     "physicalai-train>=0.3.0",
     "lerobot[training]",
 ]
+smolvla = ["lerobot[smolvla]>=0.7,<0.8"]
+pi = ["lerobot[pi]>=0.7,<0.8"]
 tests = ["pytest>=9.0.3"]
 
 [project.entry-points."physicalai.engines"]

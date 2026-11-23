@@ -8,11 +8,11 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from jsonargparse import ArgumentParser, Namespace
+from physicalai import isolate
 
 from physicalai.cli import engine as engine_cli
 from physicalai.cli import train as train_cli
-from physicalai.engine import Engine, TrainingEngine, WorkerEnv
+from physicalai.engine import CachedEnvironment, Engine, TrainingEngine, WorkerEnv
 
 
 def test_train_parser_keeps_native_device_arguments_opaque() -> None:
@@ -52,7 +52,7 @@ def test_train_dispatch_returns_the_framework_native_exit_code(monkeypatch: pyte
     )
 
     assert train_cli.run(parser, cfg) == 23
-    assert events == [( ("--policy.device", "cuda", "--steps=2"), Path("python-custom"))]
+    assert events == [(("--policy.device", "cuda", "--steps=2"), Path("python-custom"))]
 
 
 def test_engine_prepare_uses_the_registered_engines_locked_environment(
@@ -72,9 +72,9 @@ def test_engine_prepare_uses_the_registered_engines_locked_environment(
     calls: list[tuple[object, str, bool]] = []
     monkeypatch.setattr(Engine, "get", classmethod(lambda cls, name: _FakeEngine))
 
-    def fake_prepare(current: WorkerEnv, accelerator: str, *, offline: bool) -> Path:
+    def fake_prepare(current: WorkerEnv, accelerator: str, *, offline: bool) -> isolate.PreparedEnvironment:
         calls.append((current, accelerator, offline))
-        return tmp_path / "python"
+        return isolate.PreparedEnvironment(path=tmp_path, key="abcd", profile=isolate.SyncProfile())
 
     monkeypatch.setattr(engine_cli, "prepare", fake_prepare)
     parser = engine_cli.build_parser()
@@ -85,18 +85,14 @@ def test_engine_prepare_uses_the_registered_engines_locked_environment(
 
 
 def test_engine_list_and_prune_use_core_environment_registry(monkeypatch: pytest.MonkeyPatch) -> None:
-    listed = type(
-        "PreparedEnvironment",
-        (),
-        {
-            "framework": "lerobot",
-            "name": "default",
-            "accelerator": "cpu",
-            "key": "abcd12345678",
-            "size_bytes": 1024,
-            "path": Path("/cache/lerobot"),
-        },
-    )()
+    listed = CachedEnvironment(
+        framework="lerobot",
+        name="default",
+        accelerator="cpu",
+        key="abcd12345678",
+        size_bytes=1024,
+        path=Path("/cache/lerobot"),
+    )
     removed = [Path("/cache/old")]
     monkeypatch.setattr(engine_cli, "list_prepared", lambda: [listed])
     monkeypatch.setattr(engine_cli, "prune", lambda: removed)
@@ -118,79 +114,3 @@ def test_train_rejects_engines_that_only_package_models(monkeypatch: pytest.Monk
 
     with pytest.raises(ValueError, match="does not train"):
         train_cli.run(parser, parser.parse_args(["export-only", "--help"]))
-
-
-def test_engine_prepare_selects_an_enablement_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    from physicalai.engine import Enablement
-
-    base = WorkerEnv(framework="demo", project=tmp_path, worker=tmp_path / "w.py", distribution="d", package="p")
-    patched = WorkerEnv(
-        framework="demo",
-        name="openvino",
-        project=tmp_path,
-        worker=tmp_path / "w.py",
-        distribution="d",
-        package="p",
-    )
-
-    class _Demo(Engine):
-        framework = "demo"
-        env = base
-        enablements = (Enablement(name="openvino", env=patched),)
-
-    calls: list[WorkerEnv] = []
-
-    def prepare(env: WorkerEnv, accelerator: str, *, offline: bool) -> Path:
-        del accelerator, offline
-        calls.append(env)
-        return tmp_path
-
-    monkeypatch.setattr(Engine, "get", classmethod(lambda cls, name: _Demo))
-    monkeypatch.setattr(engine_cli, "prepare", prepare)
-    parser = engine_cli.build_parser()
-
-    assert engine_cli.run(parser, parser.parse_args(["prepare", "demo", "--enablement", "openvino"])) == 0
-    assert calls == [patched]
-    with pytest.raises(ValueError, match="no enablement environment 'missing'"):
-        engine_cli.run(parser, parser.parse_args(["prepare", "demo", "--enablement", "missing"]))
-
-
-def test_engine_prepare_selects_a_policy_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    base = WorkerEnv(framework="demo", project=tmp_path, worker=tmp_path / "w.py", distribution="d", package="p")
-    smol = WorkerEnv(
-        framework="demo",
-        name="smol",
-        project=tmp_path / "smol",
-        worker=tmp_path / "w.py",
-        distribution="d",
-        package="p",
-    )
-
-    class _Demo(Engine):
-        framework = "demo"
-        env = base
-        policy_envs = {"smolvla": smol}  # noqa: RUF012
-
-        @classmethod
-        def policies(cls) -> list[str]:
-            return ["act", "smolvla"]
-
-    calls: list[WorkerEnv] = []
-
-    def prepare(env: WorkerEnv, accelerator: str, *, offline: bool) -> Path:
-        del accelerator, offline
-        calls.append(env)
-        return tmp_path
-
-    monkeypatch.setattr(Engine, "get", classmethod(lambda cls, name: _Demo))
-    monkeypatch.setattr(engine_cli, "prepare", prepare)
-    parser = engine_cli.build_parser()
-
-    assert engine_cli.run(parser, parser.parse_args(["prepare", "demo", "--policy", "smolvla"])) == 0
-    assert engine_cli.run(parser, parser.parse_args(["prepare", "demo", "--policy", "act"])) == 0
-    assert calls == [smol, base]
-    with pytest.raises(ValueError, match="either --enablement or --policy"):
-        engine_cli.run(parser, parser.parse_args(["prepare", "demo", "--policy", "smolvla", "--enablement", "x"]))
-    with pytest.raises(ValueError, match=r"demo has no policy 'smol_vla'; choose one of: act, smolvla"):
-        engine_cli.run(parser, parser.parse_args(["prepare", "demo", "--policy", "smol_vla"]))
-    assert calls == [smol, base]

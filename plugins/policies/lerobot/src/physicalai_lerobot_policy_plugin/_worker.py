@@ -39,49 +39,50 @@ def _send(message: dict[str, object]) -> None:
         payload = payload[os.write(file_descriptor, payload) :]
 
 
+def _read_control_message(timeout: float) -> str | None:
+    """Wait up to *timeout* seconds for one JSON control line on stdin.
+
+    Returns:
+        The control message ``type`` string, ``"closed"`` on EOF/error, or ``None`` on timeout/noise.
+    """
+    try:
+        readable, _, _ = select.select([sys.stdin], [], [], timeout)
+    except (OSError, ValueError):
+        return "closed"
+    if not readable:
+        return None
+    line = sys.stdin.buffer.readline()
+    if not line:
+        return "closed"
+    try:
+        control = json.loads(line)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if isinstance(control, dict) and isinstance(control.get("type"), str):
+        return str(control["type"])
+    return None
+
+
 def _wait_for_host_acknowledgement() -> str:
     """Block until the host accepts the handshake, so a rejected worker never starts training.
 
     Returns:
-        ``"ack"`` when accepted, ``"cancel"`` when the host cancelled, or ``"closed"`` when the
-        host closed standard input or did not answer in time.
+        ``"ack"`` when accepted, ``"cancel"`` when cancelled, or ``"closed"`` on EOF/timeout.
     """
     deadline = time.monotonic() + _ACK_TIMEOUT_SECONDS
     while (remaining := deadline - time.monotonic()) > 0:
-        try:
-            readable, _, _ = select.select([sys.stdin], [], [], min(remaining, 0.5))
-        except (OSError, ValueError):
-            return "closed"
-        if not readable:
-            continue
-        line = sys.stdin.buffer.readline()
-        if not line:
-            return "closed"
-        try:
-            control = json.loads(line)
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            continue
-        if isinstance(control, dict) and control.get("type") in {"ack", "cancel"}:
-            return str(control["type"])
+        message = _read_control_message(min(remaining, 0.5))
+        if message in {"ack", "cancel", "closed"}:
+            return message
     return "closed"
 
 
 def _listen_for_cancellation() -> None:
     while not _CANCEL_LISTENER_STOP.is_set():
-        try:
-            readable, _, _ = select.select([sys.stdin], [], [], 0.1)
-        except (OSError, ValueError):
+        message = _read_control_message(0.1)
+        if message == "closed":
             return
-        if not readable:
-            continue
-        line = sys.stdin.buffer.readline()
-        if not line:
-            return
-        try:
-            control = json.loads(line)
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            continue
-        if isinstance(control, dict) and control.get("type") == "cancel":
+        if message == "cancel":
             _CANCEL_EVENT.set()
             return
 
@@ -103,15 +104,30 @@ class _WorkerCancelledError(Exception):
         self.step = step
 
 
+def _allowed_policy_types() -> frozenset[str] | None:
+    raw = os.environ.get("PHYSICALAI_LEROBOT_SUPPORTED_POLICIES")
+    if not raw:
+        return None
+    return frozenset(item.strip() for item in raw.split(",") if item.strip())
+
+
 @contextmanager
 def _capture_config(total_steps: list[int | None]) -> Iterator[list[TrainPipelineConfig]]:
     from lerobot.configs.train import TrainPipelineConfig  # ruff: ignore[import-outside-top-level]
 
     original_validate = TrainPipelineConfig.validate
+    allowed_policies = _allowed_policy_types()
     configs: list[TrainPipelineConfig] = []
 
     def capture(config: TrainPipelineConfig) -> None:
         original_validate(config)
+        if allowed_policies is not None:
+            policy = getattr(config, "policy", None)
+            policy_type = getattr(policy, "type", None)
+            if not isinstance(policy_type, str) or policy_type not in allowed_policies:
+                supported = ", ".join(sorted(allowed_policies))
+                msg = f"LeRobot policy {policy_type!r} is not supported; supported policies: {supported}."
+                raise ValueError(msg)
         configs.append(config)
         steps = getattr(config, "steps", None)
         total_steps[0] = steps if isinstance(steps, int) and not isinstance(steps, bool) else None
@@ -228,25 +244,26 @@ def _run(arguments: list[str]) -> int:
         result = _train_native()
     except _WorkerCancelledError as exc:
         _send({"type": "cancelled", "step": exc.step})
-        return 130
+        exit_code = 130
     except SystemExit as exc:
         code = exc.code if isinstance(exc.code, int) else 1
         if code == 0:
             _send({"type": "result", "output_dir": None, "checkpoint": None})
-            return 0
-        _send({"type": "error", "error": "SystemExit", "message": str(exc.code)})
-        return code
+        else:
+            _send({"type": "error", "error": "SystemExit", "message": str(exc.code)})
+        exit_code = code
     except Exception as exc:  # ruff: ignore[blind-except]  # Send native training failures over the worker protocol.
         _send({"type": "error", "error": type(exc).__name__, "message": str(exc)})
         traceback.print_exc(file=sys.stderr)
-        return 1
+        exit_code = 1
     else:
         _send({"type": "result", **result})
-        return 0
+        exit_code = 0
     finally:
         sys.argv = original_argv
         _CANCEL_LISTENER_STOP.set()
         cancellation_listener.join(timeout=1.0)
+    return exit_code
 
 
 def main() -> int:

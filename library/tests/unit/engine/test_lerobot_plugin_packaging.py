@@ -5,16 +5,15 @@
 
 from __future__ import annotations
 
-from importlib import resources
-from importlib.metadata import distribution, entry_points
 import subprocess
 import sys
 import tomllib
+from importlib import resources
+from importlib.metadata import distribution, entry_points
 
-import pytest
 from packaging.requirements import Requirement
 
-from physicalai.engine._environment import locked_version, supported_versions
+from physicalai.engine import locked_version, supported_versions
 from physicalai_lerobot_policy_plugin.engine import LeRobotEngine
 
 _PLUGIN_DISTRIBUTION = "physicalai-lerobot-policy-plugin"
@@ -39,21 +38,28 @@ def test_lerobot_plugin_owns_engine_and_runtime_adapter_entrypoints() -> None:
     package = resources.files("physicalai_lerobot_policy_plugin")
     assert (package / "env" / "pyproject.toml").is_file()
     assert (package / "env" / "uv.lock").is_file()
+    assert not (package / "envs").is_dir()
 
 
 def test_worker_lock_is_inside_the_range_declared_by_plugin_metadata() -> None:
-    assert locked_version(LeRobotEngine.env) in supported_versions(LeRobotEngine.env)
+    supported = supported_versions(LeRobotEngine.env)
+    assert supported is not None
+    assert locked_version(LeRobotEngine.env) in supported
 
 
-def test_worker_project_has_only_locked_framework_dependencies() -> None:
+def test_worker_project_locks_all_supported_policy_dependencies_without_studio() -> None:
     project = resources.files("physicalai_lerobot_policy_plugin") / "env"
     pyproject = tomllib.loads((project / "pyproject.toml").read_text(encoding="utf-8"))
     lock_text = (project / "uv.lock").read_text(encoding="utf-8")
     lock = tomllib.loads(lock_text)
-    project_dependencies = {item.split("[", maxsplit=1)[0].split(">", maxsplit=1)[0] for item in pyproject["project"]["dependencies"]}
+    project_dependencies = {
+        item.split("[", maxsplit=1)[0].split(">", maxsplit=1)[0] for item in pyproject["project"]["dependencies"]
+    }
     lock_packages = {package["name"] for package in lock["package"]}
 
-    assert {"cpu", "cu132", "xpu"} <= set(pyproject["project"]["optional-dependencies"])
+    assert pyproject["project"]["dependencies"] == ["lerobot[training,diffusion,pi,smolvla]>=0.7,<0.8"]
+    assert set(pyproject["project"]["optional-dependencies"]) == {"cpu", "cu132", "xpu"}
+    assert {"diffusers", "num2words", "scipy", "sentencepiece", "transformers"} <= lock_packages
     assert "physicalai" not in project_dependencies
     assert "physicalai-train" not in project_dependencies
     assert "physicalai" not in lock_packages
@@ -61,37 +67,9 @@ def test_worker_project_has_only_locked_framework_dependencies() -> None:
     assert "https://download.pytorch.org/whl/cpu" in lock_text
     assert "https://download.pytorch.org/whl/cu132" in lock_text
     assert "https://download.pytorch.org/whl/xpu" in lock_text
-
-
-@pytest.mark.parametrize(
-    ("family", "marker_package"),
-    [("smolvla", "num2words"), ("pi", "scipy"), ("molmoact2", "peft")],
-)
-def test_each_policy_family_installs_its_own_extra_of_the_shared_worker_project(family: str, marker_package: str) -> None:
-    """Each family gets its own environment from the one locked project, through its extra."""
-    env = LeRobotEngine.environment_for_policy({"smolvla": "smolvla", "pi": "pi05", "molmoact2": "molmoact2"}[family])
-    project = resources.files("physicalai_lerobot_policy_plugin") / "env"
-    pyproject = tomllib.loads((project / "pyproject.toml").read_text(encoding="utf-8"))
-    lock_packages = {package["name"] for package in tomllib.loads((project / "uv.lock").read_text(encoding="utf-8"))["package"]}
-    families = {"smolvla", "pi", "molmoact2"}
-
-    assert env.name == family
-    assert env.extras_for("cuda") == ("cu132", family)
-    assert env.extras_for("cpu") == ("cpu", family)
+    assert LeRobotEngine.environments() == (LeRobotEngine.env,)
     assert LeRobotEngine.env.extras_for("cuda") == ("cu132",)
-    assert env.key() != LeRobotEngine.env.key()
-    assert locked_version(env) in supported_versions(env)
-    assert pyproject["project"]["optional-dependencies"][family] == [f"lerobot[{family}]>=0.7,<0.8"]
-    assert [{"extra": name} for name in sorted(families)] in [
-        sorted(group, key=lambda item: item["extra"]) for group in pyproject["tool"]["uv"]["conflicts"]
-    ]
-    assert marker_package in lock_packages
-
-
-def test_bundled_worker_projects_share_one_lock() -> None:
-    plugin = resources.files("physicalai_lerobot_policy_plugin")
-    assert not (plugin / "envs").is_dir()
-    assert {env.name for env in LeRobotEngine.environments()} == {"default", "smolvla", "pi", "molmoact2"}
+    assert LeRobotEngine.env.extras_for("cpu") == ("cpu",)
 
 
 def test_runtime_registration_import_does_not_load_the_training_engine() -> None:
@@ -127,9 +105,7 @@ def test_library_lerobot_extra_installs_plugin_train_extra() -> None:
     plugin = distribution(_PLUGIN_DISTRIBUTION)
     plugin_requirements = [Requirement(requirement) for requirement in plugin.requires or []]
     engine_dependency = next(
-        requirement
-        for requirement in plugin_requirements
-        if requirement.name == "physicalai-train"
+        requirement for requirement in plugin_requirements if requirement.name == "physicalai-train"
     )
     assert engine_dependency.marker is not None
     assert engine_dependency.marker.evaluate({"extra": "train"})
@@ -141,3 +117,14 @@ def test_library_lerobot_extra_installs_plugin_train_extra() -> None:
     )
     assert lerobot_training.marker is not None
     assert lerobot_training.marker.evaluate({"extra": "train"})
+
+    for extra_name in ("smolvla", "pi"):
+        extra_dep = next(
+            requirement
+            for requirement in plugin_requirements
+            if requirement.name == "lerobot"
+            and extra_name in requirement.extras
+            and requirement.marker is not None
+            and requirement.marker.evaluate({"extra": extra_name})
+        )
+        assert extra_dep is not None

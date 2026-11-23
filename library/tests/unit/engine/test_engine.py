@@ -14,7 +14,7 @@ from typing import Any, ClassVar
 
 import pytest
 
-from physicalai.engine import Enablement, Engine, Run, TrainHooks, TrainingEngine, WorkerEnv
+from physicalai.engine import Engine, Run, TrainHooks, TrainingEngine, WorkerEnv
 
 
 class _EntryPoint:
@@ -31,15 +31,8 @@ class _EntryPoint:
 class _FakeEngine(TrainingEngine):
     framework: ClassVar[str] = "fake"
     env = None
-    training_accelerators = ("cpu",)
+    training_accelerators = ("cpu", "xpu")
     stock_export_formats = ("native",)
-    enablements: ClassVar[tuple[Enablement, ...]] = (
-        Enablement(
-            name="upstream-xpu",
-            provides={"tiny": {"train": ("xpu",), "export": ("onnx",)}},
-            upstream="pytorch-xpu@2.11.0",
-        ),
-    )
     calls: ClassVar[list[tuple[str, object]]] = []
 
     def __init__(self, *, value: str = "default") -> None:
@@ -86,6 +79,7 @@ class _FakeEngine(TrainingEngine):
     @classmethod
     def config_schema(cls, policy: str) -> dict[str, Any]:
         return {"title": policy, "type": "object"}
+
 
 def test_engine_discovery_lists_entry_points_without_importing_classes(
     monkeypatch: pytest.MonkeyPatch,
@@ -150,7 +144,7 @@ def test_unknown_engine_error_lists_available_entry_points(monkeypatch: pytest.M
         Engine.get("missing")
 
 
-def test_engine_capabilities_combine_stock_and_validated_enablements(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_engine_capabilities_report_accelerators_and_export_formats(monkeypatch: pytest.MonkeyPatch) -> None:
     from physicalai.engine import _registry
 
     monkeypatch.setattr(_registry, "_entry_points", lambda: [_EntryPoint("fake", _FakeEngine)])
@@ -158,8 +152,7 @@ def test_engine_capabilities_combine_stock_and_validated_enablements(monkeypatch
     capabilities = Engine.get("fake").capabilities("tiny")
 
     assert capabilities.training_accelerators == ("cpu", "xpu")
-    assert capabilities.export_formats == ("native", "onnx")
-    assert capabilities.enablements == ("upstream-xpu",)
+    assert capabilities.export_formats == ("native",)
 
 
 def test_run_and_cli_are_framework_class_apis(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -187,9 +180,6 @@ class _ExportOnlyEngine(Engine):
 
     framework: ClassVar[str] = "export-only"
     stock_export_formats = ("native",)
-    enablements: ClassVar[tuple[Enablement, ...]] = (
-        Enablement(name="openvino", provides={"tiny": {"export": ("openvino",), "train": ("xpu",)}}),
-    )
 
     @classmethod
     def export(cls, source: Run | str | Path, output_path: str | Path, backend: str | None = None) -> Path:
@@ -201,100 +191,32 @@ class _ExportOnlyEngine(Engine):
         return ["tiny"]
 
 
-def test_engines_without_training_need_no_training_methods_and_report_none() -> None:
+def test_engines_without_training_need_no_training_methods_and_report_no_accelerators() -> None:
     capabilities = _ExportOnlyEngine.capabilities("tiny")
 
     assert not issubclass(_ExportOnlyEngine, TrainingEngine)
     assert capabilities.training_accelerators == ()
-    assert capabilities.export_formats == ("native", "openvino")
-    assert capabilities.enablements == ("openvino",)
+    assert capabilities.export_formats == ("native",)
 
 
-def test_enablements_can_declare_their_own_environments(tmp_path: Path) -> None:
-    def make_env(name: str) -> WorkerEnv:
-        return WorkerEnv(
-            framework="fake", name=name, project=tmp_path, worker=tmp_path / "w.py", distribution="d", package="p"
-        )
-
-    class _WithEnvironments(_ExportOnlyEngine):
-        framework: ClassVar[str] = "fake"
-        env = make_env("default")
-        enablements: ClassVar[tuple[Enablement, ...]] = (
-            Enablement(name="openvino", env=make_env("openvino")),
-            Enablement(name="metadata-only"),
-        )
-
-    assert [item.name for item in _WithEnvironments.environments()] == ["default", "openvino"]
-    assert _WithEnvironments.environment().name == "default"
-    assert _WithEnvironments.environment("openvino").name == "openvino"
-    with pytest.raises(ValueError, match="no enablement environment 'metadata-only'"):
-        _WithEnvironments.environment("metadata-only")
-
-    class _Duplicate(_WithEnvironments):
-        enablements: ClassVar[tuple[Enablement, ...]] = (Enablement(name="openvino", env=make_env("default")),)
-
-    with pytest.raises(ValueError, match="duplicate environment names"):
-        _Duplicate.environments()
-
-
-def _policy_env(tmp_path: Path, name: str, accelerators: tuple[str, ...] = ("cpu", "cu128", "xpu")) -> WorkerEnv:
-    return WorkerEnv(
+def test_engine_environment_helpers_reflect_declared_worker_env(tmp_path: Path) -> None:
+    worker_env = WorkerEnv(
         framework="fake",
-        name=name,
-        project=tmp_path / name,
+        project=tmp_path,
         worker=tmp_path / "w.py",
         distribution="d",
         package="p",
-        accelerators=accelerators,
+        accelerators=("cpu", "cuda"),
     )
 
+    class _Managed(_FakeEngine):
+        env = worker_env
+        training_accelerators = ()
 
-def test_policies_select_their_own_environment_and_others_use_the_engines(tmp_path: Path) -> None:
-    shared = _policy_env(tmp_path, "pi")
+    assert _Managed.environment() is worker_env
+    assert _Managed.environments() == (worker_env,)
+    assert _Managed.capabilities("tiny").training_accelerators == ("cpu", "cuda")
 
-    class _PerPolicy(_FakeEngine):
-        env = _policy_env(tmp_path, "default")
-        policy_envs: ClassVar[Mapping[str, WorkerEnv]] = {"pi0": shared, "pi05": shared, "smol": _policy_env(tmp_path, "smol")}
-
-    assert _PerPolicy.environment_for_policy("pi05") is shared
-    assert _PerPolicy.environment_for_policy("smol").name == "smol"
-    assert _PerPolicy.environment_for_policy("act").name == "default"
-    assert _PerPolicy.environment_for_policy(None).name == "default"
-    assert [env.name for env in _PerPolicy.environments()] == ["default", "pi", "smol"]
-
-
-def test_policy_environment_equal_to_the_engines_is_listed_once(tmp_path: Path) -> None:
-    default = _policy_env(tmp_path, "default")
-
-    class _MappedToDefault(_FakeEngine):
-        env = default
-        policy_envs: ClassVar[Mapping[str, WorkerEnv]] = {"tiny": default}
-
-    assert _MappedToDefault.environments() == (default,)
-
-
-def test_different_policy_environments_with_one_name_are_rejected(tmp_path: Path) -> None:
-    class _Clash(_FakeEngine):
-        env = _policy_env(tmp_path, "default")
-        policy_envs: ClassVar[Mapping[str, WorkerEnv]] = {"a": _policy_env(tmp_path, "shared"), "b": _policy_env(tmp_path / "other", "shared")}
-
-    with pytest.raises(ValueError, match="duplicate environment names"):
-        _Clash.environments()
-
-
-def test_policy_without_any_environment_is_reported(tmp_path: Path) -> None:
-    class _OnlyPolicyEnv(_FakeEngine):
-        env = None
-        policy_envs: ClassVar[Mapping[str, WorkerEnv]] = {"smol": _policy_env(tmp_path, "smol")}
-
-    assert _OnlyPolicyEnv.environment_for_policy("smol").name == "smol"
+    assert _FakeEngine.environments() == ()
     with pytest.raises(ValueError, match="does not use a managed worker environment"):
-        _OnlyPolicyEnv.environment_for_policy("tiny")
-
-
-def test_capabilities_report_the_policys_own_environment_accelerators(tmp_path: Path) -> None:
-    class _PerPolicy(_FakeEngine):
-        env = _policy_env(tmp_path, "default", accelerators=("cpu",))
-        policy_envs: ClassVar[Mapping[str, WorkerEnv]] = {"tiny": _policy_env(tmp_path, "tiny", accelerators=("cu128",))}
-
-    assert _PerPolicy.capabilities("tiny").training_accelerators == ("cpu", "cu128", "xpu")
+        _FakeEngine.environment()

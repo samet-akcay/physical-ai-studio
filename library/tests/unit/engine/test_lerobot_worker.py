@@ -28,10 +28,12 @@ def _fake_lerobot_worker(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tup
     (fake_site / "lerobot" / "configs" / "__init__.py").write_text("", encoding="utf-8")
     config_module.write_text(
         "from pathlib import Path\n"
+        "from types import SimpleNamespace\n"
         "import os\n"
         "class TrainPipelineConfig:\n"
         "    def __init__(self):\n"
         "        self.steps = 2\n"
+        "        self.policy = SimpleNamespace(type=os.environ.get('FAKE_POLICY_TYPE', 'act'))\n"
         "        self.output_dir = Path(os.environ['FAKE_RUN_OUTPUT'])\n"
         "    def validate(self):\n"
         "        return None\n",
@@ -143,5 +145,25 @@ def test_native_worker_waits_for_the_host_to_accept_its_handshake(
 
     with pytest.raises(WorkerProtocolError):
         run_worker(env, [], device="cpu", interpreter=sys.executable, expected_version=Version("9.9.9"))
+
+    assert not output_dir.exists()
+
+
+def test_native_worker_rejects_unsupported_policy_type_after_config_validation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Even if a config file resolves to an unreviewed policy, the worker stops before training."""
+    env, output_dir = _fake_lerobot_worker(monkeypatch, tmp_path)
+    monkeypatch.setenv("FAKE_POLICY_TYPE", "groot")
+
+    with pytest.raises(RuntimeError, match="LeRobot policy 'groot' is not supported"):
+        run_worker(
+            env,
+            [],
+            device="cpu",
+            interpreter=sys.executable,
+            extra_env={"PHYSICALAI_LEROBOT_SUPPORTED_POLICIES": "act,diffusion,pi05,smolvla"},
+        )
 
     assert not output_dir.exists()
