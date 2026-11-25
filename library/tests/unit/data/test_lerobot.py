@@ -136,6 +136,37 @@ class FakeLeRobotDataset_no_task_or_image:
         }
 
 
+class _ListResultDataset:
+    """Simulate a LeRobot dataset returning a slice for an integer index."""
+
+    def __init__(self) -> None:
+        self._dataset = FakeLeRobotDataset()
+
+    def __len__(self) -> int:
+        return len(self._dataset)
+
+    def __getitem__(self, idx: int) -> list[dict]:
+        """Return a slice-like list instead of one frame."""
+        return [self._dataset[idx]]
+
+    @property
+    def features(self) -> dict[str, dict]:
+        """Expose the wrapped mock feature metadata."""
+        return self._dataset.features
+
+    @property
+    def meta(self):
+        """Expose the wrapped mock metadata."""
+        return self._dataset.meta
+
+
+def test_integer_index_rejects_a_slice_result() -> None:
+    dataset = _LeRobotDatasetAdapter.from_lerobot(_ListResultDataset())
+
+    with pytest.raises(TypeError, match="multiple frames"):
+        dataset[0]
+
+
 @pytest.mark.parametrize(
     "dataset_cls",
     [FakeLeRobotDataset, FakeLeRobotDataset2, FakeLeRobotDataset_no_task_or_image],
@@ -372,3 +403,16 @@ def test_import_does_not_load_lerobot_policy_factory():
     )
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr
+
+
+def test_tasks_ordered_by_task_index():
+    """Dataset tasks come from LeRobot metadata, ordered by task index."""
+    from types import SimpleNamespace
+
+    import pandas as pd
+
+    raw = SimpleNamespace(meta=SimpleNamespace(tasks=pd.DataFrame({"task_index": [1, 0]}, index=["place", "pick"])))
+    assert _LeRobotDatasetAdapter.from_lerobot(raw).tasks == ["pick", "place"]
+
+    raw.meta.tasks = None
+    assert _LeRobotDatasetAdapter.from_lerobot(raw).tasks == []

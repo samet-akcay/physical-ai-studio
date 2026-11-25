@@ -212,8 +212,14 @@ class _LeRobotDatasetAdapter(Dataset):
 
         Returns:
             Observation: The item from the dataset.
+
+        Raises:
+            TypeError: If the underlying dataset returns multiple frames for an integer index.
         """
         item = self._lerobot_dataset[idx]
+        if not isinstance(item, dict):
+            msg = "LeRobotDataset returned multiple frames for an integer index."
+            raise TypeError(msg)
         item = self._combine_split_columns(item)
         return FormatConverter.to_observation(item)
 
@@ -363,6 +369,12 @@ class _LeRobotDatasetAdapter(Dataset):
     def tolerance_s(self) -> float:
         """Tolerance to keep delta timestamps in sync with fps."""
         return self._lerobot_dataset.tolerance_s
+
+    @property
+    def tasks(self) -> list[str]:
+        """Task prompts in the dataset, ordered by task index."""
+        tasks = self._lerobot_dataset.meta.tasks
+        return [] if tasks is None else [str(task) for task in tasks.sort_values("task_index").index]
 
     @property
     def delta_indices(self) -> dict[str, list[int]]:
